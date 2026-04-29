@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="it" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MADMIN Hub — Login</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css" />
+  <link rel="stylesheet" href="/assets/css/app.css" />
+</head>
+<body class="antialiased">
+  <div class="page page-center">
+    <div class="container container-tight py-4">
+      <div class="text-center mb-4">
+        <a href="/" class="navbar-brand navbar-brand-autodark">
+          <span class="hub-logo-text">MADMIN <span class="text-primary">Hub</span></span>
+        </a>
+      </div>
+      <div class="card card-md">
+        <div class="card-body">
+          <h2 class="h2 text-center mb-4">Accedi al tuo account</h2>
+          <div id="login-error" class="alert alert-danger d-none" role="alert"></div>
+          <div id="2fa-section" class="d-none">
+            <div class="mb-3">
+              <label class="form-label">Codice Authenticator</label>
+              <input id="totp-input" type="text" class="form-control" placeholder="6 cifre"
+                     maxlength="8" autocomplete="one-time-code" inputmode="numeric" />
+            </div>
+            <button id="totp-submit" class="btn btn-primary w-100">Verifica</button>
+            <button id="totp-back" class="btn btn-link w-100 mt-2">← Torna al login</button>
+          </div>
+          <form id="login-form">
+            <div class="mb-3">
+              <label class="form-label">Username</label>
+              <input name="username" type="text" class="form-control" tabindex="1"
+                     autocomplete="username" autofocus />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Password</label>
+              <input name="password" type="password" class="form-control" tabindex="2"
+                     autocomplete="current-password" />
+            </div>
+            <div class="form-footer">
+              <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn">
+                Accedi
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const TOKEN_KEY = 'hub_token';
+    const API = '/api';
+
+    let tempToken = null;
+
+    function showError(msg) {
+      const el = document.getElementById('login-error');
+      el.textContent = msg;
+      el.classList.remove('d-none');
+    }
+
+    function clearError() {
+      document.getElementById('login-error').classList.add('d-none');
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Accesso in corso…';
+
+      const form = e.target;
+      const body = new URLSearchParams({
+        username: form.username.value,
+        password: form.password.value,
+      });
+
+      try {
+        const res = await fetch(`${API}/auth/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showError(data.detail || 'Credenziali non valide');
+          return;
+        }
+
+        if (data.token_type === '2fa_required') {
+          tempToken = data.access_token;
+          document.getElementById('login-form').classList.add('d-none');
+          document.getElementById('2fa-section').classList.remove('d-none');
+          document.getElementById('totp-input').focus();
+          return;
+        }
+
+        localStorage.setItem(TOKEN_KEY, data.access_token);
+        window.location.href = '/';
+      } catch (err) {
+        showError('Errore di rete');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Accedi';
+      }
+    });
+
+    document.getElementById('totp-submit').addEventListener('click', async () => {
+      clearError();
+      const code = document.getElementById('totp-input').value.trim();
+      if (!code) return;
+
+      const res = await fetch(`${API}/auth/token/2fa?code=${encodeURIComponent(code)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tempToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showError(data.detail || 'Codice non valido');
+        return;
+      }
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      window.location.href = '/';
+    });
+
+    document.getElementById('totp-back').addEventListener('click', () => {
+      tempToken = null;
+      document.getElementById('2fa-section').classList.add('d-none');
+      document.getElementById('login-form').classList.remove('d-none');
+    });
+
+    document.getElementById('totp-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('totp-submit').click();
+    });
+
+    // Already logged in? Redirect
+    const existing = localStorage.getItem(TOKEN_KEY);
+    if (existing) window.location.href = '/';
+  </script>
+</body>
+</html>

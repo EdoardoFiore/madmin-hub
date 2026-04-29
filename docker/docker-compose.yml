@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: madmin_hub
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: madmin_hub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U madmin_hub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hub:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://madmin_hub:${DB_PASSWORD:-changeme}@db:5432/madmin_hub
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: "false"
+      HUB_PUBLIC_URL: ${HUB_PUBLIC_URL:-https://hub.example.com}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+      TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-30}
+    volumes:
+      - hub_data:/app/data
+
+volumes:
+  pgdata:
+  hub_data:

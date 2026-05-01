@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import BigInteger
 from sqlmodel import Field, SQLModel
 
 
@@ -17,13 +18,13 @@ class InstanceTelemetry(SQLModel, table=True):
 
     cpu_percent: float = Field(default=0.0)
     ram_percent: float = Field(default=0.0)
-    ram_total: int = Field(default=0)
-    ram_used: int = Field(default=0)
+    ram_total: int = Field(default=0, sa_type=BigInteger)
+    ram_used: int = Field(default=0, sa_type=BigInteger)
     disk_percent: float = Field(default=0.0)
-    disk_total: int = Field(default=0)
-    disk_used: int = Field(default=0)
-    net_in_bps: int = Field(default=0)
-    net_out_bps: int = Field(default=0)
+    disk_total: int = Field(default=0, sa_type=BigInteger)
+    disk_used: int = Field(default=0, sa_type=BigInteger)
+    net_in_bps: int = Field(default=0, sa_type=BigInteger)
+    net_out_bps: int = Field(default=0, sa_type=BigInteger)
 
     services_status: str = Field(default="{}")  # JSON
     modules_status: str = Field(default="[]")  # JSON

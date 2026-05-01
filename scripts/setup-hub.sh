@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MADMIN Hub — bare-metal Ubuntu 24.04 installer
-# Usage: sudo bash setup-hub.sh
+# Usage: sudo bash setup-hub.sh [-u admin_username] [-p admin_password]
 
 set -euo pipefail
 
@@ -10,10 +10,21 @@ HUB_PORT=7444  # dedicated port — no collision with managed MADMIN (7443)
 DB_NAME="madmin_hub"
 DB_USER="madmin_hub"
 
+ADMIN_USERNAME=""
+ADMIN_PASSWORD=""
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[HUB]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 die()  { echo -e "${RED}[ERR]${NC} $*"; exit 1; }
+
+while getopts "u:p:" opt; do
+    case $opt in
+        u) ADMIN_USERNAME="$OPTARG" ;;
+        p) ADMIN_PASSWORD="$OPTARG" ;;
+        *) die "Usage: $0 [-u username] [-p password]" ;;
+    esac
+done
 
 [[ $EUID -ne 0 ]] && die "Run as root"
 
@@ -88,6 +99,21 @@ EOF
 systemctl daemon-reload
 systemctl enable --now madmin-hub
 
+# --- First admin user ---
+if [[ -n "$ADMIN_USERNAME" && -n "$ADMIN_PASSWORD" ]]; then
+    log "Creating first admin user '${ADMIN_USERNAME}'…"
+    # wait for backend to be ready (max 30s)
+    for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1 && break
+        sleep 1
+    done
+    INIT_RESP=$(curl -sf -X POST http://127.0.0.1:8080/api/auth/init \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1) \
+        && log "Admin user '${ADMIN_USERNAME}' created." \
+        || warn "Could not create admin user automatically: ${INIT_RESP}"
+fi
+
 # --- TLS cert (self-signed) ---
 log "Generating self-signed TLS certificate…"
 CERT_DIR="/etc/ssl/madmin-hub"
@@ -138,7 +164,12 @@ echo -e "${GREEN}║        MADMIN Hub installato OK          ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  URL Hub:   ${GREEN}https://$(hostname -I | awk '{print $1}'):${HUB_PORT}${NC}"
-echo -e "  Primo accesso: vai all'URL sopra → setup del primo utente admin"
+if [[ -n "$ADMIN_USERNAME" ]]; then
+    echo -e "  Admin:     ${GREEN}${ADMIN_USERNAME}${NC} (password specificata)"
+else
+    echo -e "  Primo accesso: vai all'URL sopra → setup del primo utente admin"
+    echo -e "  Oppure:    sudo bash setup-hub.sh -u admin -p 'Password1!'"
+fi
 echo -e "  Logs:      journalctl -u madmin-hub -f"
 echo ""
 warn "Salva queste credenziali DB in luogo sicuro:"

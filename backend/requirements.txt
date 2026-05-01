@@ -9,7 +9,8 @@ sqlalchemy[asyncio]>=2.0.25
 
 # Auth
 bcrypt==4.0.1
-passlib[bcrypt]>=1.7.4
+passlib[bcrypt,argon2]>=1.7.4
+argon2-cffi>=21.3.0
 python-jose[cryptography]>=3.3.0
 python-multipart>=0.0.6
 pyotp>=2.9.0

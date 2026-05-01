@@ -206,7 +206,10 @@ async def create_first_user(session: AsyncSession, username: str, password: str)
     )
     session.add(user)
     await session.commit()
-    await session.refresh(user)
+    result = await session.execute(
+        select(User).options(selectinload(User.permissions)).where(User.id == user.id)
+    )
+    user = result.scalar_one()
     logger.info(f"Created first superuser: {username}")
     return user
 

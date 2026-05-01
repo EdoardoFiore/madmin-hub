@@ -1,5 +1,5 @@
 """
-Instances domain models: ManagedInstance, InstanceGroup, EnrollmentToken.
+Instances domain models: ManagedInstance, InstanceGroup, EnrollmentToken, Tag, InstanceTag.
 """
 import uuid
 from datetime import datetime
@@ -42,6 +42,23 @@ class ManagedInstance(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Tag(SQLModel, table=True):
+    __tablename__ = "tag"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str = Field(unique=True, max_length=64, index=True)
+    color: str = Field(default="#6c757d", max_length=9)
+    description: Optional[str] = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InstanceTag(SQLModel, table=True):
+    __tablename__ = "instance_tag"
+
+    instance_id: uuid.UUID = Field(foreign_key="managed_instance.id", primary_key=True)
+    tag_id: uuid.UUID = Field(foreign_key="tag.id", primary_key=True)
 
 
 class EnrollmentToken(SQLModel, table=True):

@@ -65,6 +65,36 @@
 [data-bs-theme="dark"] .ws-pill.online  { background: #1a4a26; color: #6ef08e; }
 [data-bs-theme="dark"] .ws-pill.offline { background: #4a1a1a; color: #f07070; }
 
+/* ── Status dot (standalone, not inside card) ─ */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ── Instances table compact rows ──── */
+.instances-table td,
+.instances-table th {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+/* ── Group header rows ───────────────── */
+.group-header:hover td {
+  background: var(--tblr-bg-surface-secondary);
+}
+.group-members tr:hover td {
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+  cursor: pointer;
+}
+
+/* ── Audit detail expand row ─────────── */
+.audit-detail td {
+  background: var(--tblr-bg-surface-secondary, #f6f8fb);
+  border-top: none !important;
+}
+
 /* ── Enrollment token display ────────── */
 .token-display {
   font-family: var(--tblr-font-monospace);

@@ -2,7 +2,7 @@
  * Users management — list, create, edit, toggle, delete, reset 2FA, permissions.
  */
 import { apiGet, apiPost, apiPatch, apiDelete, apiPut } from '../api.js';
-import { showSpinner, showToast } from '../utils.js';
+import { showSpinner, showToast, confirmDialog, inputDialog } from '../utils.js';
 import { t, getLang } from '../i18n.js';
 
 let _users = [];
@@ -136,7 +136,7 @@ export async function render(container) {
       } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
 
     } else if (action === 'reset-pwd') {
-      const newPwd = prompt(t('users.prompt_new_pwd'));
+      const newPwd = await inputDialog(t('users.prompt_new_pwd'), '', { type: 'password' });
       if (!newPwd) return;
       try {
         await apiPatch(`/auth/users/${username}`, { password: newPwd });
@@ -144,7 +144,7 @@ export async function render(container) {
       } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
 
     } else if (action === 'reset-2fa') {
-      if (!confirm(t('users.confirm_reset_2fa', { username }))) return;
+      if (!await confirmDialog(t('users.confirm_reset_2fa', { username }), '', { okClass: 'btn-danger' })) return;
       try {
         await apiDelete(`/auth/users/${username}/2fa`);
         showToast(t('users.reset_2fa_done'), 'success');
@@ -156,7 +156,7 @@ export async function render(container) {
       if (user) openEditModal(container, user, true);
 
     } else if (action === 'delete') {
-      if (!confirm(t('users.confirm_delete', { username }))) return;
+      if (!await confirmDialog(t('users.confirm_delete', { username }), '', { okClass: 'btn-danger' })) return;
       try {
         await apiDelete(`/auth/users/${username}`);
         showToast(t('users.deleted'), 'success');
@@ -180,7 +180,7 @@ function openCreateModal(container) {
   container.querySelector('#u-submit').textContent = t('users.create');
   container.querySelector('#perms-grid').innerHTML = renderPermsGrid([], _allPerms);
   container.querySelector('#perms-section').style.display = '';
-  bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
+  window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
 }
 
 function openEditModal(container, user, focusPerms = false) {
@@ -197,7 +197,7 @@ function openEditModal(container, user, focusPerms = false) {
   container.querySelector('#u-submit').textContent = t('users.save');
   container.querySelector('#perms-grid').innerHTML = renderPermsGrid(user.permissions || [], _allPerms);
   container.querySelector('#perms-section').style.display = user.is_superuser ? 'none' : '';
-  bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
+  window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
   if (focusPerms) {
     setTimeout(() => container.querySelector('#perms-grid')?.scrollIntoView({ behavior: 'smooth' }), 300);
   }
@@ -236,7 +236,7 @@ async function submitUser(container) {
       }
       showToast(t('users.created'), 'success');
     }
-    bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).hide();
+    window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).hide();
     render(container);
   } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
 }

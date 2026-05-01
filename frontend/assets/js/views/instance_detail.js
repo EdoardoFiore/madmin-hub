@@ -1,9 +1,10 @@
 /**
  * Instance detail — telemetry charts, latest stats, commands.
  */
-import { apiGet, apiPost } from '../api.js';
-import { showSpinner, wsPill, relativeTime, formatBytes, fmtPercent, showToast } from '../utils.js';
+import { apiGet, apiPost, apiPatch } from '../api.js';
+import { showSpinner, wsPill, relativeTime, formatBytes, fmtPercent, showToast, selectDialog } from '../utils.js';
 import { t } from '../i18n.js';
+import { formatCommandResult } from '../formatters.js';
 
 export async function render(container, params) {
   const instanceId = params[0];
@@ -14,12 +15,13 @@ export async function render(container, params) {
 
   showSpinner(container);
 
-  let [inst, telemetry, latest] = [null, [], null];
+  let [inst, telemetry, latest, groups] = [null, [], null, []];
   try {
-    [inst, telemetry, latest] = await Promise.all([
+    [inst, telemetry, latest, groups] = await Promise.all([
       apiGet(`/instances/${instanceId}`),
       apiGet(`/instances/${instanceId}/telemetry?hours=6`),
       apiGet(`/instances/${instanceId}/telemetry/latest`),
+      apiGet('/groups').catch(() => []),
     ]);
   } catch {
     container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">${t('instance.load_error')}</div></div>`;
@@ -92,8 +94,15 @@ export async function render(container, params) {
                   <dt class="col-5">${t('instance.id')}</dt><dd class="col-7 text-mono small">${inst.id}</dd>
                   <dt class="col-5">${t('instance.fingerprint')}</dt><dd class="col-7 text-mono small">${inst.fingerprint}</dd>
                   <dt class="col-5">${t('instance.enroll_status')}</dt><dd class="col-7">${inst.enrollment_status}</dd>
-                  <dt class="col-5">${t('instance.group')}</dt><dd class="col-7">${inst.group_id || '—'}</dd>
-                  <dt class="col-5">${t('label.tags', {})}</dt><dd class="col-7">${(inst.tags || []).map(tag=>`<span class="badge bg-azure-lt">${tag}</span>`).join(' ') || '—'}</dd>
+                  <dt class="col-5">${t('instance.group')}</dt>
+                  <dd class="col-7" id="inst-group-cell">
+                    ${_groupChip(inst.group)}
+                    <a href="#" class="ms-2 small text-muted" id="change-group-link">${t('instance.change_group')}</a>
+                  </dd>
+                  <dt class="col-5">${t('label.tags', {})}</dt>
+                  <dd class="col-7">${(inst.tags || []).map(tag => typeof tag === 'object'
+                    ? `<span class="badge me-1" style="background:${tag.color}22;color:${tag.color}">${tag.name}</span>`
+                    : `<span class="badge bg-azure-lt">${tag}</span>`).join('') || '—'}</dd>
                   <dt class="col-5">${t('label.notes', {})}</dt><dd class="col-7">${inst.notes || '—'}</dd>
                 </dl>
               </div>
@@ -146,13 +155,17 @@ export async function render(container, params) {
       try {
         const result = await apiPost(`/instances/${instanceId}/exec/${action}`, { params: {} });
         if (result.success || result.status === 'done' || result.status === 'queued') {
-          inner.className = 'alert alert-success';
-          inner.textContent = result.status === 'queued'
+          const msg = result.status === 'queued'
             ? t('instance.cmd_queued')
-            : t('instance.cmd_done', { result: JSON.stringify(result.result || {}) });
+            : formatCommandResult({ ...result, action });
+          inner.className = 'alert alert-success';
+          inner.textContent = msg;
+          showToast(msg, 'success');
         } else {
+          const msg = result.error || t('msg.error', {});
           inner.className = 'alert alert-danger';
-          inner.textContent = result.error || t('msg.error', {});
+          inner.textContent = msg;
+          showToast(msg, 'error');
         }
       } catch (e) {
         inner.className = 'alert alert-danger';
@@ -164,6 +177,30 @@ export async function render(container, params) {
   });
 
   document.getElementById('exec-info-btn')?.addEventListener('click', () => render(container, params));
+
+  container.querySelector('#change-group-link')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const opts = [
+      { value: '', label: '— Nessun gruppo —' },
+      ...groups.map(g => ({ value: g.id, label: g.name })),
+    ];
+    const sel = await selectDialog(t('instance.change_group'), '', opts, { okLabel: 'Sposta' });
+    if (sel === null) return;
+    try {
+      await apiPatch(`/instances/${instanceId}`, { group_id: sel.value || null });
+      showToast(t('instances.bulk_done'), 'success');
+      render(container, params);
+    } catch (err) { showToast(err.detail || t('msg.error'), 'error'); }
+  });
+}
+
+function _groupChip(group) {
+  if (!group) return '—';
+  return `<a href="#groups/${group.id}" onclick="event.stopPropagation()">
+    <span class="badge" style="background:${group.color}22;color:${group.color};border-left:3px solid ${group.color};border-radius:4px;padding:2px 6px">
+      <i class="ti ti-folder me-1"></i>${group.name}
+    </span>
+  </a>`;
 }
 
 function gauge(label, value, colorClass) {

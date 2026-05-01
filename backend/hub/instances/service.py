@@ -1,5 +1,5 @@
 """
-Instances service: helpers for queries, status updates, group management.
+Instances service: helpers for queries, status updates, group management, tags.
 """
 import json
 import uuid
@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import InstanceGroup, ManagedInstance
+from .models import InstanceGroup, InstanceTag, ManagedInstance, Tag
 
 
 async def list_instances(
@@ -123,13 +123,30 @@ async def bulk_update_instances(
         if action == "set_group":
             inst.group_id = uuid.UUID(value) if value else None
         elif action == "add_tag":
-            tags = json.loads(inst.tags or "[]")
-            if value and value not in tags:
-                tags.append(value)
-            inst.tags = json.dumps(tags)
+            if value:
+                tag = await get_or_create_tag(session, value)
+                existing = await session.execute(
+                    select(InstanceTag).where(
+                        InstanceTag.instance_id == inst.id,
+                        InstanceTag.tag_id == tag.id,
+                    )
+                )
+                if not existing.scalar_one_or_none():
+                    session.add(InstanceTag(instance_id=inst.id, tag_id=tag.id))
         elif action == "remove_tag":
-            tags = json.loads(inst.tags or "[]")
-            inst.tags = json.dumps([t for t in tags if t != value])
+            if value:
+                res = await session.execute(select(Tag).where(Tag.name == value))
+                tag = res.scalar_one_or_none()
+                if tag:
+                    res2 = await session.execute(
+                        select(InstanceTag).where(
+                            InstanceTag.instance_id == inst.id,
+                            InstanceTag.tag_id == tag.id,
+                        )
+                    )
+                    it = res2.scalar_one_or_none()
+                    if it:
+                        await session.delete(it)
         elif action == "revoke":
             inst.enrollment_status = "revoked"
             inst.ws_connected = False
@@ -139,6 +156,89 @@ async def bulk_update_instances(
         session.add(inst)
         results["updated"] += 1
     return results
+
+
+async def get_instance_tags(session: AsyncSession, instance_id: uuid.UUID) -> List[dict]:
+    res = await session.execute(
+        select(Tag)
+        .join(InstanceTag, InstanceTag.tag_id == Tag.id)
+        .where(InstanceTag.instance_id == instance_id)
+        .order_by(Tag.name)
+    )
+    return [{"id": str(t.id), "name": t.name, "color": t.color} for t in res.scalars().all()]
+
+
+async def list_tags(session: AsyncSession) -> List[dict]:
+    res = await session.execute(
+        select(Tag, func.count(InstanceTag.instance_id).label("instance_count"))
+        .outerjoin(InstanceTag, InstanceTag.tag_id == Tag.id)
+        .group_by(Tag.id)
+        .order_by(Tag.name)
+    )
+    return [
+        {
+            "id": str(row.Tag.id),
+            "name": row.Tag.name,
+            "color": row.Tag.color,
+            "description": row.Tag.description,
+            "instance_count": row.instance_count,
+        }
+        for row in res.all()
+    ]
+
+
+async def get_or_create_tag(session: AsyncSession, name: str, color: str = "#6c757d") -> Tag:
+    res = await session.execute(select(Tag).where(Tag.name == name))
+    tag = res.scalar_one_or_none()
+    if not tag:
+        tag = Tag(name=name, color=color)
+        session.add(tag)
+        await session.flush()
+        await session.refresh(tag)
+    return tag
+
+
+async def create_tag(session: AsyncSession, name: str, color: str = "#6c757d", description: Optional[str] = None) -> Tag:
+    tag = Tag(name=name, color=color, description=description)
+    session.add(tag)
+    await session.flush()
+    await session.refresh(tag)
+    return tag
+
+
+async def update_tag(session: AsyncSession, tag_id: uuid.UUID, **kwargs) -> Optional[Tag]:
+    res = await session.execute(select(Tag).where(Tag.id == tag_id))
+    tag = res.scalar_one_or_none()
+    if not tag:
+        return None
+    for k, v in kwargs.items():
+        setattr(tag, k, v)
+    session.add(tag)
+    return tag
+
+
+async def delete_tag(session: AsyncSession, tag_id: uuid.UUID) -> bool:
+    from sqlalchemy import delete as sa_delete
+    res = await session.execute(select(Tag).where(Tag.id == tag_id))
+    tag = res.scalar_one_or_none()
+    if not tag:
+        return False
+    await session.execute(sa_delete(InstanceTag).where(InstanceTag.tag_id == tag_id))
+    await session.delete(tag)
+    return True
+
+
+async def instance_to_dict_full(session: AsyncSession, i: ManagedInstance) -> dict:
+    tags = await get_instance_tags(session, i.id)
+    group = None
+    if i.group_id:
+        g = await get_group(session, i.group_id)
+        if g:
+            group = {"id": str(g.id), "name": g.name, "color": g.color}
+    d = instance_to_dict(i)
+    d["tags"] = tags
+    d["group"] = group
+    return d
 
 
 def instance_to_dict(i: ManagedInstance) -> dict:
@@ -155,6 +255,7 @@ def instance_to_dict(i: ManagedInstance) -> dict:
         "tags": json.loads(i.tags or "[]"),
         "notes": i.notes,
         "group_id": str(i.group_id) if i.group_id else None,
+        "group": None,
         "created_at": i.created_at.isoformat(),
         "updated_at": i.updated_at.isoformat(),
     }

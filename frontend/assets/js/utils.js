@@ -96,3 +96,131 @@ export function wsPill(connected) {
 export function fmtPercent(v) {
   return `${(v || 0).toFixed(1)}%`;
 }
+
+// ── Modal dialogs ────────────────────────────────────────────────────────────
+
+let _dialogEl = null;
+
+function _getDialogEl() {
+  if (_dialogEl) return _dialogEl;
+  _dialogEl = document.createElement('div');
+  _dialogEl.className = 'modal modal-blur fade';
+  _dialogEl.tabIndex = -1;
+  _dialogEl.setAttribute('role', 'dialog');
+  document.body.appendChild(_dialogEl);
+  return _dialogEl;
+}
+
+export function confirmDialog(title, body = '', { okLabel = 'OK', okClass = 'btn-primary', cancelLabel = 'Annulla' } = {}) {
+  return new Promise(resolve => {
+    const el = _getDialogEl();
+    el.innerHTML = `
+      <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">${escapeHtml(title)}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          ${body ? `<div class="modal-body">${escapeHtml(body)}</div>` : ''}
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary me-auto" data-bs-dismiss="modal">${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn ${okClass}" id="dlg-ok">${escapeHtml(okLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    const m = window.bootstrap.Modal.getOrCreateInstance(el);
+    let confirmed = false;
+    el.querySelector('#dlg-ok').onclick = () => { confirmed = true; m.hide(); };
+    el.addEventListener('hidden.bs.modal', () => resolve(confirmed), { once: true });
+    m.show();
+  });
+}
+
+export function inputDialog(title, body = '', { placeholder = '', type = 'text', defaultValue = '', okLabel = 'OK', cancelLabel = 'Annulla' } = {}) {
+  return new Promise(resolve => {
+    const el = _getDialogEl();
+    el.innerHTML = `
+      <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">${escapeHtml(title)}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            ${body ? `<p class="mb-2">${escapeHtml(body)}</p>` : ''}
+            <input id="dlg-input" type="${type}" class="form-control" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}" />
+            ${type === 'password' ? `<input id="dlg-input2" type="password" class="form-control mt-2" placeholder="Conferma password" />` : ''}
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary me-auto" data-bs-dismiss="modal">${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn btn-primary" id="dlg-ok">${escapeHtml(okLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    const m = window.bootstrap.Modal.getOrCreateInstance(el);
+    let value = null;
+    const inp = el.querySelector('#dlg-input');
+    el.querySelector('#dlg-ok').onclick = () => {
+      const v = inp.value;
+      if (type === 'password') {
+        const v2 = el.querySelector('#dlg-input2')?.value;
+        if (v !== v2) { inp.classList.add('is-invalid'); return; }
+      }
+      value = v;
+      m.hide();
+    };
+    el.addEventListener('hidden.bs.modal', () => resolve(value), { once: true });
+    m.show();
+    setTimeout(() => inp?.focus(), 300);
+  });
+}
+
+export function selectDialog(title, body = '', options = [], { okLabel = 'OK', cancelLabel = 'Annulla', allowCreate = false } = {}) {
+  return new Promise(resolve => {
+    const el = _getDialogEl();
+    const optHtml = options.map(o => `
+      <label class="form-selectgroup-item flex-fill">
+        <input type="radio" name="dlg-select" class="form-selectgroup-input" value="${escapeHtml(String(o.value))}">
+        <span class="form-selectgroup-label d-flex flex-column">
+          <span>${escapeHtml(o.label)}</span>
+          ${o.hint ? `<small class="text-muted">${escapeHtml(o.hint)}</small>` : ''}
+        </span>
+      </label>`).join('');
+    el.innerHTML = `
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">${escapeHtml(title)}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            ${body ? `<p class="mb-2">${escapeHtml(body)}</p>` : ''}
+            <div class="form-selectgroup form-selectgroup-boxes d-flex flex-column gap-2">${optHtml}</div>
+            ${allowCreate ? `
+              <div class="mt-3">
+                <label class="form-label text-muted small">Oppure crea nuovo:</label>
+                <input id="dlg-create" type="text" class="form-control" placeholder="Nome nuovo elemento..." />
+              </div>` : ''}
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary me-auto" data-bs-dismiss="modal">${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn btn-primary" id="dlg-ok">${escapeHtml(okLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    const m = window.bootstrap.Modal.getOrCreateInstance(el);
+    let selected = null;
+    el.querySelector('#dlg-ok').onclick = () => {
+      const checked = el.querySelector('input[name="dlg-select"]:checked');
+      const createVal = el.querySelector('#dlg-create')?.value?.trim();
+      if (allowCreate && createVal) {
+        selected = { value: '__create__', label: createVal };
+      } else if (checked) {
+        selected = { value: checked.value };
+      }
+      m.hide();
+    };
+    el.addEventListener('hidden.bs.modal', () => resolve(selected), { once: true });
+    m.show();
+  });
+}

@@ -2,7 +2,7 @@
  * Groups — list with member count, create, edit, delete.
  */
 import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js';
-import { showSpinner, showToast } from '../utils.js';
+import { showSpinner, showToast, confirmDialog } from '../utils.js';
 import { t } from '../i18n.js';
 
 let _editTarget = null;
@@ -119,9 +119,9 @@ export async function render(container) {
       container.querySelector('#ge-name').value = g.name;
       container.querySelector('#ge-desc').value = g.description || '';
       container.querySelector('#ge-color').value = g.color;
-      bootstrap.Modal.getOrCreateInstance(container.querySelector('#group-edit-modal')).show();
+      window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#group-edit-modal')).show();
     } else if (action === 'delete') {
-      if (!confirm(t('groups.confirm_delete'))) return;
+      if (!await confirmDialog(t('groups.confirm_delete'), '', { okClass: 'btn-danger' })) return;
       try {
         await apiDelete(`/groups/${id}`);
         showToast(t('groups.deleted'), 'success');
@@ -139,7 +139,7 @@ export async function render(container) {
         color: container.querySelector('#ge-color').value,
       });
       showToast(t('groups.saved'), 'success');
-      bootstrap.Modal.getOrCreateInstance(container.querySelector('#group-edit-modal')).hide();
+      window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#group-edit-modal')).hide();
       render(container);
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });

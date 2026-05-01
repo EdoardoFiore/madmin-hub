@@ -2,7 +2,7 @@
  * SSH Keys — vault CRUD + assignment push/revoke.
  */
 import { apiGet, apiPost, apiDelete } from '../api.js';
-import { showSpinner, showToast, relativeTime } from '../utils.js';
+import { showSpinner, showToast, relativeTime, confirmDialog } from '../utils.js';
 import { t } from '../i18n.js';
 
 export async function render(container) {
@@ -183,7 +183,7 @@ export async function render(container) {
   container.querySelector('#keys-tbody').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action="delete-key"]');
     if (!btn) return;
-    if (!confirm(t('ssh.confirm_delete_key'))) return;
+    if (!await confirmDialog(t('ssh.confirm_delete_key'), '', { okClass: 'btn-danger' })) return;
     try {
       await apiDelete(`/ssh/keys/${btn.dataset.id}`);
       showToast(t('ssh.key_deleted'), 'success');
@@ -195,7 +195,7 @@ export async function render(container) {
   container.querySelector('#assign-tbody').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action="revoke-assign"]');
     if (!btn) return;
-    if (!confirm(t('ssh.confirm_revoke'))) return;
+    if (!await confirmDialog(t('ssh.confirm_revoke'), '', { okClass: 'btn-danger' })) return;
     try {
       await apiDelete(`/ssh/assignments/${btn.dataset.id}`);
       showToast(t('ssh.revoked'), 'success');

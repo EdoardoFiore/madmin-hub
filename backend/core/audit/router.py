@@ -28,11 +28,18 @@ async def list_audit_logs(
     method: Optional[str] = None,
     category: Optional[str] = None,
     path_prefix: Optional[str] = None,
+    search: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
-    limit: int = Query(default=200, le=2000),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, le=500),
+    limit: int = Query(default=0, le=2000),
     offset: int = 0,
 ):
+    from sqlalchemy import func as sqlfunc, or_
+
     stmt = select(AuditLog).order_by(AuditLog.timestamp.desc())
     if username:
         stmt = stmt.where(AuditLog.username == username)
@@ -42,14 +49,30 @@ async def list_audit_logs(
         stmt = stmt.where(AuditLog.category == category)
     if path_prefix:
         stmt = stmt.where(AuditLog.path.like(f"{path_prefix}%"))
-    if since:
-        stmt = stmt.where(AuditLog.timestamp >= since)
-    if until:
-        stmt = stmt.where(AuditLog.timestamp <= until)
-    stmt = stmt.offset(offset).limit(limit)
+    if search:
+        stmt = stmt.where(or_(
+            AuditLog.path.ilike(f"%{search}%"),
+            AuditLog.request_body.ilike(f"%{search}%"),
+        ))
+    effective_since = from_date or since
+    effective_until = to_date or until
+    if effective_since:
+        stmt = stmt.where(AuditLog.timestamp >= effective_since)
+    if effective_until:
+        stmt = stmt.where(AuditLog.timestamp <= effective_until)
 
-    result = await session.execute(stmt)
-    return result.scalars().all()
+    # Legacy mode: if limit provided use raw offset/limit
+    if limit:
+        result = await session.execute(stmt.offset(offset).limit(limit))
+        return result.scalars().all()
+
+    # Page-based pagination
+    count_stmt = select(sqlfunc.count()).select_from(stmt.subquery())
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar()
+    result = await session.execute(stmt.offset((page - 1) * per_page).limit(per_page))
+    items = result.scalars().all()
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
 
 
 @router.get("/audit/users")

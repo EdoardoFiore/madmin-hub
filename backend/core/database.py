@@ -52,12 +52,60 @@ async def init_db() -> None:
             ManagedInstance,
             InstanceGroup,
             EnrollmentToken,
+            Tag,
+            InstanceTag,
         )
         from hub.telemetry.models import InstanceTelemetry, InstanceCommand  # noqa
         from hub.ssh.models import SSHKey, SSHKeyAssignment  # noqa
 
         await conn.run_sync(SQLModel.metadata.create_all)
         logger.info("Database tables created")
+
+    await _migrate_json_tags()
+
+
+async def _migrate_json_tags() -> None:
+    """One-time migration: populate Tag+InstanceTag from ManagedInstance.tags JSON column."""
+    import json
+    from sqlalchemy import select
+    from hub.instances.models import ManagedInstance, Tag, InstanceTag
+
+    try:
+        async with async_session_maker() as session:
+            res = await session.execute(select(ManagedInstance).where(ManagedInstance.tags != "[]"))
+            instances = res.scalars().all()
+            if not instances:
+                return
+
+            tag_cache: dict = {}
+            for inst in instances:
+                raw_tags = json.loads(inst.tags or "[]")
+                if not raw_tags:
+                    continue
+                # Check if this instance already has InstanceTag rows
+                existing = await session.execute(
+                    select(InstanceTag).where(InstanceTag.instance_id == inst.id).limit(1)
+                )
+                if existing.scalar_one_or_none():
+                    continue  # already migrated
+
+                for tag_name in raw_tags:
+                    tag_name = str(tag_name).strip()
+                    if not tag_name:
+                        continue
+                    if tag_name not in tag_cache:
+                        res2 = await session.execute(select(Tag).where(Tag.name == tag_name))
+                        tag = res2.scalar_one_or_none()
+                        if not tag:
+                            tag = Tag(name=tag_name)
+                            session.add(tag)
+                            await session.flush()
+                        tag_cache[tag_name] = tag.id
+                    session.add(InstanceTag(instance_id=inst.id, tag_id=tag_cache[tag_name]))
+            await session.commit()
+            logger.info("JSON tags migration complete")
+    except Exception as e:
+        logger.warning(f"JSON tags migration skipped: {e}")
 
 
 async def check_db_connection() -> bool:

@@ -19,7 +19,7 @@ from core.i18n import get_lang, tr
 
 from . import enrollment as enroll_svc
 from . import service as inst_svc
-from .models import EnrollmentToken, InstanceGroup, ManagedInstance
+from .models import EnrollmentToken, InstanceGroup, ManagedInstance, Tag
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def get_instance(
     i = await inst_svc.get_instance(session, instance_id)
     if not i:
         raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
-    return inst_svc.instance_to_dict(i)
+    return await inst_svc.instance_to_dict_full(session, i)
 
 
 @router.patch("/api/instances/{instance_id}")
@@ -305,6 +305,64 @@ async def agent_enroll(
         ws_url=ws_url,
         heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
     )
+
+
+# --- Tags ---
+
+class TagCreate(BaseModel):
+    name: str
+    color: str = "#6c757d"
+    description: Optional[str] = None
+
+
+class TagPatch(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.get("/api/tags")
+async def list_tags(
+    user: User = Depends(require_permission("hub.view")),
+    session: AsyncSession = Depends(get_session),
+):
+    return await inst_svc.list_tags(session)
+
+
+@router.post("/api/tags")
+async def create_tag(
+    payload: TagCreate,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    tag = await inst_svc.create_tag(session, payload.name, payload.color, payload.description)
+    return {"id": str(tag.id), "name": tag.name, "color": tag.color, "description": tag.description}
+
+
+@router.patch("/api/tags/{tag_id}")
+async def patch_tag(
+    request: Request,
+    tag_id: uuid.UUID,
+    payload: TagPatch,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    tag = await inst_svc.update_tag(session, tag_id, **payload.dict(exclude_unset=True))
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return {"id": str(tag.id), "name": tag.name, "color": tag.color, "description": tag.description}
+
+
+@router.delete("/api/tags/{tag_id}")
+async def delete_tag(
+    tag_id: uuid.UUID,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    ok = await inst_svc.delete_tag(session, tag_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return {"detail": "deleted"}
 
 
 # --- Bulk operations ---

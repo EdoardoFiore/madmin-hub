@@ -2,7 +2,7 @@
  * Group detail view — member instances list, bulk ops, edit group inline.
  */
 import { apiGet, apiPatch, apiPost } from '../api.js';
-import { showSpinner, showToast, statusBadge, relativeTime } from '../utils.js';
+import { showSpinner, showToast, statusBadge, relativeTime, confirmDialog } from '../utils.js';
 import { t } from '../i18n.js';
 
 export async function render(container, params) {
@@ -154,7 +154,7 @@ export async function render(container, params) {
     const action = btn.dataset.bulk;
     const ids = getSelected();
     if (!ids.length) return;
-    if (!confirm(t('instances.confirm_bulk_action', { n: ids.length }))) return;
+    if (!await confirmDialog(t('instances.confirm_bulk_action', { n: ids.length }), '', { okClass: 'btn-danger' })) return;
     try {
       await apiPost('/instances/bulk', { instance_ids: ids, action });
       showToast(t('instances.bulk_done'), 'success');
@@ -164,7 +164,7 @@ export async function render(container, params) {
 
   // Edit group modal
   container.querySelector('#btn-edit-group').addEventListener('click', () => {
-    bootstrap.Modal.getOrCreateInstance(container.querySelector('#edit-group-modal')).show();
+    window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#edit-group-modal')).show();
   });
   container.querySelector('#eg-save').addEventListener('click', async () => {
     try {
@@ -174,7 +174,7 @@ export async function render(container, params) {
         color: container.querySelector('#eg-color').value,
       });
       showToast(t('groups.saved'), 'success');
-      bootstrap.Modal.getOrCreateInstance(container.querySelector('#edit-group-modal')).hide();
+      window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#edit-group-modal')).hide();
       render(container, params);
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });

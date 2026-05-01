@@ -3,6 +3,7 @@
  */
 import { apiGet } from '../api.js';
 import { showSpinner, statusBadge, relativeTime, fmtPercent } from '../utils.js';
+import { t } from '../i18n.js';
 
 export async function render(container) {
   showSpinner(container);
@@ -11,7 +12,7 @@ export async function render(container) {
   try {
     data = await apiGet('/dashboard/fleet');
   } catch (e) {
-    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">Errore caricamento fleet.</div></div>`;
+    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">${t('dashboard.load_error')}</div></div>`;
     return;
   }
 
@@ -21,10 +22,10 @@ export async function render(container) {
     <div class="page-header d-print-none">
       <div class="container-xl">
         <div class="row g-2 align-items-center">
-          <div class="col"><h2 class="page-title">Dashboard Fleet</h2></div>
+          <div class="col"><h2 class="page-title">${t('dashboard.title')}</h2></div>
           <div class="col-auto ms-auto">
             <button class="btn btn-outline-secondary btn-sm" id="refresh-btn">
-              <i class="ti ti-refresh me-1"></i>Aggiorna
+              <i class="ti ti-refresh me-1"></i>${t('dashboard.refresh')}
             </button>
           </div>
         </div>
@@ -36,15 +37,15 @@ export async function render(container) {
 
         <!-- Summary tiles -->
         <div class="row row-deck row-cards mb-4" id="summary-tiles">
-          ${tile('Totale istanze', summary.total, 'ti-server', 'text-blue')}
-          ${tile('Online', summary.online, 'ti-circle-check', 'text-green')}
-          ${tile('Offline', summary.offline, 'ti-circle-x', 'text-red')}
-          ${tile('Mai connesse', summary.never_seen, 'ti-clock-off', 'text-muted')}
+          ${tile(t('dashboard.total'),      summary.total,      'ti-server',     'text-blue')}
+          ${tile(t('dashboard.online'),     summary.online,     'ti-circle-check','text-green')}
+          ${tile(t('dashboard.offline'),    summary.offline,    'ti-circle-x',   'text-red')}
+          ${tile(t('dashboard.never_seen'), summary.never_seen, 'ti-clock-off',  'text-muted')}
         </div>
 
         <!-- Instance grid -->
         <div class="row row-cards" id="instance-grid">
-          ${instances.length === 0 ? '<div class="col-12"><div class="alert alert-info">Nessuna istanza registrata. <a href="#enrollment">Registra la prima →</a></div></div>' : ''}
+          ${instances.length === 0 ? `<div class="col-12"><div class="alert alert-info">${t('dashboard.no_instances')}</div></div>` : ''}
           ${instances.map(renderCard).join('')}
         </div>
 
@@ -94,7 +95,7 @@ function renderCard(inst) {
           <div class="text-muted small">
             <i class="ti ti-clock me-1"></i>${relativeTime(inst.last_seen_at)}
           </div>
-          ${inst.tags?.length ? `<div class="mt-2">${inst.tags.map(t => `<span class="badge bg-azure-lt me-1">${t}</span>`).join('')}</div>` : ''}
+          ${inst.tags?.length ? `<div class="mt-2">${inst.tags.map(tag => `<span class="badge bg-azure-lt me-1">${tag}</span>`).join('')}</div>` : ''}
         </div>
       </div>
     </div>`;

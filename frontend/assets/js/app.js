@@ -2,6 +2,7 @@
  * MADMIN Hub SPA — hash-based router, auth guard, sidebar.
  */
 import { getCurrentUser, logout } from './api.js';
+import { t, getLang, setLang } from './i18n.js';
 
 const TOKEN_KEY = 'hub_token';
 
@@ -20,15 +21,15 @@ const ROUTES = {
 
 // ── Menu definition ──────────────────────────────────────────────────────────
 const MENU = [
-  { label: 'Dashboard',   icon: 'ti-home',          route: 'dashboard' },
-  { label: 'Istanze',     icon: 'ti-server',        route: 'instances' },
-  { label: 'Gruppi',      icon: 'ti-folders',       route: 'groups' },
-  { label: 'Enrollment',  icon: 'ti-key',           route: 'enrollment', perm: 'hub.manage' },
-  { label: 'SSH Keys',    icon: 'ti-lock-open',     route: 'ssh-keys',   perm: 'hub.ssh' },
+  { key: 'nav.dashboard',  icon: 'ti-home',       route: 'dashboard' },
+  { key: 'nav.instances',  icon: 'ti-server',     route: 'instances' },
+  { key: 'nav.groups',     icon: 'ti-folders',    route: 'groups' },
+  { key: 'nav.enrollment', icon: 'ti-key',        route: 'enrollment', perm: 'hub.manage' },
+  { key: 'nav.ssh_keys',   icon: 'ti-lock-open',  route: 'ssh-keys',   perm: 'hub.ssh' },
   null, // divider
-  { label: 'Utenti',      icon: 'ti-users',         route: 'users',      perm: 'users.view' },
-  { label: 'Audit Log',   icon: 'ti-file-text',     route: 'audit',      perm: 'logs.view' },
-  { label: 'Impostazioni',icon: 'ti-settings',      route: 'settings',   perm: 'settings.view' },
+  { key: 'nav.users',      icon: 'ti-users',      route: 'users',      perm: 'users.view' },
+  { key: 'nav.audit',      icon: 'ti-file-text',  route: 'audit',      perm: 'logs.view' },
+  { key: 'nav.settings',   icon: 'ti-settings',   route: 'settings',   perm: 'settings.view' },
 ];
 
 let currentUser = null;
@@ -47,7 +48,7 @@ async function navigate() {
   const loader = ROUTES[route];
 
   if (!loader) {
-    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-warning">Vista "${route}" non trovata.</div></div>`;
+    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-warning">${t('app.view_not_found', { name: route })}</div></div>`;
     return;
   }
 
@@ -58,7 +59,7 @@ async function navigate() {
     await mod.render(container, params);
   } catch (err) {
     console.error('Route render error:', err);
-    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">Errore caricamento vista.</div></div>`;
+    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">${t('app.view_load_error')}</div></div>`;
   }
 }
 
@@ -83,7 +84,7 @@ function buildMenu(user) {
           <span class="nav-link-icon d-md-none d-lg-flex">
             <i class="ti ${item.icon}"></i>
           </span>
-          <span class="nav-link-title">${item.label}</span>
+          <span class="nav-link-title">${t(item.key)}</span>
         </a>
       </li>`);
   }
@@ -111,6 +112,24 @@ function applyTheme(user) {
 function renderUserBadge(user) {
   const el = document.getElementById('user-badge');
   if (el) el.textContent = user.username;
+  const label = document.getElementById('sidebar-connectedas');
+  if (label) label.textContent = t('sidebar.logged_as');
+}
+
+// ── Language switcher ─────────────────────────────────────────────────────────
+
+function buildLangSwitcher() {
+  const el = document.getElementById('lang-switcher');
+  if (!el) return;
+  const current = getLang();
+  const next = current === 'it' ? 'en' : 'it';
+  el.textContent = current === 'it' ? '🇬🇧 EN' : '🇮🇹 IT';
+  el.title = current === 'it' ? 'Switch to English' : 'Passa all\'italiano';
+  el.onclick = (e) => {
+    e.preventDefault();
+    setLang(next);
+    window.location.reload();
+  };
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────
@@ -123,6 +142,8 @@ document.getElementById('logout-btn')?.addEventListener('click', (e) => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
+  document.documentElement.lang = getLang();
+
   if (!localStorage.getItem(TOKEN_KEY)) {
     window.location.href = '/login';
     return;
@@ -139,6 +160,7 @@ async function init() {
   applyTheme(currentUser);
   buildMenu(currentUser);
   renderUserBadge(currentUser);
+  buildLangSwitcher();
   await navigate();
 }
 

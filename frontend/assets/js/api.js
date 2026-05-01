@@ -1,6 +1,8 @@
 /**
  * Hub API client — JWT auto-inject, 401 redirect, base path /api.
  */
+import { getLang } from './i18n.js';
+
 const TOKEN_KEY = 'hub_token';
 const BASE = '/api';
 
@@ -14,7 +16,7 @@ function clearToken() {
 
 async function request(method, path, body = null, opts = {}) {
   const token = getToken();
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', 'X-Language': getLang() };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const init = { method, headers, ...opts };

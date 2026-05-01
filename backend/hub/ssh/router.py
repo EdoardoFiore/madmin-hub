@@ -4,7 +4,7 @@ SSH router: key vault CRUD, assignment push/revoke.
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import get_session
+from core.i18n import get_lang, tr
 
 from . import service as ssh_svc
 from .models import SSHKey, SSHKeyAssignment
@@ -72,10 +73,12 @@ async def create_key(
 
 @router.delete("/keys/{key_id}")
 async def delete_key(
+    request: Request,
     key_id: uuid.UUID,
     user: User = Depends(require_permission("hub.ssh")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     # Block deletion if active assignments exist
     result = await session.execute(
         select(SSHKeyAssignment).where(
@@ -84,11 +87,11 @@ async def delete_key(
         )
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Revoca prima le assegnazioni attive")
+        raise HTTPException(status_code=400, detail=tr("active_assignments_exist", lang))
     deleted = await ssh_svc.delete_key(session, key_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Chiave non trovata")
-    return {"detail": "Chiave eliminata"}
+        raise HTTPException(status_code=404, detail=tr("key_not_found", lang))
+    return {"detail": tr("key_deleted", lang)}
 
 
 # --- Assignments ---
@@ -137,20 +140,22 @@ async def list_assignments(
 
 @router.post("/assignments")
 async def create_assignment(
+    request: Request,
     payload: AssignCreate,
     user: User = Depends(require_permission("hub.ssh")),
     session: AsyncSession = Depends(get_session),
 ):
     import json
 
+    lang = get_lang(request)
     if payload.target_type not in ("instance", "group"):
-        raise HTTPException(status_code=400, detail="target_type deve essere 'instance' o 'group'")
+        raise HTTPException(status_code=400, detail=tr("invalid_target_type", lang))
 
     # Check key exists
     result = await session.execute(select(SSHKey).where(SSHKey.id == payload.ssh_key_id))
     key = result.scalar_one_or_none()
     if not key:
-        raise HTTPException(status_code=404, detail="Chiave SSH non trovata")
+        raise HTTPException(status_code=404, detail=tr("ssh_key_not_found", lang))
 
     assignment = SSHKeyAssignment(
         ssh_key_id=payload.ssh_key_id,
@@ -174,25 +179,27 @@ async def create_assignment(
 
 @router.delete("/assignments/{assignment_id}")
 async def revoke_assignment(
+    request: Request,
     assignment_id: uuid.UUID,
     user: User = Depends(require_permission("hub.ssh")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     result = await session.execute(
         select(SSHKeyAssignment).where(SSHKeyAssignment.id == assignment_id)
     )
     assignment = result.scalar_one_or_none()
     if not assignment:
-        raise HTTPException(status_code=404, detail="Assegnazione non trovata")
+        raise HTTPException(status_code=404, detail=tr("assignment_not_found", lang))
     if assignment.status == "revoked":
-        raise HTTPException(status_code=400, detail="Già revocata")
+        raise HTTPException(status_code=400, detail=tr("already_revoked", lang))
 
     key_result = await session.execute(
         select(SSHKey).where(SSHKey.id == assignment.ssh_key_id)
     )
     key = key_result.scalar_one_or_none()
     if not key:
-        raise HTTPException(status_code=404, detail="Chiave SSH non trovata")
+        raise HTTPException(status_code=404, detail=tr("ssh_key_not_found", lang))
 
     results = await ssh_svc.revoke_assignment(session, assignment, key, requested_by=user.username)
     return {"status": "revoked", "revoke_results": results}

@@ -17,32 +17,30 @@
       </div>
       <div class="card card-md">
         <div class="card-body">
-          <h2 class="h2 text-center mb-4">Accedi al tuo account</h2>
+          <h2 class="h2 text-center mb-4" id="login-heading"></h2>
           <div id="login-error" class="alert alert-danger d-none" role="alert"></div>
           <div id="2fa-section" class="d-none">
             <div class="mb-3">
-              <label class="form-label">Codice Authenticator</label>
-              <input id="totp-input" type="text" class="form-control" placeholder="6 cifre"
+              <label class="form-label" id="lbl-2fa-code"></label>
+              <input id="totp-input" type="text" class="form-control"
                      maxlength="8" autocomplete="one-time-code" inputmode="numeric" />
             </div>
-            <button id="totp-submit" class="btn btn-primary w-100">Verifica</button>
-            <button id="totp-back" class="btn btn-link w-100 mt-2">← Torna al login</button>
+            <button id="totp-submit" class="btn btn-primary w-100"></button>
+            <button id="totp-back" class="btn btn-link w-100 mt-2"></button>
           </div>
           <form id="login-form">
             <div class="mb-3">
-              <label class="form-label">Username</label>
+              <label class="form-label" id="lbl-username"></label>
               <input name="username" type="text" class="form-control" tabindex="1"
                      autocomplete="username" autofocus />
             </div>
             <div class="mb-2">
-              <label class="form-label">Password</label>
+              <label class="form-label" id="lbl-password"></label>
               <input name="password" type="password" class="form-control" tabindex="2"
                      autocomplete="current-password" />
             </div>
             <div class="form-footer">
-              <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn">
-                Accedi
-              </button>
+              <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn"></button>
             </div>
           </form>
         </div>
@@ -51,8 +49,26 @@
   </div>
 
   <script type="module">
+    import { t, getLang, setLang } from '/assets/js/i18n.js';
+
     const TOKEN_KEY = 'hub_token';
     const API = '/api';
+
+    // Apply lang to <html>
+    document.documentElement.lang = getLang();
+
+    // Render static labels
+    function applyLabels() {
+      document.getElementById('login-heading').textContent   = t('login.title');
+      document.getElementById('lbl-username').textContent    = t('login.username');
+      document.getElementById('lbl-password').textContent    = t('login.password');
+      document.getElementById('login-btn').textContent       = t('login.submit');
+      document.getElementById('lbl-2fa-code').textContent    = t('login.2fa_label');
+      document.getElementById('totp-input').placeholder      = t('login.2fa_placeholder');
+      document.getElementById('totp-submit').textContent     = t('login.2fa_verify');
+      document.getElementById('totp-back').textContent       = t('login.2fa_back');
+    }
+    applyLabels();
 
     let tempToken = null;
 
@@ -71,7 +87,7 @@
       clearError();
       const btn = document.getElementById('login-btn');
       btn.disabled = true;
-      btn.textContent = 'Accesso in corso…';
+      btn.textContent = t('login.submitting');
 
       const form = e.target;
       const body = new URLSearchParams({
@@ -82,13 +98,16 @@
       try {
         const res = await fetch(`${API}/auth/token`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Language': getLang(),
+          },
           body,
         });
         const data = await res.json();
 
         if (!res.ok) {
-          showError(data.detail || 'Credenziali non valide');
+          showError(data.detail || t('login.bad_creds'));
           return;
         }
 
@@ -103,10 +122,10 @@
         localStorage.setItem(TOKEN_KEY, data.access_token);
         window.location.href = '/';
       } catch (err) {
-        showError('Errore di rete');
+        showError(t('login.net_error'));
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Accedi';
+        btn.textContent = t('login.submit');
       }
     });
 
@@ -117,11 +136,14 @@
 
       const res = await fetch(`${API}/auth/token/2fa?code=${encodeURIComponent(code)}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tempToken}` },
+        headers: {
+          Authorization: `Bearer ${tempToken}`,
+          'X-Language': getLang(),
+        },
       });
       const data = await res.json();
       if (!res.ok) {
-        showError(data.detail || 'Codice non valido');
+        showError(data.detail || t('login.bad_code'));
         return;
       }
       localStorage.setItem(TOKEN_KEY, data.access_token);

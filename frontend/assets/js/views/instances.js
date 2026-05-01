@@ -3,6 +3,7 @@
  */
 import { apiGet, apiDelete } from '../api.js';
 import { showSpinner, statusBadge, relativeTime, showToast } from '../utils.js';
+import { t } from '../i18n.js';
 
 export async function render(container) {
   showSpinner(container);
@@ -11,7 +12,7 @@ export async function render(container) {
   try {
     [fleetData, groups] = await Promise.all([apiGet('/dashboard/fleet'), apiGet('/groups')]);
   } catch {
-    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">Errore caricamento.</div></div>`;
+    container.innerHTML = `<div class="container-xl py-4"><div class="alert alert-danger">${t('instances.load_error')}</div></div>`;
     return;
   }
 
@@ -21,14 +22,14 @@ export async function render(container) {
     <div class="page-header d-print-none">
       <div class="container-xl">
         <div class="row g-2 align-items-center">
-          <div class="col"><h2 class="page-title">Istanze</h2></div>
+          <div class="col"><h2 class="page-title">${t('instances.title')}</h2></div>
           <div class="col-auto ms-auto d-flex gap-2">
             <select id="filter-group" class="form-select form-select-sm" style="min-width:150px">
-              <option value="">Tutti i gruppi</option>
+              <option value="">${t('instances.all_groups')}</option>
               ${groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
             </select>
             <button class="btn btn-primary btn-sm" onclick="location.hash='enrollment'">
-              <i class="ti ti-plus me-1"></i>Nuovo enrollment
+              <i class="ti ti-plus me-1"></i>${t('instances.new_enrollment')}
             </button>
           </div>
         </div>
@@ -40,19 +41,19 @@ export async function render(container) {
           <div class="card-header">
             <div class="input-group input-group-flat" style="max-width:280px">
               <span class="input-group-text"><i class="ti ti-search"></i></span>
-              <input type="search" id="search-input" class="form-control" placeholder="Cerca per nome…" />
+              <input type="search" id="search-input" class="form-control" placeholder="${t('instances.search')}" />
             </div>
           </div>
           <div class="table-responsive">
             <table class="table table-vcenter card-table">
               <thead>
                 <tr>
-                  <th>Stato</th>
-                  <th>Nome</th>
-                  <th>Gruppo</th>
-                  <th>Versione</th>
-                  <th>Ultimo contatto</th>
-                  <th>Tags</th>
+                  <th>${t('instances.col_status')}</th>
+                  <th>${t('instances.col_name')}</th>
+                  <th>${t('instances.col_group')}</th>
+                  <th>${t('instances.col_version')}</th>
+                  <th>${t('instances.col_contact')}</th>
+                  <th>${t('instances.col_tags')}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -86,12 +87,12 @@ export async function render(container) {
     );
     tbody.querySelectorAll('[data-action="revoke"]').forEach(el =>
       el.addEventListener('click', async () => {
-        if (!confirm('Revocare istanza? Non eliminabile finché revocata.')) return;
+        if (!confirm(t('instances.confirm_revoke'))) return;
         try {
           await apiDelete(`/instances/${el.dataset.id}`);
-          showToast('Istanza revocata', 'success');
+          showToast(t('instances.revoked'), 'success');
           render(container);
-        } catch { showToast('Errore', 'error'); }
+        } catch { showToast(t('msg.error', {}), 'error'); }
       })
     );
   }
@@ -102,7 +103,7 @@ export async function render(container) {
 }
 
 function renderRows(items, groups) {
-  if (!items.length) return `<tr><td colspan="7" class="text-center text-muted py-4">Nessuna istanza trovata</td></tr>`;
+  if (!items.length) return `<tr><td colspan="7" class="text-center text-muted py-4">${t('instances.none_found')}</td></tr>`;
   return items.map(i => {
     const group = groups.find(g => g.id === i.group_id);
     return `<tr>
@@ -111,7 +112,7 @@ function renderRows(items, groups) {
       <td>${group ? `<span class="badge" style="background:${group.color}20;color:${group.color}">${group.name}</span>` : '—'}</td>
       <td>${i.version || '—'}</td>
       <td>${relativeTime(i.last_seen_at)}</td>
-      <td>${(i.tags || []).map(t => `<span class="badge bg-azure-lt me-1">${t}</span>`).join('') || '—'}</td>
+      <td>${(i.tags || []).map(tag => `<span class="badge bg-azure-lt me-1">${tag}</span>`).join('') || '—'}</td>
       <td class="text-end">
         <button class="btn btn-sm btn-outline-primary me-1" data-action="detail" data-id="${i.id}">
           <i class="ti ti-eye"></i>

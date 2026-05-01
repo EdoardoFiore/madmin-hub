@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import get_current_user, require_permission
 from core.auth.models import User
 from core.database import get_session
+from core.i18n import get_lang, tr
 
 from . import enrollment as enroll_svc
 from . import service as inst_svc
@@ -47,26 +48,30 @@ async def list_instances(
 
 @router.get("/api/instances/{instance_id}")
 async def get_instance(
+    request: Request,
     instance_id: uuid.UUID,
     user: User = Depends(require_permission("hub.view")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     i = await inst_svc.get_instance(session, instance_id)
     if not i:
-        raise HTTPException(status_code=404, detail="Istanza non trovata")
+        raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
     return inst_svc.instance_to_dict(i)
 
 
 @router.patch("/api/instances/{instance_id}")
 async def patch_instance(
+    request: Request,
     instance_id: uuid.UUID,
     payload: InstancePatch,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     i = await inst_svc.get_instance(session, instance_id)
     if not i:
-        raise HTTPException(status_code=404, detail="Istanza non trovata")
+        raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
     data = payload.dict(exclude_unset=True)
     if "tags" in data:
         i.tags = json.dumps(data.pop("tags"))
@@ -79,18 +84,20 @@ async def patch_instance(
 
 @router.delete("/api/instances/{instance_id}")
 async def delete_instance(
+    request: Request,
     instance_id: uuid.UUID,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     i = await inst_svc.get_instance(session, instance_id)
     if not i:
-        raise HTTPException(status_code=404, detail="Istanza non trovata")
+        raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
     # Mark revoked instead of hard delete to preserve audit trail
     i.enrollment_status = "revoked"
     i.ws_connected = False
     session.add(i)
-    return {"detail": "Istanza revocata"}
+    return {"detail": tr("instance_revoked", lang)}
 
 
 # --- Groups ---
@@ -122,21 +129,23 @@ async def create_group(
 
 @router.delete("/api/groups/{group_id}")
 async def delete_group(
+    request: Request,
     group_id: uuid.UUID,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     result = await session.execute(select(InstanceGroup).where(InstanceGroup.id == group_id))
     g = result.scalar_one_or_none()
     if not g:
-        raise HTTPException(status_code=404, detail="Gruppo non trovato")
+        raise HTTPException(status_code=404, detail=tr("group_not_found", lang))
     # Detach instances from this group
     instances = await inst_svc.list_instances(session, group_id=group_id)
     for i in instances:
         i.group_id = None
         session.add(i)
     await session.delete(g)
-    return {"detail": "Gruppo eliminato"}
+    return {"detail": tr("group_deleted", lang)}
 
 
 # --- Enrollment tokens ---
@@ -195,16 +204,18 @@ async def create_enrollment_token(
 
 @router.delete("/api/enrollment/tokens/{token_id}")
 async def revoke_enrollment_token(
+    request: Request,
     token_id: uuid.UUID,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     result = await session.execute(select(EnrollmentToken).where(EnrollmentToken.id == token_id))
     t = result.scalar_one_or_none()
     if not t:
-        raise HTTPException(status_code=404, detail="Token non trovato")
+        raise HTTPException(status_code=404, detail=tr("token_not_found", lang))
     await session.delete(t)
-    return {"detail": "Token revocato"}
+    return {"detail": tr("token_revoked", lang)}
 
 
 # --- Agent enrollment endpoint (called by agent on remote instance) ---

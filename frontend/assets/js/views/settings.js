@@ -3,6 +3,7 @@
  */
 import { apiGet, apiPatch } from '../api.js';
 import { showSpinner, showToast } from '../utils.js';
+import { t } from '../i18n.js';
 
 export async function render(container) {
   showSpinner(container);
@@ -13,7 +14,7 @@ export async function render(container) {
 
   container.innerHTML = `
     <div class="page-header">
-      <div class="container-xl"><h2 class="page-title">Impostazioni</h2></div>
+      <div class="container-xl"><h2 class="page-title">${t('settings.title')}</h2></div>
     </div>
     <div class="page-body">
       <div class="container-xl">
@@ -22,25 +23,25 @@ export async function render(container) {
           <!-- System settings -->
           <div class="col-lg-6">
             <div class="card">
-              <div class="card-header"><h3 class="card-title">Hub</h3></div>
+              <div class="card-header"><h3 class="card-title">${t('settings.hub_section')}</h3></div>
               <div class="card-body">
                 <div class="mb-2">
-                  <label class="form-label">Nome azienda/hub</label>
+                  <label class="form-label">${t('settings.company_name')}</label>
                   <input id="s-company" type="text" class="form-control" value="${sys?.company_name || ''}" />
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">Colore primario</label>
+                  <label class="form-label">${t('settings.primary_color')}</label>
                   <input id="s-color" type="color" class="form-control form-control-color" value="${sys?.primary_color || '#206bc4'}" />
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">Retention telemetria (giorni)</label>
+                  <label class="form-label">${t('settings.tel_retention')}</label>
                   <input id="s-tel-ret" type="number" class="form-control" value="${sys?.telemetry_retention_days || 30}" min="1" max="365" />
                 </div>
                 <div class="mb-3">
-                  <label class="form-label">Retention audit log (giorni)</label>
+                  <label class="form-label">${t('settings.audit_retention')}</label>
                   <input id="s-audit-ret" type="number" class="form-control" value="${sys?.audit_retention_days || 90}" min="1" />
                 </div>
-                <button id="s-save" class="btn btn-primary">Salva</button>
+                <button id="s-save" class="btn btn-primary">${t('settings.save')}</button>
               </div>
             </div>
           </div>
@@ -49,19 +50,19 @@ export async function render(container) {
           <div class="col-lg-6">
             <div class="card">
               <div class="card-header d-flex align-items-center">
-                <h3 class="card-title mb-0">SMTP (notifiche)</h3>
+                <h3 class="card-title mb-0">${t('settings.smtp_section')}</h3>
                 <div class="ms-auto form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="smtp-enabled" ${smtp?.enabled ? 'checked' : ''} />
                 </div>
               </div>
               <div class="card-body">
                 <div class="mb-2">
-                  <label class="form-label">Host</label>
+                  <label class="form-label">${t('settings.smtp_host')}</label>
                   <input id="smtp-host" type="text" class="form-control" value="${smtp?.host || ''}" />
                 </div>
                 <div class="row mb-2">
                   <div class="col">
-                    <label class="form-label">Porta</label>
+                    <label class="form-label">${t('settings.smtp_port')}</label>
                     <input id="smtp-port" type="number" class="form-control" value="${smtp?.port || 587}" />
                   </div>
                   <div class="col-auto d-flex align-items-end pb-1">
@@ -72,18 +73,18 @@ export async function render(container) {
                   </div>
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">Username</label>
+                  <label class="form-label">${t('settings.smtp_user')}</label>
                   <input id="smtp-user" type="text" class="form-control" value="${smtp?.username || ''}" />
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">Password</label>
-                  <input id="smtp-pass" type="password" class="form-control" placeholder="${smtp?.password ? '••••••••' : 'non impostata'}" />
+                  <label class="form-label">${t('settings.smtp_pass')}</label>
+                  <input id="smtp-pass" type="password" class="form-control" placeholder="${smtp?.password ? '••••••••' : t('settings.smtp_not_set')}" />
                 </div>
                 <div class="mb-3">
-                  <label class="form-label">Indirizzo mittente</label>
+                  <label class="form-label">${t('settings.smtp_from')}</label>
                   <input id="smtp-from" type="email" class="form-control" value="${smtp?.from_address || ''}" />
                 </div>
-                <button id="smtp-save" class="btn btn-primary">Salva SMTP</button>
+                <button id="smtp-save" class="btn btn-primary">${t('settings.smtp_save')}</button>
               </div>
             </div>
           </div>
@@ -100,8 +101,8 @@ export async function render(container) {
         telemetry_retention_days: parseInt(container.querySelector('#s-tel-ret').value),
         audit_retention_days: parseInt(container.querySelector('#s-audit-ret').value),
       });
-      showToast('Impostazioni salvate', 'success');
-    } catch (e) { showToast(e.detail || 'Errore', 'error'); }
+      showToast(t('settings.saved'), 'success');
+    } catch (e) { showToast(e.detail || t('msg.error', {}), 'error'); }
   });
 
   container.querySelector('#smtp-save').addEventListener('click', async () => {
@@ -117,7 +118,7 @@ export async function render(container) {
     if (pass) payload.password = pass;
     try {
       await apiPatch('/settings/smtp', payload);
-      showToast('SMTP salvato', 'success');
-    } catch (e) { showToast(e.detail || 'Errore', 'error'); }
+      showToast(t('settings.smtp_saved'), 'success');
+    } catch (e) { showToast(e.detail || t('msg.error', {}), 'error'); }
   });
 }

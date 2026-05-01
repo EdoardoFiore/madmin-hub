@@ -1,6 +1,7 @@
 /**
  * Shared UI utilities: toast, spinner, formatters.
  */
+import { t } from './i18n.js';
 
 // ── Toast ───────────────────────────────────────────────────────────────────
 
@@ -71,25 +72,25 @@ export function relativeTime(isoStr) {
   if (!isoStr) return '—';
   const diff = Date.now() - new Date(isoStr + (isoStr.endsWith('Z') ? '' : 'Z')).getTime();
   const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s fa`;
+  if (s < 60) return t('time.s_ago', { n: s });
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m fa`;
+  if (m < 60) return t('time.m_ago', { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h fa`;
-  return `${Math.floor(h / 24)}g fa`;
+  if (h < 24) return t('time.h_ago', { n: h });
+  return t('time.d_ago', { n: Math.floor(h / 24) });
 }
 
 export function statusBadge(ws_connected, enrollment_status) {
-  if (enrollment_status === 'revoked') return `<span class="badge badge-revoked">Revocata</span>`;
-  if (enrollment_status === 'pending') return `<span class="badge badge-pending">In attesa</span>`;
-  if (ws_connected) return `<span class="badge badge-online">Online</span>`;
-  return `<span class="badge badge-offline">Offline</span>`;
+  if (enrollment_status === 'revoked') return `<span class="badge badge-revoked">${t('status.revoked')}</span>`;
+  if (enrollment_status === 'pending') return `<span class="badge badge-pending">${t('status.pending')}</span>`;
+  if (ws_connected) return `<span class="badge badge-online">${t('status.online')}</span>`;
+  return `<span class="badge badge-offline">${t('status.offline')}</span>`;
 }
 
 export function wsPill(connected) {
   return connected
-    ? `<span class="ws-pill online"><span class="status-dot online"></span>Online</span>`
-    : `<span class="ws-pill offline"><span class="status-dot offline"></span>Offline</span>`;
+    ? `<span class="ws-pill online"><span class="status-dot online"></span>${t('status.online')}</span>`
+    : `<span class="ws-pill offline"><span class="status-dot offline"></span>${t('status.offline')}</span>`;
 }
 
 export function fmtPercent(v) {

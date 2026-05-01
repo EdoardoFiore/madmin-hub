@@ -14,12 +14,13 @@ from datetime import timedelta
 from typing import List, Optional
 
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_session
+from core.i18n import get_lang, tr
 
 from . import service
 from .dependencies import get_current_user, require_permission
@@ -71,14 +72,16 @@ async def init_first_user(payload: InitPayload, session: AsyncSession = Depends(
 
 @router.post("/token", response_model=Token)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     user = await service.authenticate_user(session, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Username o password non validi",
+            detail=tr("invalid_credentials", lang),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -104,15 +107,17 @@ async def login(
 
 @router.post("/token/2fa", response_model=Token)
 async def login_2fa(
+    request: Request,
     code: str,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     if not current_user.totp_enabled or not current_user.totp_secret:
-        raise HTTPException(status_code=400, detail="2FA non abilitata")
+        raise HTTPException(status_code=400, detail=tr("2fa_not_enabled", lang))
     secret = service.decrypt_secret(current_user.totp_secret, purpose="totp")
     if not pyotp.TOTP(secret).verify(code, valid_window=1):
-        raise HTTPException(status_code=401, detail="Codice 2FA non valido")
+        raise HTTPException(status_code=401, detail=tr("invalid_2fa_code", lang))
     await service.update_last_login(session, current_user)
     token = service.create_access_token(
         {"sub": current_user.username, "user_id": str(current_user.id)}
@@ -129,14 +134,16 @@ async def me(current_user: User = Depends(get_current_user)):
 
 @router.patch("/me/preferences", response_model=UserResponse)
 async def update_preferences(
+    request: Request,
     payload: PreferencesUpdate,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     try:
         json.loads(payload.preferences)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Preferences must be valid JSON")
+        raise HTTPException(status_code=400, detail=tr("preferences_invalid_json", lang))
     current_user.preferences = payload.preferences
     session.add(current_user)
     return service.user_to_response(current_user)
@@ -144,19 +151,21 @@ async def update_preferences(
 
 @router.post("/me/password")
 async def change_my_password(
+    request: Request,
     payload: PasswordChange,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     if not service.verify_password(payload.current_password, current_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Password attuale non valida")
+        raise HTTPException(status_code=401, detail=tr("invalid_current_password", lang))
     ok, msg = service.validate_password_strength(payload.new_password)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     current_user.hashed_password = service.get_password_hash(payload.new_password)
     session.add(current_user)
     await token_blacklist.revoke_user(session, current_user.id)
-    return {"detail": "Password aggiornata"}
+    return {"detail": tr("password_updated", lang)}
 
 
 # --- 2FA setup ---
@@ -170,9 +179,14 @@ async def my_2fa_status(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/me/2fa/setup")
-async def setup_2fa(current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def setup_2fa(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
     if current_user.totp_enabled:
-        raise HTTPException(status_code=400, detail="2FA already enabled")
+        raise HTTPException(status_code=400, detail=tr("2fa_already_enabled", lang))
     secret = pyotp.random_base32()
     current_user.totp_secret = service.encrypt_secret(secret, purpose="totp")
     session.add(current_user)
@@ -184,28 +198,35 @@ async def setup_2fa(current_user: User = Depends(get_current_user), session: Asy
 
 @router.post("/me/2fa/enable")
 async def enable_2fa(
+    request: Request,
     payload: TOTPVerify,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     if not current_user.totp_secret:
-        raise HTTPException(status_code=400, detail="No 2FA setup initiated")
+        raise HTTPException(status_code=400, detail=tr("no_2fa_setup", lang))
     secret = service.decrypt_secret(current_user.totp_secret, purpose="totp")
     if not pyotp.TOTP(secret).verify(payload.code, valid_window=1):
-        raise HTTPException(status_code=401, detail="Codice non valido")
+        raise HTTPException(status_code=401, detail=tr("invalid_code", lang))
     current_user.totp_enabled = True
     session.add(current_user)
-    return {"detail": "2FA attivata"}
+    return {"detail": tr("2fa_enabled", lang)}
 
 
 @router.delete("/me/2fa/disable")
-async def disable_2fa(current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def disable_2fa(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
     if current_user.totp_enforced:
-        raise HTTPException(status_code=403, detail="2FA enforced — non disabilitabile")
+        raise HTTPException(status_code=403, detail=tr("2fa_enforced", lang))
     current_user.totp_enabled = False
     current_user.totp_secret = None
     session.add(current_user)
-    return {"detail": "2FA disattivata"}
+    return {"detail": tr("2fa_disabled", lang)}
 
 
 # --- Users management ---
@@ -246,16 +267,18 @@ async def get_user(
 
 @router.patch("/users/{username}", response_model=UserResponse)
 async def update_user(
+    request: Request,
     username: str,
     payload: UserUpdate,
     current_user: User = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     target = await service.get_user_by_username(session, username)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     if target.is_protected and target.id != current_user.id:
-        raise HTTPException(status_code=403, detail="Utente protetto: solo il proprietario può modificarlo")
+        raise HTTPException(status_code=403, detail=tr("protected_owner_only", lang))
     try:
         updated = await service.update_user(session, target.id, payload)
     except ValueError as e:
@@ -267,20 +290,22 @@ async def update_user(
 
 @router.delete("/users/{username}")
 async def delete_user(
+    request: Request,
     username: str,
     current_user: User = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_session),
 ):
+    lang = get_lang(request)
     target = await service.get_user_by_username(session, username)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     if target.is_protected:
-        raise HTTPException(status_code=403, detail="Utente protetto non eliminabile")
+        raise HTTPException(status_code=403, detail=tr("protected_no_delete", lang))
     if target.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Non puoi eliminare te stesso")
+        raise HTTPException(status_code=400, detail=tr("cannot_delete_self", lang))
     await token_blacklist.revoke_user(session, target.id)
     await service.delete_user(session, target.id)
-    return {"detail": "Eliminato"}
+    return {"detail": tr("user_deleted", lang)}
 
 
 # --- Permissions ---

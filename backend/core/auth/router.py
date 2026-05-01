@@ -308,6 +308,27 @@ async def delete_user(
     return {"detail": tr("user_deleted", lang)}
 
 
+# --- Admin 2FA reset ---
+
+@router.delete("/users/{username}/2fa")
+async def admin_reset_2fa(
+    request: Request,
+    username: str,
+    current_user: User = Depends(require_permission("users.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    target = await service.get_user_by_username(session, username)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    target.totp_enabled = False
+    target.totp_secret = None
+    target.totp_enforced = False
+    session.add(target)
+    await token_blacklist.revoke_user(session, target.id)
+    return {"detail": tr("2fa_reset_done", lang)}
+
+
 # --- Permissions ---
 
 @router.get("/permissions", response_model=List[PermissionResponse])

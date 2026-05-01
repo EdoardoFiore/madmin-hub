@@ -113,8 +113,7 @@ async def list_groups(
     user: User = Depends(require_permission("hub.view")),
     session: AsyncSession = Depends(get_session),
 ):
-    groups = await inst_svc.list_groups(session)
-    return groups
+    return await inst_svc.list_groups(session)
 
 
 @router.post("/api/groups")
@@ -124,7 +123,49 @@ async def create_group(
     session: AsyncSession = Depends(get_session),
 ):
     g = await inst_svc.create_group(session, payload.name, payload.description, payload.color)
-    return g
+    return inst_svc.group_to_dict(g, 0)
+
+
+class GroupPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+
+
+@router.get("/api/groups/{group_id}")
+async def get_group_detail(
+    request: Request,
+    group_id: uuid.UUID,
+    user: User = Depends(require_permission("hub.view")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    g = await inst_svc.get_group(session, group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail=tr("group_not_found", lang))
+    members = await inst_svc.list_instances(session, group_id=group_id)
+    return {
+        **inst_svc.group_to_dict(g, len(members)),
+        "instances": [inst_svc.instance_to_dict(i) for i in members],
+    }
+
+
+@router.patch("/api/groups/{group_id}")
+async def patch_group(
+    request: Request,
+    group_id: uuid.UUID,
+    payload: GroupPatch,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    g = await inst_svc.get_group(session, group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail=tr("group_not_found", lang))
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(g, k, v)
+    session.add(g)
+    return inst_svc.group_to_dict(g)
 
 
 @router.delete("/api/groups/{group_id}")
@@ -264,3 +305,31 @@ async def agent_enroll(
         ws_url=ws_url,
         heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
     )
+
+
+# --- Bulk operations ---
+
+class BulkUpdate(BaseModel):
+    instance_ids: List[uuid.UUID]
+    action: str  # set_group | add_tag | remove_tag | revoke
+    value: Optional[str] = None  # group UUID, tag string, or None for revoke
+
+
+@router.post("/api/instances/bulk")
+async def bulk_update(
+    request: Request,
+    payload: BulkUpdate,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    valid_actions = {"set_group", "add_tag", "remove_tag", "revoke"}
+    if payload.action not in valid_actions:
+        raise HTTPException(status_code=400, detail=tr("invalid_bulk_action", lang))
+    try:
+        results = await inst_svc.bulk_update_instances(
+            session, payload.instance_ids, payload.action, payload.value
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"detail": tr("bulk_done", lang), **results}

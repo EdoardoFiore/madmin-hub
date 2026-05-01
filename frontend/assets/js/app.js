@@ -11,7 +11,9 @@ const ROUTES = {
   dashboard:     () => import('./views/dashboard.js'),
   instances:     () => import('./views/instances.js'),
   instance:      () => import('./views/instance_detail.js'),
-  groups:        () => import('./views/groups.js'),
+  groups:        (params) => params?.length
+    ? import('./views/group_detail.js')
+    : import('./views/groups.js'),
   enrollment:    () => import('./views/enrollment.js'),
   'ssh-keys':    () => import('./views/ssh_keys.js'),
   users:         () => import('./views/users.js'),
@@ -55,7 +57,7 @@ async function navigate() {
   setActiveMenu(route);
 
   try {
-    const mod = await loader();
+    const mod = await loader(params);
     await mod.render(container, params);
   } catch (err) {
     console.error('Route render error:', err);

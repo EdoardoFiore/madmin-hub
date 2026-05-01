@@ -1,19 +1,23 @@
 """
 Settings router: system + SMTP.
 """
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import require_permission
+from core.auth.dependencies import get_current_user, require_permission
 from core.auth.models import User
 from core.auth.service import decrypt_secret, encrypt_secret
 from core.database import get_session
+from core.i18n import get_lang, tr
 
 from .models import SMTPSettings, SystemSettings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
@@ -43,6 +47,8 @@ class SystemUpdate(BaseModel):
     primary_color: Optional[str] = None
     logo_url: Optional[str] = None
     favicon_url: Optional[str] = None
+    support_url: Optional[str] = None
+    default_language: Optional[str] = None
     audit_retention_days: Optional[int] = None
     telemetry_retention_days: Optional[int] = None
 
@@ -115,3 +121,35 @@ def get_smtp_password_plain(s: SMTPSettings) -> Optional[str]:
         return decrypt_secret(s.password, purpose="smtp")
     except Exception:
         return None
+
+
+class SmtpTestPayload(BaseModel):
+    to: Optional[str] = None
+
+
+@router.post("/smtp/test")
+async def test_smtp(
+    request: Request,
+    payload: SmtpTestPayload,
+    user: User = Depends(require_permission("settings.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    s = await _get_or_create_smtp(session)
+    if not s.enabled or not s.host or not s.from_address:
+        raise HTTPException(status_code=400, detail=tr("smtp_not_configured", lang))
+
+    recipient = payload.to or user.email
+    if not recipient:
+        raise HTTPException(status_code=400, detail=tr("smtp_test_no_recipient", lang))
+
+    from core.notifications.smtp import send_email
+    ok = await send_email(
+        session,
+        to=recipient,
+        subject="MADMIN Hub — SMTP Test",
+        body="SMTP configuration is working correctly.",
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=tr("smtp_send_failed", lang))
+    return {"detail": tr("smtp_test_sent", lang)}

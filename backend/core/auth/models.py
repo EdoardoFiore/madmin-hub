@@ -82,6 +82,7 @@ class UserUpdate(SQLModel):
     email: Optional[str] = None
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
+    totp_enforced: Optional[bool] = None
 
 
 class UserResponse(SQLModel):

@@ -144,6 +144,8 @@ async def update_user(session: AsyncSession, user_id: uuid.UUID, data: UserUpdat
         user.is_active = data.is_active
     if data.is_superuser is not None:
         user.is_superuser = data.is_superuser
+    if data.totp_enforced is not None:
+        user.totp_enforced = data.totp_enforced
 
     session.add(user)
     await session.flush()

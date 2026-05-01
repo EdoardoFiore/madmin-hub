@@ -14,6 +14,8 @@ class SystemSettings(SQLModel, table=True):
     primary_color: str = Field(default="#206bc4", max_length=20)
     logo_url: Optional[str] = Field(default=None, max_length=500)
     favicon_url: Optional[str] = Field(default=None, max_length=500)
+    support_url: Optional[str] = Field(default=None, max_length=500)
+    default_language: str = Field(default="it", max_length=5)
     audit_retention_days: int = Field(default=90)
     telemetry_retention_days: int = Field(default=30)
 

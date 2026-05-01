@@ -15,7 +15,7 @@ from core.database import async_session_maker
 from hub.instances.enrollment import verify_agent_token
 from hub.instances.models import ManagedInstance
 from hub.instances.service import mark_ws_connected, mark_ws_disconnected, update_last_seen
-from hub.telemetry.ingest import ingest_heartbeat
+from hub.telemetry.ingest import ingest_heartbeat, ingest_telemetry_batch
 
 from . import dispatcher as disp
 from .manager import ws_manager
@@ -26,6 +26,8 @@ from .protocol import (
     FRAME_PING,
     FRAME_PONG,
 )
+
+FRAME_TELEMETRY_BATCH = "telemetry_batch"
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,22 @@ async def ws_endpoint(
                     inst = result.scalar_one_or_none()
                     if inst:
                         await ingest_heartbeat(session, instance_id, payload)
+                        await update_last_seen(session, inst)
+
+            elif frame_type == FRAME_TELEMETRY_BATCH:
+                async with async_session_maker() as session:
+                    result = await session.execute(
+                        select(ManagedInstance).where(ManagedInstance.id == instance_id)
+                    )
+                    inst = result.scalar_one_or_none()
+                    if inst:
+                        await ingest_telemetry_batch(session, instance_id, payload)
+                        # Update instance version/os_info if provided
+                        if payload.get("version"):
+                            inst.version = payload["version"]
+                        if payload.get("os_info"):
+                            import json as _json
+                            inst.os_info = _json.dumps(payload["os_info"])
                         await update_last_seen(session, inst)
 
             elif frame_type == FRAME_COMMAND_RESULT:

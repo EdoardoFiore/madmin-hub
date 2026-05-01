@@ -4,9 +4,9 @@ Instances service: helpers for queries, status updates, group management.
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import InstanceGroup, ManagedInstance
@@ -76,9 +76,69 @@ async def create_group(
     return g
 
 
-async def list_groups(session: AsyncSession) -> List[InstanceGroup]:
+async def list_groups(session: AsyncSession) -> List[dict]:
     result = await session.execute(select(InstanceGroup).order_by(InstanceGroup.name))
-    return result.scalars().all()
+    groups = result.scalars().all()
+    counts = await _group_member_counts(session)
+    return [group_to_dict(g, counts.get(g.id, 0)) for g in groups]
+
+
+async def get_group(session: AsyncSession, group_id: uuid.UUID) -> Optional[InstanceGroup]:
+    result = await session.execute(select(InstanceGroup).where(InstanceGroup.id == group_id))
+    return result.scalar_one_or_none()
+
+
+async def _group_member_counts(session: AsyncSession) -> Dict[uuid.UUID, int]:
+    result = await session.execute(
+        select(ManagedInstance.group_id, func.count().label("cnt"))
+        .where(ManagedInstance.group_id.is_not(None))
+        .group_by(ManagedInstance.group_id)
+    )
+    return {row.group_id: row.cnt for row in result.all()}
+
+
+def group_to_dict(g: InstanceGroup, member_count: int = 0) -> dict:
+    return {
+        "id": str(g.id),
+        "name": g.name,
+        "description": g.description,
+        "color": g.color,
+        "created_at": g.created_at.isoformat(),
+        "member_count": member_count,
+    }
+
+
+async def bulk_update_instances(
+    session: AsyncSession,
+    instance_ids: List[uuid.UUID],
+    action: str,
+    value: Optional[str],
+) -> dict:
+    results = {"updated": 0, "errors": []}
+    for iid in instance_ids:
+        inst = await get_instance(session, iid)
+        if not inst:
+            results["errors"].append(str(iid))
+            continue
+        if action == "set_group":
+            inst.group_id = uuid.UUID(value) if value else None
+        elif action == "add_tag":
+            tags = json.loads(inst.tags or "[]")
+            if value and value not in tags:
+                tags.append(value)
+            inst.tags = json.dumps(tags)
+        elif action == "remove_tag":
+            tags = json.loads(inst.tags or "[]")
+            inst.tags = json.dumps([t for t in tags if t != value])
+        elif action == "revoke":
+            inst.enrollment_status = "revoked"
+            inst.ws_connected = False
+        else:
+            raise ValueError(f"Unknown action: {action}")
+        inst.updated_at = datetime.utcnow()
+        session.add(inst)
+        results["updated"] += 1
+    return results
 
 
 def instance_to_dict(i: ManagedInstance) -> dict:

@@ -121,12 +121,14 @@ async def ws_endpoint(
                     inst = result.scalar_one_or_none()
                     if inst:
                         await ingest_telemetry_batch(session, instance_id, payload)
-                        # Update instance version/os_info if provided
+                        # Update instance version/os_info/ip if provided
                         if payload.get("version"):
                             inst.version = payload["version"]
                         if payload.get("os_info"):
                             import json as _json
                             inst.os_info = _json.dumps(payload["os_info"])
+                        if payload.get("public_ip"):
+                            inst.ip_address = payload["public_ip"]
                         await update_last_seen(session, inst)
 
             elif frame_type == FRAME_COMMAND_RESULT:

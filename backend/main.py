@@ -72,6 +72,10 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if settings.debug else None,
     )
 
+    # Trust X-Forwarded-For from reverse proxy (nginx)
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
     # CORS
     app.add_middleware(
         CORSMiddleware,

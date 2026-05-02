@@ -31,8 +31,9 @@ async function loadDashboard(container) {
       apiGet('/health').catch(() => null),
     ]);
 
-    const { total = 0, online = 0, offline = 0, groups_count = 0, active_tokens_count = 0,
-            recent_activity = [] } = fleet || {};
+    const { summary = {}, recent_activity = [] } = fleet || {};
+    const { total = 0, online = 0, offline = 0,
+            groups: groups_count = 0, active_tokens: active_tokens_count = 0 } = summary;
 
     el.innerHTML = `
       <!-- Stat cards -->
@@ -60,7 +61,7 @@ async function loadDashboard(container) {
           <div class="data-table" style="padding:16px">
             <div style="font-weight:600;font-size:14px;margin-bottom:12px">${t('dashboard.activity')}</div>
             ${recent_activity.length
-              ? `<div class="activity-feed">${recent_activity.slice(0, 15).map(a => activityItem(a)).join('')}</div>`
+              ? `<div class="activity-feed" style="max-height:320px;overflow-y:auto">${recent_activity.slice(0, 15).map(a => activityItem(a)).join('')}</div>`
               : `<div style="text-align:center;padding:20px;color:var(--tblr-secondary);font-size:13px">${t('dashboard.no_activity')}</div>`
             }
           </div>
@@ -165,7 +166,7 @@ function activityItem(a) {
     <div class="activity-feed-icon">${actionLabel(a.method)}</div>
     <div class="activity-feed-text">
       <strong>${escapeHtml(a.username || '—')}</strong> ${escapeHtml(a.path || '')}
-      <div class="activity-feed-time">${relativeTime(a.timestamp)}</div>
+      <div class="activity-feed-time">${relativeTime(a.ts)}</div>
     </div>
   </div>`;
 }

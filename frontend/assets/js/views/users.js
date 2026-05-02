@@ -1,7 +1,8 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '../api.js';
 import { t } from '../i18n.js';
 import { escapeHtml, relativeTime, showToast, confirmDialog } from '../utils.js';
 import { openDrawer } from '../shell/drawer.js';
+import { getUser } from '../app.js';
 
 let _users = [], _perms = [];
 
@@ -124,6 +125,8 @@ function showInviteModal() {
           <input type="email" id="uf-email" class="form-control" /></div>
         <div class="mb-3"><label class="form-label">${t('users.field_password')} *</label>
           <input type="password" id="uf-password" class="form-control" autocomplete="new-password" /></div>
+        <div class="mb-3"><label class="form-label">${t('users.field_password_confirm')} *</label>
+          <input type="password" id="uf-password-confirm" class="form-control" autocomplete="new-password" /></div>
         <div class="mb-3"><label class="form-label">${t('users.field_role')}</label>
           <select id="uf-role" class="form-select">
             <option value="user">${t('users.role_user')}</option>
@@ -147,7 +150,9 @@ function showInviteModal() {
   modalEl.querySelector('#uf-create').addEventListener('click', async () => {
     const username = modalEl.querySelector('#uf-username').value.trim();
     const password = modalEl.querySelector('#uf-password').value;
+    const confirm  = modalEl.querySelector('#uf-password-confirm').value;
     if (!username || !password) { showToast(t('users.username_pwd_required'), 'error'); return; }
+    if (password !== confirm) { showToast(t('users.pwd_mismatch'), 'error'); return; }
     const isAdmin  = modalEl.querySelector('#uf-role').value === 'admin';
     const enforce2fa = modalEl.querySelector('#uf-2fa').checked;
     try {
@@ -212,9 +217,10 @@ function renderUserGeneral(panel, user) {
     ${row(t('users.col_lastlogin'),  relativeTime(user.last_login_at))}
     ${row(t('users.col_status'),     `<span class="hub-badge ${user.is_active ? 'online' : 'offline'}">${user.is_active ? t('users.status_active') : t('users.status_disabled')}</span>`)}
     </div>
-    ${!user.is_protected ? `<div style="display:flex;gap:8px;margin-top:16px">
-      ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-warning" id="udr-reset-2fa">${t('users.reset_2fa')}</button>` : ''}
-    </div>` : ''}`;
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      ${getUser()?.username === user.username ? `<button class="btn btn-sm btn-outline-secondary" id="udr-change-pwd">${t('users.change_password')}</button>` : ''}
+      ${!user.is_protected && user.totp_enabled ? `<button class="btn btn-sm btn-outline-warning" id="udr-reset-2fa">${t('users.reset_2fa')}</button>` : ''}
+    </div>`;
 
   panel.querySelector('#udr-reset-2fa')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('users.reset_2fa'), t('users.confirm_reset_2fa', { username: user.username }), { okLabel: t('users.reset_2fa'), okClass: 'btn-warning' });
@@ -223,6 +229,44 @@ function renderUserGeneral(panel, user) {
       await apiPost(`/auth/users/${user.username}/2fa`, {});
       showToast(t('users.reset_2fa_done'), 'success');
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+
+  panel.querySelector('#udr-change-pwd')?.addEventListener('click', () => {
+    const m = document.createElement('div');
+    m.className = 'modal fade';
+    m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">${t('users.change_password')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="mb-3"><label class="form-label">${t('users.field_current_pwd')}</label>
+            <input type="password" id="cp-current" class="form-control" autocomplete="current-password" /></div>
+          <div class="mb-3"><label class="form-label">${t('users.field_password')}</label>
+            <input type="password" id="cp-new" class="form-control" autocomplete="new-password" /></div>
+          <div class="mb-3"><label class="form-label">${t('users.field_password_confirm')}</label>
+            <input type="password" id="cp-confirm" class="form-control" autocomplete="new-password" /></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+          <button type="button" class="btn btn-primary" id="cp-save">${t('modal.save')}</button>
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    const modal = new window.bootstrap.Modal(m);
+    modal.show();
+    m.querySelector('#cp-save').addEventListener('click', async () => {
+      const current = m.querySelector('#cp-current').value;
+      const newPwd  = m.querySelector('#cp-new').value;
+      const confirm = m.querySelector('#cp-confirm').value;
+      if (!current || !newPwd) { showToast(t('users.username_pwd_required'), 'error'); return; }
+      if (newPwd !== confirm) { showToast(t('users.pwd_mismatch'), 'error'); return; }
+      try {
+        await apiPost('/auth/me/password', { current_password: current, new_password: newPwd });
+        showToast(t('users.password_changed'), 'success');
+        modal.hide();
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+    m.addEventListener('hidden.bs.modal', () => m.remove());
   });
 }
 
@@ -247,7 +291,7 @@ function renderUserPerms(panel, user, userPerms) {
   panel.querySelector('#udr-save-perms')?.addEventListener('click', async () => {
     const slugs = [...panel.querySelectorAll('.perm-chk:checked')].map(c => c.dataset.slug);
     try {
-      await apiPost(`/auth/users/${user.username}/permissions`, { permissions: slugs });
+      await apiPut(`/auth/users/${user.username}/permissions`, { permissions: slugs });
       showToast(t('msg.saved'), 'success');
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });

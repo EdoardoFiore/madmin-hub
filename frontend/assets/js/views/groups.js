@@ -37,9 +37,15 @@ async function loadGroups() {
   } catch (_) {}
 }
 
+let _groupSearch = '';
+
 function renderList() {
   const panel = document.getElementById('groups-list-panel');
   if (!panel) return;
+
+  const filtered = _groupSearch
+    ? _groups.filter(g => g.name.toLowerCase().includes(_groupSearch.toLowerCase()))
+    : _groups;
 
   if (!_groups.length) {
     panel.innerHTML = `<div class="data-table" style="padding:20px;text-align:center;color:var(--tblr-secondary);font-size:13px">
@@ -48,8 +54,12 @@ function renderList() {
     return;
   }
 
-  panel.innerHTML = `<div class="data-table" style="padding:8px">
-    ${_groups.map(g => `
+  panel.innerHTML = `
+    <div style="padding:8px 8px 4px">
+      <input type="text" id="group-search" class="form-control form-control-sm" placeholder="${t('groups.search')}…" value="${escapeHtml(_groupSearch)}" />
+    </div>
+    <div class="data-table" style="padding:8px">
+    ${filtered.map(g => `
       <div class="split-list-item ${_selected === g.id ? 'active' : ''}" data-id="${g.id}">
         <span style="width:10px;height:10px;border-radius:50%;background:${escapeHtml(g.color||'#adb5bd')};flex-shrink:0"></span>
         <div style="flex:1;min-width:0">
@@ -63,6 +73,10 @@ function renderList() {
       </div>`).join('')}
   </div>`;
 
+  panel.querySelector('#group-search')?.addEventListener('input', e => {
+    _groupSearch = e.target.value;
+    renderList();
+  });
   panel.querySelectorAll('.split-list-item').forEach(el => {
     el.addEventListener('click', () => selectGroup(el.dataset.id));
   });
@@ -123,7 +137,7 @@ async function renderGroupInstances(panel, groupId) {
       <thead><tr><th>${t('instances.col_status')}</th><th>${t('instances.col_name')}</th><th>${t('instances.col_contact')}</th></tr></thead>
       <tbody>${members.map(i => `<tr class="clickable" onclick="window.location.hash='instances/${i.id}'">
         <td>${statusBadge(i.ws_connected, i.enrollment_status)}</td>
-        <td><strong>${escapeHtml(i.hostname || i.id)}</strong></td>
+        <td><strong>${escapeHtml(i.name || i.id)}</strong></td>
         <td>${relativeTime(i.last_seen_at)}</td>
       </tr>`).join('')}</tbody>
     </table></div>`;
@@ -135,18 +149,28 @@ async function renderGroupInstances(panel, groupId) {
 async function renderGroupSsh(panel, groupId) {
   try {
     const assignments = await apiGet(`/ssh/assignments?target_id=${groupId}&target_type=group`) || [];
-    if (!assignments.length) {
-      panel.innerHTML = `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px">${t('ssh.none_assign')}</div>`;
-      return;
-    }
-    panel.innerHTML = `<div class="data-table mt-2"><table>
-      <thead><tr><th>${t('ssh.col_key')}</th><th>${t('ssh.col_user')}</th><th>${t('ssh.col_status')}</th></tr></thead>
-      <tbody>${assignments.map(a => `<tr>
-        <td>${escapeHtml(a.key_name || a.ssh_key_id)}</td>
-        <td><span class="text-mono">${escapeHtml(a.linux_user || '—')}</span></td>
-        <td><span class="hub-badge ${a.status}">${escapeHtml(a.status)}</span></td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+        <button class="btn btn-sm btn-outline-secondary" id="grp-assign-ssh">
+          <i class="ti ti-key me-1"></i>${t('instance.assign_ssh')}
+        </button>
+      </div>
+      ${!assignments.length
+        ? `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px">${t('ssh.none_assign')}</div>`
+        : `<div class="data-table mt-2"><table>
+            <thead><tr><th>${t('ssh.col_key')}</th><th>${t('ssh.col_user')}</th><th>${t('ssh.col_status')}</th></tr></thead>
+            <tbody>${assignments.map(a => `<tr>
+              <td>${escapeHtml(a.key_name || a.ssh_key_id)}</td>
+              <td><span class="text-mono">${escapeHtml(a.linux_user || '—')}</span></td>
+              <td><span class="hub-badge ${a.status}">${escapeHtml(a.status)}</span></td>
+            </tr>`).join('')}</tbody>
+          </table></div>`
+      }`;
+    panel.querySelector('#grp-assign-ssh')?.addEventListener('click', async () => {
+      const { showSshAssignModal } = await import('./instance_drawer.js');
+      await showSshAssignModal(groupId, 'group');
+      await renderGroupSsh(panel, groupId);
+    });
   } catch (_) {
     panel.innerHTML = `<div class="alert alert-danger">${t('groups.load_error')}</div>`;
   }

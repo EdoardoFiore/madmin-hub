@@ -44,6 +44,12 @@ export async function render(container, params) {
       <button class="btn btn-sm btn-ghost-secondary" id="bulk-clear">${t('instances.bulk_clear')}</button>
     </div>`;
 
+  // Apply pending tag filter from inventory click
+  if (window.__pendingTagFilter) {
+    _filters.tag = window.__pendingTagFilter;
+    window.__pendingTagFilter = null;
+  }
+
   await loadAll();
   wireFilters();
 
@@ -146,7 +152,7 @@ function wireFilters() {
 
 function filtered() {
   return _instances.filter(i => {
-    if (_filters.search && !i.hostname?.toLowerCase().includes(_filters.search.toLowerCase())) return false;
+    if (_filters.search && !i.name?.toLowerCase().includes(_filters.search.toLowerCase())) return false;
     if (_filters.group && i.group_id !== _filters.group) return false;
     if (_filters.tag) {
       const iTags = Array.isArray(i.tags) ? i.tags : [];
@@ -187,6 +193,7 @@ function renderTable() {
     <th>${t('instances.col_version')}</th>
     <th>${t('instances.col_contact')}</th>
     <th>${t('instances.col_tags')}</th>
+    <th style="width:60px"></th>
   </tr>`;
 
   const tbody = rows.map(inst => {
@@ -204,11 +211,17 @@ function renderTable() {
         <input type="checkbox" class="form-check-input row-chk" data-id="${inst.id}" ${checked} />
       </td>
       <td>${statusBadge(inst.ws_connected, inst.enrollment_status)}</td>
-      <td><strong>${escapeHtml(inst.hostname || inst.id)}</strong>${inst.ip_address ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(inst.ip_address)}</small>` : ''}</td>
+      <td><strong>${escapeHtml(inst.name || inst.id)}</strong>${inst.ip_address ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(inst.ip_address)}</small>` : ''}</td>
       <td>${group ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>` : '<span class="text-muted">—</span>'}</td>
       <td><span class="text-mono">${escapeHtml(inst.version || '—')}</span></td>
       <td>${relativeTime(inst.last_seen_at)}</td>
       <td>${tags || '—'}</td>
+      <td onclick="event.stopPropagation()">
+        ${inst.enrollment_status === 'revoked'
+          ? `<button class="btn btn-xs btn-danger action-purge" data-id="${inst.id}" title="${t('instances.purge')}"><i class="ti ti-trash"></i></button>`
+          : `<button class="btn btn-xs btn-ghost-danger action-revoke" data-id="${inst.id}" title="${t('instances.revoke')}"><i class="ti ti-ban"></i></button>`
+        }
+      </td>
     </tr>`;
   }).join('');
 
@@ -225,6 +238,34 @@ function renderTable() {
       const id = tr.dataset.id;
       window.location.hash = `instances/${id}`;
       openInstanceDrawer(id);
+    });
+  });
+
+  // Per-row revoke / purge
+  el.querySelectorAll('.action-revoke').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const inst = _instances.find(i => i.id === id);
+      if (!await confirmDialog(t('instances.revoke'), t('instances.confirm_revoke', { name: inst?.name || id }), { okLabel: t('instances.revoke'), okClass: 'btn-danger' })) return;
+      try {
+        await apiDelete(`/instances/${id}`);
+        showToast(t('instances.revoked_ok'), 'success');
+        await loadAll();
+      } catch (e) { showToast(e.detail || t('error.generic'), 'error'); }
+    });
+  });
+
+  el.querySelectorAll('.action-purge').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const inst = _instances.find(i => i.id === id);
+      if (!await confirmDialog(t('instances.purge'), t('instances.confirm_purge', { name: inst?.name || id }), { okLabel: t('instances.purge'), okClass: 'btn-danger' })) return;
+      try {
+        await apiDelete(`/instances/${id}?purge=true`);
+        showToast(t('instances.purged_ok'), 'success');
+        _selected.delete(id);
+        await loadAll();
+      } catch (e) { showToast(e.detail || t('error.generic'), 'error'); }
     });
   });
 
@@ -287,25 +328,72 @@ async function bulkMove() {
     modal.show();
   });
   if (groupId === undefined) return;
-  await apiPost('/instances/bulk', { instance_ids: [..._selected], action: 'set_group', group_id: groupId || null });
+  await apiPost('/instances/bulk', { instance_ids: [..._selected], action: 'set_group', value: groupId || null });
   _selected.clear();
   showToast(t('instances.bulk_done'), 'success');
   await loadAll();
 }
 
 async function bulkAddTag() {
-  const { inputDialog } = await import('../utils.js');
-  const tag = await inputDialog(t('instances.bulk_add_tag'), '', { placeholder: t('instances.prompt_tag') });
-  if (!tag) return;
-  await apiPost('/instances/bulk', { instance_ids: [..._selected], action: 'add_tag', tag });
+  const selected = await tagChipModal(_tags);
+  if (!selected || !selected.length) return;
+  await Promise.all(selected.map(tag =>
+    apiPost('/instances/bulk', { instance_ids: [..._selected], action: 'add_tag', value: tag })
+  ));
   _selected.clear();
   showToast(t('instances.bulk_done'), 'success');
   await loadAll();
 }
 
+function tagChipModal(tags) {
+  return new Promise(resolve => {
+    const chosen = new Set();
+    const m = document.createElement('div');
+    m.className = 'modal fade';
+    m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">${t('instances.bulk_add_tag')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <input type="text" id="tag-chip-search" class="form-control form-control-sm mb-2" placeholder="${t('instances.search')}…" />
+          <div id="tag-chip-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:40px">
+            ${tags.map(tg => `<span class="tag-chip tag-chip-selectable" data-name="${escapeHtml(tg.name)}"
+              style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')};cursor:pointer">
+              ${escapeHtml(tg.name)}</span>`).join('')}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+          <button type="button" class="btn btn-primary" id="tag-chip-ok">${t('modal.save')}</button>
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    const modal = new window.bootstrap.Modal(m);
+    modal.show();
+
+    m.querySelectorAll('.tag-chip-selectable').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const name = chip.dataset.name;
+        if (chosen.has(name)) { chosen.delete(name); chip.style.outline = ''; }
+        else { chosen.add(name); chip.style.outline = '2px solid currentColor'; }
+      });
+    });
+
+    m.querySelector('#tag-chip-search').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      m.querySelectorAll('.tag-chip-selectable').forEach(chip => {
+        chip.style.display = chip.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+
+    m.querySelector('#tag-chip-ok').onclick = () => { modal.hide(); };
+    m.addEventListener('hidden.bs.modal', () => { m.remove(); resolve([...chosen]); }, { once: true });
+  });
+}
+
 async function openInstanceDrawer(id) {
   const inst = _instances.find(i => i.id === id);
-  const title = inst?.hostname || id;
+  const title = inst?.name || id;
   await openDrawer({
     title,
     closeHash: '#instances',

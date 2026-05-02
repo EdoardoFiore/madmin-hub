@@ -197,26 +197,44 @@ async def enroll_instance(
     if not record:
         raise ValueError("Enrollment token non valido o scaduto")
 
-    existing = await session.execute(
+    existing_res = await session.execute(
         select(ManagedInstance).where(ManagedInstance.fingerprint == fingerprint)
     )
-    if existing.scalar_one_or_none():
+    existing = existing_res.scalar_one_or_none()
+    if existing and existing.enrollment_status != "revoked":
         raise ValueError("Istanza già registrata (fingerprint duplicato)")
 
     agent_token = generate_agent_token()
-    instance = ManagedInstance(
-        name=name,
-        fingerprint=fingerprint,
-        agent_token_hash=hash_agent_token(agent_token),
-        enrollment_status="active",
-        version=version,
-        os_info=json.dumps(os_info or {}),
-        tags=record.default_tags or "[]",
-        group_id=record.target_group_id,
-    )
-    session.add(instance)
-    await session.flush()
-    await session.refresh(instance)
+
+    if existing:
+        # Re-enroll revoked instance: reuse record, reset state
+        existing.name = name
+        existing.agent_token_hash = hash_agent_token(agent_token)
+        existing.enrollment_status = "active"
+        existing.version = version
+        existing.os_info = json.dumps(os_info or {})
+        existing.tags = record.default_tags or "[]"
+        existing.group_id = record.target_group_id
+        existing.ws_connected = False
+        existing.updated_at = datetime.utcnow()
+        session.add(existing)
+        await session.flush()
+        await session.refresh(existing)
+        instance = existing
+    else:
+        instance = ManagedInstance(
+            name=name,
+            fingerprint=fingerprint,
+            agent_token_hash=hash_agent_token(agent_token),
+            enrollment_status="active",
+            version=version,
+            os_info=json.dumps(os_info or {}),
+            tags=record.default_tags or "[]",
+            group_id=record.target_group_id,
+        )
+        session.add(instance)
+        await session.flush()
+        await session.refresh(instance)
 
     await consume_enrollment_token(session, record, instance.id)
     logger.info(f"Enrolled instance {instance.id} ({name})")

@@ -1,6 +1,6 @@
-import { apiGet, apiPost } from '../api.js';
+import { apiGet, apiPost, apiPatch } from '../api.js';
 import { t } from '../i18n.js';
-import { escapeHtml, relativeTime, fmtDate, showToast, formatBytes, fmtPercent, actionLabel } from '../utils.js';
+import { escapeHtml, relativeTime, fmtDate, showToast, confirmDialog, formatBytes, fmtPercent, actionLabel } from '../utils.js';
 
 export async function render(body, id) {
   if (!id) { body.innerHTML = `<p>${t('instance.missing_id')}</p>`; return; }
@@ -54,6 +54,9 @@ async function renderInfo(panel, id, inst) {
       ${infoRow(t('instance.fingerprint'),   `<span class="text-mono" style="font-size:11px;word-break:break-all">${escapeHtml(inst.fingerprint || '—')}</span>`)}
       ${infoRow(t('instance.enroll_status'), escapeHtml(inst.enrollment_status || '—'))}
       ${infoRow(t('label.group'),            group ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>` : '—')}
+      ${infoRow(t('instances.col_tags'),     (inst.tags?.length
+        ? inst.tags.map(tg => `<span class="tag-chip" style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')}">${escapeHtml(tg.name)}</span>`).join('')
+        : '—'))}
     </div>
 
     <!-- Telemetry chart -->
@@ -83,20 +86,26 @@ async function renderInfo(panel, id, inst) {
     const series = await apiGet(`/instances/${id}/telemetry?limit=20`);
     if (Array.isArray(series) && series.length > 1 && window.ApexCharts) {
       const cats = series.map(p => fmtDate(p.timestamp));
-      new window.ApexCharts(document.getElementById('idr-chart'), {
-        chart: { type: 'line', height: 140, toolbar: { show: false }, sparkline: { enabled: false } },
-        series: [
-          { name: 'CPU %', data: series.map(p => +(p.cpu_percent || 0).toFixed(1)) },
-          { name: 'RAM %', data: series.map(p => +(p.memory_percent || 0).toFixed(1)) },
-        ],
-        xaxis: { categories: cats, labels: { show: false } },
-        yaxis: { min: 0, max: 100, labels: { formatter: v => v + '%' } },
-        stroke: { width: 2, curve: 'smooth' },
-        colors: ['#206bc4', '#2fb344'],
-        legend: { show: true, position: 'top', fontSize: '11px' },
-        grid: { borderColor: 'var(--hub-border)' },
-        tooltip: { theme: document.documentElement.getAttribute('data-bs-theme') },
-      }).render();
+      const chartEl = document.getElementById('idr-chart');
+      if (chartEl) {
+        if (chartEl._chart) chartEl._chart.destroy();
+        chartEl._chart = new window.ApexCharts(chartEl, {
+          chart: { type: 'line', height: 140, toolbar: { show: false }, sparkline: { enabled: false } },
+          series: [
+            { name: 'CPU %',  data: series.map(p => +(p.cpu_percent    || 0).toFixed(1)) },
+            { name: 'RAM %',  data: series.map(p => +(p.memory_percent || 0).toFixed(1)) },
+            { name: 'Disk %', data: series.map(p => +(p.disk_percent   || 0).toFixed(1)) },
+          ],
+          xaxis: { categories: cats, labels: { show: false } },
+          yaxis: { min: 0, max: 100, labels: { formatter: v => v + '%' } },
+          stroke: { width: 2, curve: 'smooth' },
+          colors: ['#206bc4', '#2fb344', '#f59f00'],
+          legend: { show: true, position: 'top', fontSize: '11px' },
+          grid: { borderColor: 'var(--hub-border)' },
+          tooltip: { theme: document.documentElement.getAttribute('data-bs-theme') },
+        });
+        chartEl._chart.render();
+      }
     }
   } catch (_) {}
 }
@@ -130,14 +139,37 @@ async function renderActions(panel, id, inst) {
 
   panel.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;padding-top:4px">
+      <!-- Rename -->
+      <div>
+        <label class="form-label" style="font-size:12px;color:var(--tblr-secondary)">${t('instance.label_rename')}</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="act-name" class="form-control form-control-sm" value="${escapeHtml(inst?.name || '')}" />
+          <button class="btn btn-sm btn-primary" id="act-save-name">${t('modal.save')}</button>
+        </div>
+      </div>
+      <hr style="margin:4px 0">
       <button class="btn btn-outline-primary" id="act-reload">
         <i class="ti ti-refresh me-2"></i>${t('instance.cmd_reload')}
       </button>
       <button class="btn btn-outline-secondary" id="act-backup">
         <i class="ti ti-cloud-upload me-2"></i>${t('instance.cmd_backup')}
       </button>
+      <hr style="margin:4px 0">
+      <button class="btn btn-outline-secondary" id="act-assign-ssh">
+        <i class="ti ti-key me-2"></i>${t('instance.assign_ssh')}
+      </button>
     </div>
     <div id="act-result" style="margin-top:12px"></div>`;
+
+  panel.querySelector('#act-save-name')?.addEventListener('click', async () => {
+    const name = panel.querySelector('#act-name').value.trim();
+    if (!name) return;
+    try {
+      await apiPatch(`/instances/${id}`, { name });
+      showToast(t('msg.saved'), 'success');
+      if (inst) inst.name = name;
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
 
   async function sendCmd(cmd) {
     const res = document.getElementById('act-result');
@@ -154,6 +186,7 @@ async function renderActions(panel, id, inst) {
 
   panel.querySelector('#act-reload')?.addEventListener('click', () => sendCmd('info'));
   panel.querySelector('#act-backup')?.addEventListener('click', () => sendCmd('backup'));
+  panel.querySelector('#act-assign-ssh')?.addEventListener('click', () => showSshAssignModal(id, 'instance'));
 }
 
 async function renderSsh(panel, id) {
@@ -177,7 +210,7 @@ async function renderSsh(panel, id) {
 }
 
 async function renderAudit(panel, id) {
-  const logs = await apiGet(`/logs/audit?resource=/instances/${id}&limit=30`).catch(() => ({ items: [] }));
+  const logs = await apiGet(`/logs/audit?resource=/instances/${id}&category=write&limit=30`).catch(() => ({ items: [] }));
   const items = logs?.items || logs || [];
   if (!items.length) {
     panel.innerHTML = `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px"><i class="ti ti-file-off" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>${t('audit.no_results')}</div>`;
@@ -195,4 +228,44 @@ async function renderAudit(panel, id) {
       <td>${actionLabel(a.method)}</td>
     </tr>`).join('')}
     </tbody></table></div>`;
+}
+
+export async function showSshAssignModal(targetId, targetType) {
+  const keys = await apiGet('/ssh/keys').catch(() => []);
+  if (!keys?.length) {
+    showToast(t('ssh.no_keys'), 'warning');
+    return;
+  }
+  const m = document.createElement('div');
+  m.className = 'modal fade';
+  m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('instance.assign_ssh')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">${t('ssh.col_key')}</label>
+          <select id="sa-key" class="form-select">
+            ${keys.map(k => `<option value="${k.id}">${escapeHtml(k.name)}</option>`).join('')}
+          </select></div>
+        <div class="mb-3"><label class="form-label">${t('ssh.linux_user')}</label>
+          <input type="text" id="sa-user" class="form-control" value="madmin" /></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="sa-ok">${t('modal.save')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  const modal = new window.bootstrap.Modal(m);
+  modal.show();
+  m.querySelector('#sa-ok').addEventListener('click', async () => {
+    const ssh_key_id = m.querySelector('#sa-key').value;
+    const target_user = m.querySelector('#sa-user').value.trim() || 'madmin';
+    try {
+      await apiPost('/ssh/assignments', { ssh_key_id, target_type: targetType, target_id: targetId, target_user });
+      showToast(t('ssh.assigned'), 'success');
+      modal.hide();
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+  m.addEventListener('hidden.bs.modal', () => m.remove());
 }

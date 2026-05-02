@@ -3,15 +3,15 @@ import { t } from '../i18n.js';
 import { escapeHtml, relativeTime, showToast, confirmDialog } from '../utils.js';
 
 export async function render(container, params) {
-  const tab = params?.[0] || 'tags';
+  const tab = params?.[0] || 'ssh';
 
   container.innerHTML = `
     <div class="hub-page-header">
       <h1 class="hub-page-title">${t('inventory.title')}</h1>
     </div>
     <div class="hub-tabs" id="inv-tabs">
-      <button class="hub-tab ${tab === 'tags' ? 'active' : ''}" data-tab="tags">${t('inventory.tab_tags')}</button>
       <button class="hub-tab ${tab === 'ssh'  ? 'active' : ''}" data-tab="ssh">${t('inventory.tab_ssh')}</button>
+      <button class="hub-tab ${tab === 'tags' ? 'active' : ''}" data-tab="tags">${t('inventory.tab_tags')}</button>
     </div>
     <div id="inv-panel"></div>`;
 
@@ -68,11 +68,11 @@ async function renderTags(panel) {
               <th>${t('inventory.col_tag_created')}</th>
               <th></th>
             </tr></thead><tbody>
-            ${tagList.map(tg => `<tr>
+            ${tagList.map(tg => `<tr class="clickable tag-row" data-name="${escapeHtml(tg.name)}" title="${t('inventory.tag_click_filter')}">
               <td><span class="tag-chip" style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')}">${escapeHtml(tg.name)}</span></td>
               <td>${counts[tg.name] || 0}</td>
               <td>${relativeTime(tg.created_at)}</td>
-              <td style="text-align:right">
+              <td style="text-align:right" onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-ghost-danger del-tag" data-id="${tg.id}" data-name="${escapeHtml(tg.name)}">
                   <i class="ti ti-trash" style="font-size:14px"></i>
                 </button>
@@ -83,6 +83,12 @@ async function renderTags(panel) {
       </div>`;
 
     panel.querySelector('#new-tag-btn')?.addEventListener('click', () => showNewTagModal(panel));
+    panel.querySelectorAll('.tag-row').forEach(row => {
+      row.addEventListener('click', () => {
+        window.__pendingTagFilter = row.dataset.name;
+        window.location.hash = 'instances';
+      });
+    });
     panel.querySelectorAll('.del-tag').forEach(btn => {
       btn.addEventListener('click', async () => {
         const ok = await confirmDialog(t('inventory.tag_confirm_del'), btn.dataset.name, { okLabel: t('msg.deleted') });

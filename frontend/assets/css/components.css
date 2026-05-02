@@ -50,7 +50,7 @@
   margin-bottom: 16px;
 }
 .filter-bar .form-control,
-.filter-bar .form-select { font-size: 13px; height: 34px; }
+.filter-bar .form-select { font-size: 13px; height: 34px; padding-top: 5px; padding-bottom: 5px; line-height: 1.2; }
 .filter-bar-search { flex: 1; max-width: 260px; min-width: 180px; position: relative; }
 .filter-bar-search input { padding-left: 32px; }
 .filter-bar-search i {

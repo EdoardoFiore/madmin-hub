@@ -108,12 +108,31 @@ async def delete_instance(
     instance_id: uuid.UUID,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
+    purge: bool = False,
 ):
+    from hub.ws.manager import ws_manager
+
     lang = get_lang(request)
     i = await inst_svc.get_instance(session, instance_id)
     if not i:
         raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
-    # Mark revoked instead of hard delete to preserve audit trail
+
+    # Close WS if connected
+    ws = ws_manager.get(instance_id)
+    if ws:
+        try:
+            await ws.close(code=1000)
+        except Exception:
+            pass
+        ws_manager.unregister(instance_id)
+
+    if purge:
+        if i.enrollment_status != "revoked":
+            raise HTTPException(status_code=400, detail="Revoca l'istanza prima di eliminarla definitivamente")
+        await session.delete(i)
+        await session.flush()
+        return {"detail": "Istanza eliminata definitivamente"}
+    # Soft revoke
     i.enrollment_status = "revoked"
     i.ws_connected = False
     session.add(i)
@@ -359,6 +378,7 @@ async def agent_enroll(
 ):
     """Public endpoint (auth via one-time enrollment token in payload)."""
     from config import get_settings
+    from core.settings.models import SystemSettings
 
     settings = get_settings()
     try:
@@ -373,7 +393,11 @@ async def agent_enroll(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    ws_url = settings.hub_public_url.replace("https://", "wss://").replace("http://", "ws://")
+    # Prefer hub_url from SystemSettings (set by admin in UI); fall back to env
+    res = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    sys_settings = res.scalar_one_or_none()
+    base_url = (sys_settings.hub_url if sys_settings and sys_settings.hub_url else None) or settings.hub_public_url
+    ws_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
     ws_url = f"{ws_url.rstrip('/')}/api/agents/ws"
     return AgentEnrollResponse(
         instance_id=instance.id,

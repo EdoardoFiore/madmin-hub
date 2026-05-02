@@ -90,6 +90,7 @@ function renderTable() {
       <th>${t('enrollment.col_group')}</th>
       <th>${t('enrollment.col_uses')}</th>
       <th>${t('enrollment.col_expiry')}</th>
+      <th>${t('enrollment.col_created_by')}</th>
       <th>${t('enrollment.col_status')}</th>
       <th></th>
     </tr></thead>
@@ -100,13 +101,14 @@ function renderTable() {
       const uses = tk.token_type === 'reusable'
         ? `${tk.use_count}/${tk.max_uses}`
         : (tk.used_at ? '1/1' : '0/1');
-      const canRevoke = !tk.revoked_at;
+      const canRevoke = !tk.revoked_at && !tk.is_expired && !(tk.token_type === 'one_time' && tk.used_at);
       return `<tr data-idx="${i}">
         <td><strong>${escapeHtml(tk.name || '—')}</strong></td>
         <td><span class="hub-badge info">${tk.token_type === 'reusable' ? t('enrollment.type_reusable') : t('enrollment.type_one_time')}</span></td>
         <td>${escapeHtml(gName)}</td>
         <td><span class="text-mono">${uses}</span></td>
         <td style="white-space:nowrap;font-size:12px">${fmtDate(tk.expires_at)}</td>
+        <td style="font-size:12px">${escapeHtml(tk.created_by || '—')}</td>
         <td><span class="hub-badge ${cls}">${lbl}</span></td>
         <td style="text-align:right">
           ${canRevoke ? `<button class="btn btn-sm btn-ghost-danger revoke-btn" data-id="${tk.id}"><i class="ti ti-ban" style="font-size:14px"></i></button>` : ''}

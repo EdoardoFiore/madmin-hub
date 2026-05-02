@@ -5,46 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MADMIN Hub — Login</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css" />
-  <link rel="stylesheet" href="/assets/css/app.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" />
+  <link rel="stylesheet" href="/assets/css/design.css" />
+  <style>
+    body { background: var(--hub-surface); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-wrap { width: 100%; max-width: 400px; padding: 24px; }
+    .login-logo { text-align: center; margin-bottom: 28px; }
+    .login-logo-text { font-size: 22px; font-weight: 700; color: var(--hub-primary); letter-spacing: -.3px; }
+    .login-card { background: var(--hub-surface-2); border: 1px solid var(--hub-border); border-radius: var(--hub-radius); padding: 28px 28px 24px; box-shadow: var(--hub-shadow-md); }
+    .login-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; text-align: center; }
+    .form-label { font-size: 13px; font-weight: 500; }
+    .form-control { font-size: 14px; }
+  </style>
 </head>
-<body class="antialiased">
-  <div class="page page-center">
-    <div class="container container-tight py-4">
-      <div class="text-center mb-4">
-        <a href="/" class="navbar-brand navbar-brand-autodark">
-          <span class="hub-logo-text">MADMIN <span class="text-primary">Hub</span></span>
-        </a>
-      </div>
-      <div class="card card-md">
-        <div class="card-body">
-          <h2 class="h2 text-center mb-4" id="login-heading"></h2>
-          <div id="login-error" class="alert alert-danger d-none" role="alert"></div>
-          <div id="2fa-section" class="d-none">
-            <div class="mb-3">
-              <label class="form-label" id="lbl-2fa-code"></label>
-              <input id="totp-input" type="text" class="form-control"
-                     maxlength="8" autocomplete="one-time-code" inputmode="numeric" />
-            </div>
-            <button id="totp-submit" class="btn btn-primary w-100"></button>
-            <button id="totp-back" class="btn btn-link w-100 mt-2"></button>
-          </div>
-          <form id="login-form">
-            <div class="mb-3">
-              <label class="form-label" id="lbl-username"></label>
-              <input name="username" type="text" class="form-control" tabindex="1"
-                     autocomplete="username" autofocus />
-            </div>
-            <div class="mb-2">
-              <label class="form-label" id="lbl-password"></label>
-              <input name="password" type="password" class="form-control" tabindex="2"
-                     autocomplete="current-password" />
-            </div>
-            <div class="form-footer">
-              <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn"></button>
-            </div>
-          </form>
+<body>
+  <div class="login-wrap">
+    <div class="login-logo">
+      <img id="login-logo-img" src="" alt="" style="max-height:48px;display:none;margin-bottom:8px" />
+      <div class="login-logo-text" id="login-brand">MADMIN Hub</div>
+    </div>
+    <div class="login-card">
+      <div class="login-title" id="login-heading"></div>
+      <div id="login-error" class="alert alert-danger py-2" style="display:none;font-size:13px"></div>
+
+      <!-- 2FA section -->
+      <div id="2fa-section" style="display:none">
+        <div class="mb-3">
+          <label class="form-label" id="lbl-2fa-code"></label>
+          <input id="totp-input" type="text" class="form-control" maxlength="8"
+                 autocomplete="one-time-code" inputmode="numeric" style="letter-spacing:4px;font-size:20px;text-align:center" />
         </div>
+        <button id="totp-submit" class="btn btn-primary w-100 mb-2"></button>
+        <button id="totp-back" class="btn btn-link w-100" style="font-size:13px"></button>
       </div>
+
+      <!-- Login form -->
+      <form id="login-form">
+        <div class="mb-3">
+          <label class="form-label" id="lbl-username"></label>
+          <input name="username" type="text" class="form-control" tabindex="1"
+                 autocomplete="username" autofocus />
+        </div>
+        <div class="mb-3">
+          <label class="form-label" id="lbl-password"></label>
+          <input name="password" type="password" class="form-control" tabindex="2"
+                 autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn"></button>
+      </form>
     </div>
   </div>
 
@@ -54,10 +62,33 @@
     const TOKEN_KEY = 'hub_token';
     const API = '/api';
 
-    // Apply lang to <html>
     document.documentElement.lang = getLang();
 
-    // Render static labels
+    async function loadBranding() {
+      try {
+        const r = await fetch(`${API}/branding`);
+        if (!r.ok) return;
+        const b = await r.json();
+        if (b.primary_color) {
+          document.documentElement.style.setProperty('--hub-primary', b.primary_color);
+          const rgb = hexToRgb(b.primary_color);
+          if (rgb) document.documentElement.style.setProperty('--hub-primary-rgb', `${rgb.r},${rgb.g},${rgb.b}`);
+        }
+        if (b.company_name) document.getElementById('login-brand').textContent = b.company_name;
+        if (b.logo_url) {
+          const img = document.getElementById('login-logo-img');
+          img.src = b.logo_url; img.style.display = 'block';
+        }
+        if (b.default_language) setLang(b.default_language, false);
+        document.title = (b.company_name || 'MADMIN Hub') + ' — Login';
+      } catch (_) {}
+    }
+
+    function hexToRgb(hex) {
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return m ? { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) } : null;
+    }
+
     function applyLabels() {
       document.getElementById('login-heading').textContent   = t('login.title');
       document.getElementById('lbl-username').textContent    = t('login.username');
@@ -68,101 +99,70 @@
       document.getElementById('totp-submit').textContent     = t('login.2fa_verify');
       document.getElementById('totp-back').textContent       = t('login.2fa_back');
     }
-    applyLabels();
-
-    let tempToken = null;
 
     function showError(msg) {
       const el = document.getElementById('login-error');
-      el.textContent = msg;
-      el.classList.remove('d-none');
+      el.textContent = msg; el.style.display = '';
     }
+    function clearError() { document.getElementById('login-error').style.display = 'none'; }
 
-    function clearError() {
-      document.getElementById('login-error').classList.add('d-none');
-    }
+    let tempToken = null;
 
     document.getElementById('login-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      clearError();
+      e.preventDefault(); clearError();
       const btn = document.getElementById('login-btn');
-      btn.disabled = true;
-      btn.textContent = t('login.submitting');
-
+      btn.disabled = true; btn.textContent = t('login.submitting');
       const form = e.target;
-      const body = new URLSearchParams({
-        username: form.username.value,
-        password: form.password.value,
-      });
-
+      const body = new URLSearchParams({ username: form.username.value, password: form.password.value });
       try {
         const res = await fetch(`${API}/auth/token`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Language': getLang(),
-          },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Language': getLang() },
           body,
         });
         const data = await res.json();
-
-        if (!res.ok) {
-          showError(data.detail || t('login.bad_creds'));
-          return;
-        }
-
+        if (!res.ok) { showError(data.detail || t('login.bad_creds')); return; }
         if (data.token_type === '2fa_required') {
           tempToken = data.access_token;
-          document.getElementById('login-form').classList.add('d-none');
-          document.getElementById('2fa-section').classList.remove('d-none');
+          document.getElementById('login-form').style.display = 'none';
+          document.getElementById('2fa-section').style.display = '';
           document.getElementById('totp-input').focus();
           return;
         }
-
         localStorage.setItem(TOKEN_KEY, data.access_token);
         window.location.href = '/';
-      } catch (err) {
-        showError(t('login.net_error'));
-      } finally {
-        btn.disabled = false;
-        btn.textContent = t('login.submit');
-      }
+      } catch (_) { showError(t('login.net_error')); }
+      finally { btn.disabled = false; btn.textContent = t('login.submit'); }
     });
 
     document.getElementById('totp-submit').addEventListener('click', async () => {
       clearError();
       const code = document.getElementById('totp-input').value.trim();
       if (!code) return;
-
       const res = await fetch(`${API}/auth/token/2fa?code=${encodeURIComponent(code)}`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tempToken}`,
-          'X-Language': getLang(),
-        },
+        headers: { Authorization: `Bearer ${tempToken}`, 'X-Language': getLang() },
       });
       const data = await res.json();
-      if (!res.ok) {
-        showError(data.detail || t('login.bad_code'));
-        return;
-      }
+      if (!res.ok) { showError(data.detail || t('login.bad_code')); return; }
       localStorage.setItem(TOKEN_KEY, data.access_token);
       window.location.href = '/';
     });
 
     document.getElementById('totp-back').addEventListener('click', () => {
       tempToken = null;
-      document.getElementById('2fa-section').classList.add('d-none');
-      document.getElementById('login-form').classList.remove('d-none');
+      document.getElementById('2fa-section').style.display = 'none';
+      document.getElementById('login-form').style.display = '';
     });
 
     document.getElementById('totp-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') document.getElementById('totp-submit').click();
     });
 
-    // Already logged in? Redirect
-    const existing = localStorage.getItem(TOKEN_KEY);
-    if (existing) window.location.href = '/';
+    if (localStorage.getItem(TOKEN_KEY)) window.location.href = '/';
+
+    await loadBranding();
+    applyLabels();
   </script>
 </body>
 </html>

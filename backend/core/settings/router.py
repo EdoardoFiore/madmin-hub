@@ -51,6 +51,9 @@ class SystemUpdate(BaseModel):
     default_language: Optional[str] = None
     audit_retention_days: Optional[int] = None
     telemetry_retention_days: Optional[int] = None
+    hub_url: Optional[str] = None
+    default_token_ttl_minutes: Optional[int] = None
+    enforce_2fa_global: Optional[bool] = None
 
 
 @router.get("/system")

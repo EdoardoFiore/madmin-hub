@@ -19,6 +19,10 @@ class SystemSettings(SQLModel, table=True):
     audit_retention_days: int = Field(default=90)
     telemetry_retention_days: int = Field(default=30)
 
+    hub_url: Optional[str] = Field(default=None, max_length=500)
+    default_token_ttl_minutes: int = Field(default=15)
+    enforce_2fa_global: bool = Field(default=False)
+
 
 class SMTPSettings(SQLModel, table=True):
     __tablename__ = "smtp_settings"

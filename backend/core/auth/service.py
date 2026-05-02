@@ -116,11 +116,22 @@ async def create_user(session: AsyncSession, data: UserCreate) -> User:
     if await get_user_by_username(session, data.username):
         raise ValueError(f"Username '{data.username}' already exists")
 
+    enforce_2fa = False
+    try:
+        from core.settings.models import SystemSettings
+        res = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+        sys_settings = res.scalar_one_or_none()
+        if sys_settings and sys_settings.enforce_2fa_global:
+            enforce_2fa = True
+    except Exception:
+        pass
+
     user = User(
         username=data.username,
         email=data.email,
         hashed_password=get_password_hash(data.password),
         is_superuser=data.is_superuser,
+        totp_enforced=enforce_2fa,
     )
     session.add(user)
     await session.flush()

@@ -82,6 +82,26 @@ async def patch_instance(
     return inst_svc.instance_to_dict(i)
 
 
+class InstanceTagsSet(BaseModel):
+    tag_names: List[str]
+
+
+@router.put("/api/instances/{instance_id}/tags")
+async def set_instance_tags(
+    request: Request,
+    instance_id: uuid.UUID,
+    payload: InstanceTagsSet,
+    user: User = Depends(require_permission("hub.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    i = await inst_svc.get_instance(session, instance_id)
+    if not i:
+        raise HTTPException(status_code=404, detail=tr("instance_not_found", lang))
+    tags = await inst_svc.set_instance_tags(session, instance_id, payload.tag_names)
+    return {"tags": tags}
+
+
 @router.delete("/api/instances/{instance_id}")
 async def delete_instance(
     request: Request,
@@ -192,8 +212,49 @@ async def delete_group(
 # --- Enrollment tokens ---
 
 class EnrollmentTokenCreate(BaseModel):
+    name: Optional[str] = None
+    token_type: str = "one_time"  # one_time | reusable
+    max_uses: int = 1
     target_group_id: Optional[uuid.UUID] = None
     default_tags: List[str] = []
+    ttl_minutes: Optional[int] = None  # overrides system default if set
+
+
+def _token_to_dict(t: EnrollmentToken) -> dict:
+    now = datetime.utcnow()
+    is_revoked = t.revoked_at is not None
+    is_expired = t.expires_at < now
+    if t.token_type == "reusable":
+        is_used = t.use_count >= t.max_uses
+    else:
+        is_used = t.used_at is not None
+    if is_revoked:
+        status = "revoked"
+    elif is_expired:
+        status = "expired"
+    elif is_used:
+        status = "used"
+    else:
+        status = "valid"
+    return {
+        "id": str(t.id),
+        "name": t.name,
+        "token_type": t.token_type,
+        "max_uses": t.max_uses,
+        "use_count": t.use_count,
+        "expires_at": t.expires_at.isoformat(),
+        "used_at": t.used_at.isoformat() if t.used_at else None,
+        "used_by_instance_id": str(t.used_by_instance_id) if t.used_by_instance_id else None,
+        "target_group_id": str(t.target_group_id) if t.target_group_id else None,
+        "default_tags": json.loads(t.default_tags or "[]"),
+        "created_by": t.created_by,
+        "created_at": t.created_at.isoformat(),
+        "revoked_at": t.revoked_at.isoformat() if t.revoked_at else None,
+        "is_used": is_used,
+        "is_expired": is_expired,
+        "is_revoked": is_revoked,
+        "status": status,
+    }
 
 
 @router.get("/api/enrollment/tokens")
@@ -205,41 +266,54 @@ async def list_enrollment_tokens(
         select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()).limit(100)
     )
     items = result.scalars().all()
-    out = []
-    for t in items:
-        out.append(
-            {
-                "id": str(t.id),
-                "expires_at": t.expires_at.isoformat(),
-                "used_at": t.used_at.isoformat() if t.used_at else None,
-                "used_by_instance_id": str(t.used_by_instance_id) if t.used_by_instance_id else None,
-                "target_group_id": str(t.target_group_id) if t.target_group_id else None,
-                "default_tags": json.loads(t.default_tags or "[]"),
-                "created_by": t.created_by,
-                "created_at": t.created_at.isoformat(),
-                "is_used": t.used_at is not None,
-                "is_expired": t.expires_at < datetime.utcnow(),
-            }
-        )
-    return out
+    return [_token_to_dict(t) for t in items]
 
 
 @router.post("/api/enrollment/tokens")
 async def create_enrollment_token(
+    request: Request,
     payload: EnrollmentTokenCreate,
     user: User = Depends(require_permission("hub.manage")),
     session: AsyncSession = Depends(get_session),
 ):
-    raw, record = await enroll_svc.create_enrollment_token(
-        session,
-        target_group_id=payload.target_group_id,
-        default_tags=payload.default_tags,
-        created_by=user.username,
-    )
+    lang = get_lang(request)
+    from core.settings.models import SystemSettings
+    res = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    sys_settings = res.scalar_one_or_none()
+    hub_url = (sys_settings.hub_url if sys_settings else None) or ""
+    if not hub_url.strip():
+        raise HTTPException(status_code=400, detail="hub_url_not_set")
+
+    ttl = payload.ttl_minutes
+    if ttl is None or ttl <= 0:
+        ttl = sys_settings.default_token_ttl_minutes if sys_settings else 15
+
+    if payload.token_type not in ("one_time", "reusable"):
+        raise HTTPException(status_code=400, detail="invalid_token_type")
+
+    try:
+        raw, record = await enroll_svc.create_enrollment_token(
+            session,
+            target_group_id=payload.target_group_id,
+            default_tags=payload.default_tags,
+            created_by=user.username,
+            name=payload.name,
+            token_type=payload.token_type,
+            max_uses=payload.max_uses,
+            ttl_minutes=ttl,
+            hub_url=hub_url.rstrip("/"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     return {
         "token": raw,  # shown ONCE
-        "id": str(record.id),
-        "expires_at": record.expires_at.isoformat(),
+        **_token_to_dict(record),
+        "hub_url": hub_url.rstrip("/"),
+        "install_command": (
+            f"curl -fsSL {hub_url.rstrip('/')}/install.sh | sudo bash -s -- "
+            f"--token {raw}"
+        ),
     }
 
 
@@ -255,7 +329,9 @@ async def revoke_enrollment_token(
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail=tr("token_not_found", lang))
-    await session.delete(t)
+    if t.revoked_at is None:
+        t.revoked_at = datetime.utcnow()
+        session.add(t)
     return {"detail": tr("token_revoked", lang)}
 
 

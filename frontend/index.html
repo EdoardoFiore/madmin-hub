@@ -4,68 +4,127 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MADMIN Hub</title>
-  <!-- Tabler UI -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css" />
-  <!-- Tabler Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" />
-  <!-- App styles -->
-  <link rel="stylesheet" href="/assets/css/app.css" />
+  <link rel="stylesheet" href="/assets/css/design.css" />
+  <link rel="stylesheet" href="/assets/css/shell.css" />
+  <link rel="stylesheet" href="/assets/css/drawer.css" />
+  <link rel="stylesheet" href="/assets/css/components.css" />
 </head>
-<body class="antialiased">
-  <div class="wrapper">
+<body>
+
+  <div class="hub-shell" id="hub-shell">
+
+    <!-- Mobile sidebar backdrop -->
+    <div class="hub-sidebar-backdrop" id="sidebar-backdrop"></div>
 
     <!-- Sidebar -->
-    <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
-      <div class="container-fluid">
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
-                data-bs-target="#sidebar-menu">
-          <span class="navbar-toggler-icon"></span>
-        </button>
-        <h1 class="navbar-brand navbar-brand-autodark">
-          <a href="#dashboard" class="text-decoration-none">
-            <span class="hub-logo-text text-white">MADMIN <span class="text-azure">Hub</span></span>
-          </a>
-        </h1>
-        <div class="navbar-nav flex-row d-lg-none">
-          <div class="nav-item dropdown">
-            <a href="#" class="nav-link d-flex lh-1 text-reset p-0" data-bs-toggle="dropdown">
-              <span class="avatar avatar-sm" id="user-badge-mobile">U</span>
-            </a>
-          </div>
-        </div>
-        <div class="collapse navbar-collapse" id="sidebar-menu">
-          <ul class="navbar-nav pt-lg-3" id="sidebar-nav">
-            <!-- built by app.js -->
-          </ul>
-          <div class="mt-auto border-top pt-3 d-flex align-items-center px-1 mb-3" style="min-width:0">
-            <span class="avatar me-2 flex-shrink-0" id="user-badge">U</span>
-            <div class="flex-fill min-w-0">
-              <small class="text-muted d-block" id="sidebar-connectedas">Connesso come</small>
-              <span id="user-badge-name" class="text-white fw-medium text-truncate d-block"></span>
-            </div>
-            <a href="#" id="lang-switcher" class="btn btn-sm btn-ghost-light ms-1 flex-shrink-0" style="font-size:.75rem">🇬🇧 EN</a>
-            <a href="#" id="logout-btn" class="btn btn-sm btn-ghost-light ms-1 flex-shrink-0" title="Logout">
-              <i class="ti ti-logout"></i>
-            </a>
-          </div>
-        </div>
+    <aside class="hub-sidebar" id="hub-sidebar">
+      <div class="hub-sidebar-brand">
+        <img id="sidebar-logo" src="" alt="" style="display:none" />
+        <span class="hub-sidebar-brand-text" id="sidebar-brand-text">MADMIN Hub</span>
+      </div>
+      <nav class="hub-sidebar-nav" id="sidebar-nav">
+        <!-- built by sidebar.js -->
+      </nav>
+      <div class="hub-sidebar-footer" id="sidebar-footer">
+        <!-- settings nav item injected here by sidebar.js -->
       </div>
     </aside>
 
-    <!-- Main -->
-    <div class="page-wrapper">
-      <div id="main-content">
-        <!-- View rendered here by router -->
-        <div class="container-xl py-4 text-center">
-          <div class="spinner-border text-primary" role="status"></div>
+    <!-- Topbar -->
+    <header class="hub-topbar" id="hub-topbar">
+      <button class="hub-topbar-toggle" id="topbar-toggle" title="Toggle sidebar">
+        <i class="ti ti-menu-2"></i>
+      </button>
+      <span class="hub-topbar-title" id="topbar-title"></span>
+
+      <div class="hub-topbar-search" id="topbar-search-wrap">
+        <i class="ti ti-search"></i>
+        <input type="text" id="topbar-search" class="form-control" autocomplete="off" />
+      </div>
+
+      <div class="hub-topbar-actions">
+        <!-- Alerts bell -->
+        <button class="hub-topbar-btn" id="topbar-alerts-btn">
+          <i class="ti ti-bell"></i>
+          <span class="badge-count" id="alerts-count" style="display:none"></span>
+        </button>
+
+        <!-- Theme toggle -->
+        <button class="hub-topbar-btn" id="topbar-theme-btn">
+          <i class="ti ti-sun" id="theme-icon"></i>
+        </button>
+
+        <!-- Language toggle -->
+        <button class="hub-topbar-btn" id="topbar-lang-btn" style="font-size:13px;padding:6px 10px;font-weight:600;"></button>
+
+        <!-- User dropdown -->
+        <div class="dropdown">
+          <div class="hub-user-menu" data-bs-toggle="dropdown" style="cursor:pointer" id="user-menu-btn">
+            <div class="hub-user-avatar" id="user-avatar">U</div>
+            <div class="hub-user-info d-none d-md-block">
+              <div class="name" id="user-name-display">—</div>
+              <div class="role" id="user-role-display">—</div>
+            </div>
+          </div>
+          <ul class="dropdown-menu dropdown-menu-end shadow" style="min-width:200px">
+            <li class="px-3 py-2">
+              <div style="font-weight:600;font-size:13px" id="dd-username"></div>
+              <div style="font-size:11px;color:var(--tblr-secondary)" id="dd-email"></div>
+            </li>
+            <li><hr class="dropdown-divider my-1" /></li>
+            <li>
+              <a class="dropdown-item" href="#" id="dd-logout">
+                <i class="ti ti-logout me-2"></i><span id="lbl-logout">Logout</span>
+              </a>
+            </li>
+          </ul>
         </div>
       </div>
-    </div>
+    </header>
+
+    <!-- Main content area -->
+    <main class="hub-main" id="main-content">
+      <div class="hub-loader" id="page-loader"></div>
+    </main>
 
   </div>
 
-  <!-- CDN scripts -->
-  <!-- Bootstrap JS must load before tabler to expose window.bootstrap for modal API -->
+  <!-- Alerts flyout panel -->
+  <div class="hub-drawer-backdrop" id="alerts-backdrop"></div>
+  <div id="alerts-panel" style="
+    position:fixed;top:56px;right:0;width:380px;max-height:calc(100vh - 80px);overflow-y:auto;
+    background:var(--hub-surface-2);border:1px solid var(--hub-border);border-radius:0 0 var(--hub-radius) var(--hub-radius);
+    box-shadow:var(--hub-shadow-lg);z-index:1061;
+    transform:translateX(120%);transition:transform .25s cubic-bezier(.2,.85,.35,1);
+  ">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--hub-border)">
+      <strong style="font-size:14px" id="lbl-alerts-title">Notifiche</strong>
+      <button style="background:none;border:0;font-size:20px;line-height:1;cursor:pointer;color:var(--tblr-secondary)" id="alerts-close">×</button>
+    </div>
+    <div id="alerts-list" style="padding:12px 16px">
+      <div class="hub-loader"></div>
+    </div>
+  </div>
+
+  <!-- Right-side drawer -->
+  <div class="hub-drawer-backdrop" id="drawer-backdrop"></div>
+  <aside class="hub-drawer" id="hub-drawer">
+    <div class="hub-drawer-header">
+      <span class="hub-drawer-title" id="drawer-title"></span>
+      <button class="hub-drawer-close" id="drawer-close" aria-label="Close">×</button>
+    </div>
+    <div class="hub-drawer-body" id="drawer-body">
+      <div class="hub-loader"></div>
+    </div>
+    <div class="hub-drawer-footer" id="drawer-footer" style="display:none"></div>
+  </aside>
+
+  <!-- Toast container -->
+  <div class="hub-toast-container" id="toast-container"></div>
+
+  <!-- CDN -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/js/tabler.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.0/dist/apexcharts.min.js"></script>

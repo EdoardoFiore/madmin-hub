@@ -1,0 +1,72 @@
+/* MADMIN Hub — right-side drawer */
+
+.hub-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, .35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+  z-index: 1055;
+}
+.hub-drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hub-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--hub-drawer-width);
+  max-width: 100vw;
+  background: var(--hub-surface-2);
+  box-shadow: var(--hub-shadow-lg);
+  transform: translateX(100%);
+  transition: transform .25s cubic-bezier(.2, .85, .35, 1);
+  z-index: 1060;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.hub-drawer.open { transform: translateX(0); }
+
+.hub-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--hub-border);
+  flex-shrink: 0;
+}
+.hub-drawer-title {
+  font-weight: 600;
+  font-size: 15px;
+  margin: 0;
+}
+.hub-drawer-close {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--tblr-secondary);
+  padding: 0 4px;
+}
+.hub-drawer-close:hover { color: var(--tblr-body-color); }
+
+.hub-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.hub-drawer-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--hub-border);
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}

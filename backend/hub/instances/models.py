@@ -73,3 +73,9 @@ class EnrollmentToken(SQLModel, table=True):
     default_tags: str = Field(default="[]")  # JSON
     created_by: Optional[str] = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    name: Optional[str] = Field(default=None, max_length=100)
+    token_type: str = Field(default="one_time", max_length=20)  # one_time | reusable
+    max_uses: int = Field(default=1)
+    use_count: int = Field(default=0)
+    revoked_at: Optional[datetime] = Field(default=None)

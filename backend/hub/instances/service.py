@@ -27,6 +27,50 @@ async def list_instances(
     return items
 
 
+async def list_instances_with_tags(
+    session: AsyncSession,
+    group_id: Optional[uuid.UUID] = None,
+    tag: Optional[str] = None,
+) -> tuple:
+    """Return (instances, tags_map) where tags_map[instance_id] = [{id,name,color},...]."""
+    instances = await list_instances(session, group_id=group_id, tag=tag)
+    if not instances:
+        return instances, {}
+    ids = [i.id for i in instances]
+    from sqlalchemy import tuple_  # noqa — unused import trick avoided
+    res = await session.execute(
+        select(InstanceTag.instance_id, Tag.id, Tag.name, Tag.color)
+        .join(Tag, Tag.id == InstanceTag.tag_id)
+        .where(InstanceTag.instance_id.in_(ids))
+        .order_by(Tag.name)
+    )
+    tags_map: Dict[uuid.UUID, List[dict]] = {}
+    for row in res.all():
+        tags_map.setdefault(row.instance_id, []).append(
+            {"id": str(row.id), "name": row.name, "color": row.color}
+        )
+    return instances, tags_map
+
+
+async def set_instance_tags(
+    session: AsyncSession,
+    instance_id: uuid.UUID,
+    tag_names: List[str],
+) -> List[dict]:
+    """Replace all tags for an instance. Returns new tag list."""
+    from sqlalchemy import delete as sa_delete
+    await session.execute(sa_delete(InstanceTag).where(InstanceTag.instance_id == instance_id))
+    result = []
+    for name in tag_names:
+        name = name.strip()
+        if not name:
+            continue
+        tag = await get_or_create_tag(session, name)
+        session.add(InstanceTag(instance_id=instance_id, tag_id=tag.id))
+        result.append({"id": str(tag.id), "name": tag.name, "color": tag.color})
+    return result
+
+
 async def get_instance(session: AsyncSession, instance_id: uuid.UUID) -> Optional[ManagedInstance]:
     result = await session.execute(
         select(ManagedInstance).where(ManagedInstance.id == instance_id)
@@ -241,7 +285,7 @@ async def instance_to_dict_full(session: AsyncSession, i: ManagedInstance) -> di
     return d
 
 
-def instance_to_dict(i: ManagedInstance) -> dict:
+def instance_to_dict(i: ManagedInstance, tags: Optional[List[dict]] = None, group: Optional[dict] = None) -> dict:
     return {
         "id": str(i.id),
         "name": i.name,
@@ -252,10 +296,10 @@ def instance_to_dict(i: ManagedInstance) -> dict:
         "last_seen_at": i.last_seen_at.isoformat() if i.last_seen_at else None,
         "version": i.version,
         "os_info": json.loads(i.os_info or "{}"),
-        "tags": json.loads(i.tags or "[]"),
+        "tags": tags if tags is not None else json.loads(i.tags or "[]"),
         "notes": i.notes,
         "group_id": str(i.group_id) if i.group_id else None,
-        "group": None,
+        "group": group,
         "created_at": i.created_at.isoformat(),
         "updated_at": i.updated_at.isoformat(),
     }

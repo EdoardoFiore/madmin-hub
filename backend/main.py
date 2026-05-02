@@ -6,7 +6,7 @@ import logging
 import os
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -88,6 +88,7 @@ def create_app() -> FastAPI:
     from core.auth.router import router as auth_router
     from core.audit.router import router as audit_router
     from core.settings.router import router as settings_router
+    from core.dashboard.router import router as dashboard_router
     from hub.instances.router import router as instances_router
     from hub.telemetry.router import router as telemetry_router
     from hub.ws.handler import router as ws_router
@@ -97,13 +98,13 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(audit_router)
     app.include_router(settings_router)
+    app.include_router(dashboard_router)
     app.include_router(instances_router)
     app.include_router(telemetry_router)
     app.include_router(ws_router)
     app.include_router(relay_router)
     app.include_router(ssh_router)
 
-    # Health + fleet summary
     @app.get("/api/health", tags=["System"])
     async def health():
         from core.database import check_db_connection
@@ -114,21 +115,24 @@ def create_app() -> FastAPI:
             "version": HUB_VERSION,
         }
 
-    @app.get("/api/dashboard/fleet", tags=["Dashboard"])
-    async def fleet_dashboard(
-        user=Depends(__import__("core.auth.dependencies", fromlist=["get_current_user"]).get_current_user),
-    ):
+    @app.get("/api/branding", tags=["System"])
+    async def branding():
+        """Public branding info (used by login page before auth)."""
         from core.database import async_session_maker
-        from hub.instances.service import fleet_summary, list_instances, instance_to_dict
-        from hub.ws.manager import ws_manager
-
+        from sqlalchemy import select
+        from core.settings.models import SystemSettings
         async with async_session_maker() as session:
-            instances = await list_instances(session)
-        summary = fleet_summary(instances)
-        summary["ws_connected_ids"] = [str(i) for i in ws_manager.connected_ids()]
+            res = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+            s = res.scalar_one_or_none()
+        if not s:
+            return {"company_name": "MADMIN Hub", "primary_color": "#206bc4",
+                    "logo_url": None, "favicon_url": None, "default_language": "it"}
         return {
-            "summary": summary,
-            "instances": [instance_to_dict(i) for i in instances],
+            "company_name": s.company_name,
+            "primary_color": s.primary_color,
+            "logo_url": s.logo_url,
+            "favicon_url": s.favicon_url,
+            "default_language": s.default_language,
         }
 
     # Static frontend

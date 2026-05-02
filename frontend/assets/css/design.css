@@ -1,0 +1,89 @@
+/* MADMIN Hub — design tokens */
+
+:root {
+  --hub-primary: #206bc4;
+  --hub-primary-rgb: 32, 107, 196;
+  --hub-radius: 10px;
+  --hub-radius-sm: 6px;
+  --hub-shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+  --hub-shadow-md: 0 4px 16px rgba(15, 23, 42, .07);
+  --hub-shadow-lg: 0 8px 32px rgba(15, 23, 42, .12);
+
+  --hub-surface: #f7f8fb;
+  --hub-surface-2: #ffffff;
+  --hub-border: #e6e8ec;
+
+  --hub-sidebar-bg: #1a1d23;
+  --hub-sidebar-fg: #c5cad2;
+  --hub-sidebar-fg-muted: #777e88;
+  --hub-sidebar-active-bg: #2b3038;
+  --hub-sidebar-active-fg: #ffffff;
+  --hub-sidebar-section: #5b6270;
+
+  --hub-status-online: #2fb344;
+  --hub-status-offline: #d63939;
+  --hub-status-pending: #f59f00;
+  --hub-status-revoked: #6c757d;
+
+  --hub-sidebar-width: 250px;
+  --hub-sidebar-collapsed: 68px;
+  --hub-topbar-height: 56px;
+  --hub-drawer-width: 520px;
+}
+
+[data-bs-theme="dark"] {
+  --hub-surface: #15181d;
+  --hub-surface-2: #1d2127;
+  --hub-border: #2a2f37;
+  --hub-shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+  --hub-shadow-md: 0 4px 16px rgba(0, 0, 0, .4);
+  --hub-shadow-lg: 0 8px 32px rgba(0, 0, 0, .5);
+}
+
+html, body {
+  background: var(--hub-surface);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  color: var(--tblr-body-color);
+}
+
+.btn-primary, .bg-primary,
+.badge-primary, .text-bg-primary {
+  background-color: var(--hub-primary) !important;
+  border-color: var(--hub-primary) !important;
+}
+.text-primary, .link-primary { color: var(--hub-primary) !important; }
+.btn-outline-primary {
+  border-color: var(--hub-primary);
+  color: var(--hub-primary);
+}
+.btn-outline-primary:hover {
+  background-color: var(--hub-primary);
+  border-color: var(--hub-primary);
+}
+a { color: var(--hub-primary); }
+
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.status-dot.online   { background: var(--hub-status-online); box-shadow: 0 0 0 3px rgba(47,179,68,.18); }
+.status-dot.offline  { background: var(--hub-status-offline); }
+.status-dot.pending  { background: var(--hub-status-pending); }
+.status-dot.revoked  { background: var(--hub-status-revoked); }
+
+.text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+.card {
+  border-radius: var(--hub-radius);
+  border-color: var(--hub-border);
+  box-shadow: var(--hub-shadow-sm);
+}
+
+.btn { border-radius: var(--hub-radius-sm); }
+.form-control, .form-select { border-radius: var(--hub-radius-sm); border-color: var(--hub-border); }

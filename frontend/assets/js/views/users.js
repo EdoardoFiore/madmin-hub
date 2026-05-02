@@ -1,290 +1,254 @@
-/**
- * Users management — list, create, edit, toggle, delete, reset 2FA, permissions.
- */
-import { apiGet, apiPost, apiPatch, apiDelete, apiPut } from '../api.js';
-import { showSpinner, showToast, confirmDialog, inputDialog } from '../utils.js';
-import { t, getLang } from '../i18n.js';
+import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js';
+import { t } from '../i18n.js';
+import { escapeHtml, relativeTime, showToast, confirmDialog } from '../utils.js';
+import { openDrawer } from '../shell/drawer.js';
 
-let _users = [];
-let _allPerms = [];
-let _editTarget = null; // username being edited
+let _users = [], _perms = [];
 
-export async function render(container) {
-  showSpinner(container);
-  try {
-    [_users, _allPerms] = await Promise.all([apiGet('/auth/users'), apiGet('/auth/permissions')]);
-  } catch { _users = []; _allPerms = []; }
-
+export async function render(container, params) {
   container.innerHTML = `
-    <div class="page-header">
-      <div class="container-xl">
-        <div class="row align-items-center">
-          <div class="col"><h2 class="page-title">${t('users.title')}</h2></div>
-          <div class="col-auto ms-auto">
-            <button class="btn btn-primary" id="btn-new-user">
-              <i class="ti ti-plus me-1"></i>${t('users.new_user')}
-            </button>
-          </div>
-        </div>
-      </div>
+    <div class="hub-page-header">
+      <h1 class="hub-page-title">${t('users.title')}</h1>
+      <button class="btn btn-primary btn-sm" id="new-user-btn">
+        <i class="ti ti-user-plus me-1"></i>${t('users.new_user')}
+      </button>
     </div>
-    <div class="page-body">
-      <div class="container-xl">
-        <div class="card">
-          <div class="table-responsive">
-            <table class="table table-vcenter card-table">
-              <thead><tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>${t('users.col_role')}</th>
-                <th>2FA</th>
-                <th>${t('label.status')}</th>
-                <th>${t('users.col_lastlogin')}</th>
-                <th></th>
-              </tr></thead>
-              <tbody id="users-tbody">${renderRows(_users)}</tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div id="users-table"></div>`;
 
-    <!-- Create / Edit user modal -->
-    <div class="modal modal-blur fade" id="user-modal" tabindex="-1">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="user-modal-title">${t('users.modal_title')}</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row">
-              <div class="col-md-6">
-                <div class="mb-2">
-                  <label class="form-label">Username</label>
-                  <input id="u-username" type="text" class="form-control" />
-                </div>
-                <div class="mb-2">
-                  <label class="form-label" id="u-pwd-label">${t('label.password')}</label>
-                  <input id="u-password" type="password" class="form-control" placeholder="" />
-                  <small id="u-pwd-hint" class="text-muted d-none">${t('users.pwd_leave_blank')}</small>
-                </div>
-                <div class="mb-2">
-                  <label class="form-label">Email</label>
-                  <input id="u-email" type="email" class="form-control" />
-                </div>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">${t('users.col_role')}</label>
-                <div class="mb-2">
-                  <label class="form-check">
-                    <input id="u-superuser" type="checkbox" class="form-check-input" />
-                    <span class="form-check-label">${t('users.superuser')}</span>
-                  </label>
-                </div>
-                <div class="mb-2">
-                  <label class="form-check">
-                    <input id="u-active" type="checkbox" class="form-check-input" checked />
-                    <span class="form-check-label">${t('users.status_active')}</span>
-                  </label>
-                </div>
-                <div class="mb-3">
-                  <label class="form-check">
-                    <input id="u-2fa-enforced" type="checkbox" class="form-check-input" />
-                    <span class="form-check-label">${t('users.2fa_enforced')}</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-            <div id="perms-section">
-              <hr class="my-2" />
-              <label class="form-label">${t('users.permissions')}</label>
-              <div id="perms-grid" class="row row-cols-2 row-cols-md-3 g-1">
-                ${renderPermsGrid([], _allPerms)}
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-link" data-bs-dismiss="modal">${t('users.cancel')}</button>
-            <button id="u-submit" class="btn btn-primary">${t('users.create')}</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
+  document.getElementById('new-user-btn')?.addEventListener('click', showInviteModal);
+  await loadAll();
 
-  container.querySelector('#btn-new-user').addEventListener('click', () => openCreateModal(container));
-  container.querySelector('#u-submit').addEventListener('click', () => submitUser(container));
-  container.querySelector('#u-superuser').addEventListener('change', (e) => {
-    container.querySelector('#perms-section').style.display = e.target.checked ? 'none' : '';
-  });
-
-  container.querySelector('#users-tbody').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const { action, username } = btn.dataset;
-
-    if (action === 'edit') {
-      const user = _users.find(u => u.username === username);
-      if (user) openEditModal(container, user);
-
-    } else if (action === 'toggle') {
-      const user = _users.find(u => u.username === username);
-      try {
-        await apiPatch(`/auth/users/${username}`, { is_active: !user.is_active });
-        showToast(t('users.status_updated'), 'success');
-        render(container);
-      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
-
-    } else if (action === 'reset-pwd') {
-      const newPwd = await inputDialog(t('users.prompt_new_pwd'), '', { type: 'password' });
-      if (!newPwd) return;
-      try {
-        await apiPatch(`/auth/users/${username}`, { password: newPwd });
-        showToast(t('users.password_reset_done'), 'success');
-      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
-
-    } else if (action === 'reset-2fa') {
-      if (!await confirmDialog(t('users.confirm_reset_2fa', { username }), '', { okClass: 'btn-danger' })) return;
-      try {
-        await apiDelete(`/auth/users/${username}/2fa`);
-        showToast(t('users.reset_2fa_done'), 'success');
-        render(container);
-      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
-
-    } else if (action === 'perms') {
-      const user = _users.find(u => u.username === username);
-      if (user) openEditModal(container, user, true);
-
-    } else if (action === 'delete') {
-      if (!await confirmDialog(t('users.confirm_delete', { username }), '', { okClass: 'btn-danger' })) return;
-      try {
-        await apiDelete(`/auth/users/${username}`);
-        showToast(t('users.deleted'), 'success');
-        render(container);
-      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
-    }
-  });
-}
-
-function openCreateModal(container) {
-  _editTarget = null;
-  container.querySelector('#user-modal-title').textContent = t('users.modal_title');
-  container.querySelector('#u-username').value = '';
-  container.querySelector('#u-username').disabled = false;
-  container.querySelector('#u-password').value = '';
-  container.querySelector('#u-email').value = '';
-  container.querySelector('#u-superuser').checked = false;
-  container.querySelector('#u-active').checked = true;
-  container.querySelector('#u-2fa-enforced').checked = false;
-  container.querySelector('#u-pwd-hint').classList.add('d-none');
-  container.querySelector('#u-submit').textContent = t('users.create');
-  container.querySelector('#perms-grid').innerHTML = renderPermsGrid([], _allPerms);
-  container.querySelector('#perms-section').style.display = '';
-  window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
-}
-
-function openEditModal(container, user, focusPerms = false) {
-  _editTarget = user.username;
-  container.querySelector('#user-modal-title').textContent = t('users.edit');
-  container.querySelector('#u-username').value = user.username;
-  container.querySelector('#u-username').disabled = true;
-  container.querySelector('#u-password').value = '';
-  container.querySelector('#u-pwd-hint').classList.remove('d-none');
-  container.querySelector('#u-email').value = user.email || '';
-  container.querySelector('#u-superuser').checked = user.is_superuser;
-  container.querySelector('#u-active').checked = user.is_active;
-  container.querySelector('#u-2fa-enforced').checked = user.totp_enforced;
-  container.querySelector('#u-submit').textContent = t('users.save');
-  container.querySelector('#perms-grid').innerHTML = renderPermsGrid(user.permissions || [], _allPerms);
-  container.querySelector('#perms-section').style.display = user.is_superuser ? 'none' : '';
-  window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).show();
-  if (focusPerms) {
-    setTimeout(() => container.querySelector('#perms-grid')?.scrollIntoView({ behavior: 'smooth' }), 300);
+  if (params?.length && params[0]) {
+    openUserDrawer(params[0]);
   }
 }
 
-async function submitUser(container) {
-  const username = container.querySelector('#u-username').value.trim();
-  const password = container.querySelector('#u-password').value;
-  const email = container.querySelector('#u-email').value || null;
-  const is_superuser = container.querySelector('#u-superuser').checked;
-  const is_active = container.querySelector('#u-active').checked;
-  const totp_enforced = container.querySelector('#u-2fa-enforced').checked;
-
+async function loadAll() {
   try {
-    if (_editTarget) {
-      // Edit existing
-      const patch = { email, is_superuser, is_active, totp_enforced };
-      if (password) patch.password = password;
-      await apiPatch(`/auth/users/${_editTarget}`, patch);
-
-      // Update permissions if not superuser
-      if (!is_superuser) {
-        const checked = [...container.querySelectorAll('#perms-grid input[type=checkbox]:checked')]
-          .map(el => el.value);
-        await apiPut(`/auth/users/${_editTarget}/permissions`, { permissions: checked });
-      }
-      showToast(t('users.saved'), 'success');
-    } else {
-      // Create new
-      if (!username || !password) { showToast(t('users.username_pwd_required'), 'warning'); return; }
-      await apiPost('/auth/users', { username, password, email, is_superuser });
-      if (!is_superuser) {
-        const checked = [...container.querySelectorAll('#perms-grid input[type=checkbox]:checked')]
-          .map(el => el.value);
-        if (checked.length) await apiPut(`/auth/users/${username}/permissions`, { permissions: checked });
-      }
-      showToast(t('users.created'), 'success');
-    }
-    window.bootstrap.Modal.getOrCreateInstance(container.querySelector('#user-modal')).hide();
-    render(container);
-  } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    [_users, _perms] = await Promise.all([
+      apiGet('/auth/users'),
+      apiGet('/auth/permissions').catch(() => []),
+    ]);
+    _users = _users || [];
+    _perms = _perms || [];
+    renderTable();
+  } catch (_) {
+    document.getElementById('users-table').innerHTML =
+      `<div class="alert alert-danger">${t('msg.error')}</div>`;
+  }
 }
 
-function renderPermsGrid(userPerms, allPerms) {
-  if (!allPerms.length) return '';
-  return allPerms.map(p => `
-    <div class="col">
-      <label class="form-check">
-        <input type="checkbox" class="form-check-input" value="${p.slug}"
-          ${userPerms.includes(p.slug) ? 'checked' : ''} />
-        <span class="form-check-label small">${p.slug}</span>
-      </label>
-    </div>`).join('');
-}
+function renderTable() {
+  const el = document.getElementById('users-table');
+  if (!el) return;
 
-function renderRows(users) {
-  const lang = getLang();
-  const dateLocale = lang === 'it' ? 'it-IT' : 'en-GB';
-  if (!users.length) return `<tr><td colspan="7" class="text-center text-muted py-4">${t('users.none')}</td></tr>`;
-  return users.map(u => `
-    <tr>
-      <td><strong>${u.username}</strong>${u.is_protected ? ` <span class="badge bg-blue-lt">${t('users.protected')}</span>` : ''}</td>
-      <td>${u.email || '—'}</td>
-      <td>${u.is_superuser ? `<span class="badge bg-red">${t('users.role_admin')}</span>` : `<span class="badge bg-secondary">${t('users.role_user')}</span>`}</td>
-      <td>${u.totp_enabled
-        ? `<span class="badge bg-success-lt" title="2FA on"><i class="ti ti-shield-check"></i></span>`
-        : (u.totp_enforced
-          ? `<span class="badge bg-warning-lt" title="${t('users.2fa_enforced')}"><i class="ti ti-shield-exclamation"></i></span>`
-          : `<span class="badge bg-secondary-lt"><i class="ti ti-shield-off"></i></span>`)
-      }</td>
-      <td>${u.is_active ? `<span class="badge bg-success-lt">${t('users.status_active')}</span>` : `<span class="badge bg-danger-lt">${t('users.status_disabled')}</span>`}</td>
-      <td>${u.last_login ? new Date(u.last_login+'Z').toLocaleDateString(dateLocale) : '—'}</td>
-      <td class="text-end">
-        <div class="d-flex gap-1 justify-content-end">
-          <button class="btn btn-sm btn-ghost-primary" data-action="edit" data-username="${u.username}" title="${t('users.edit')}">
-            <i class="ti ti-edit"></i>
-          </button>
-          <button class="btn btn-sm btn-ghost-secondary" data-action="toggle" data-username="${u.username}" title="${u.is_active ? t('users.disable') : t('users.enable')}">
-            <i class="ti ${u.is_active ? 'ti-lock' : 'ti-lock-open'}"></i>
-          </button>
-          ${u.totp_enabled ? `<button class="btn btn-sm btn-ghost-warning" data-action="reset-2fa" data-username="${u.username}" title="${t('users.reset_2fa')}">
-            <i class="ti ti-shield-x"></i>
-          </button>` : ''}
-          ${!u.is_protected ? `<button class="btn btn-sm btn-ghost-danger" data-action="delete" data-username="${u.username}" title="${t('users.delete')}">
-            <i class="ti ti-trash"></i>
-          </button>` : ''}
-        </div>
+  if (!_users.length) {
+    el.innerHTML = `<div class="data-table"><div class="data-table-empty"><i class="ti ti-users"></i>${t('users.none')}</div></div>`;
+    return;
+  }
+
+  el.innerHTML = `<div class="data-table"><table>
+    <thead><tr>
+      <th>${t('users.col_username')}</th>
+      <th>${t('users.col_email')}</th>
+      <th>${t('users.col_role')}</th>
+      <th>${t('users.col_2fa')}</th>
+      <th>${t('users.col_lastlogin')}</th>
+      <th>${t('users.col_status')}</th>
+      <th></th>
+    </tr></thead>
+    <tbody>${_users.map(u => `<tr class="clickable" data-username="${escapeHtml(u.username)}">
+      <td>
+        <strong>${escapeHtml(u.username)}</strong>
+        ${u.is_protected ? `<span class="hub-badge muted ms-1" style="font-size:10px">${t('users.protected')}</span>` : ''}
+        ${u.is_superuser ? `<span class="hub-badge info ms-1" style="font-size:10px">${t('users.superuser')}</span>` : ''}
       </td>
-    </tr>`).join('');
+      <td>${escapeHtml(u.email || '—')}</td>
+      <td>${u.is_superuser ? t('users.role_admin') : t('users.role_user')}</td>
+      <td>${u.totp_enabled ? (u.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')) : t('users.2fa_off')}</td>
+      <td>${relativeTime(u.last_login_at)}</td>
+      <td><span class="hub-badge ${u.is_active ? 'online' : 'offline'}">${u.is_active ? t('users.status_active') : t('users.status_disabled')}</span></td>
+      <td style="text-align:right" onclick="event.stopPropagation()">
+        ${!u.is_protected ? `
+          <button class="btn btn-sm btn-ghost-secondary toggle-btn" data-username="${escapeHtml(u.username)}" data-active="${u.is_active}">
+            <i class="ti ${u.is_active ? 'ti-eye-off' : 'ti-eye'}" style="font-size:14px"></i>
+          </button>
+          <button class="btn btn-sm btn-ghost-danger del-btn" data-username="${escapeHtml(u.username)}">
+            <i class="ti ti-trash" style="font-size:14px"></i>
+          </button>` : ''}
+      </td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+
+  el.querySelectorAll('tbody tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => {
+      window.location.hash = `users/${tr.dataset.username}`;
+      openUserDrawer(tr.dataset.username);
+    });
+  });
+
+  el.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const activate = btn.dataset.active === 'true' ? false : true;
+      try {
+        await apiPatch(`/auth/users/${btn.dataset.username}`, { is_active: activate });
+        showToast(t('users.status_updated'), 'success');
+        await loadAll();
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+  });
+
+  el.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await confirmDialog(t('users.delete'), t('users.confirm_delete', { username: btn.dataset.username }), { okLabel: t('users.delete') });
+      if (!ok) return;
+      try {
+        await apiDelete(`/auth/users/${btn.dataset.username}`);
+        showToast(t('users.deleted'), 'success');
+        await loadAll();
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+  });
+}
+
+function showInviteModal() {
+  const modalEl = document.createElement('div');
+  modalEl.className = 'modal fade';
+  modalEl.innerHTML = `<div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('users.modal_title')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">${t('users.field_username')} *</label>
+          <input type="text" id="uf-username" class="form-control" autocomplete="off" /></div>
+        <div class="mb-3"><label class="form-label">${t('users.field_email')}</label>
+          <input type="email" id="uf-email" class="form-control" /></div>
+        <div class="mb-3"><label class="form-label">${t('users.field_password')} *</label>
+          <input type="password" id="uf-password" class="form-control" autocomplete="new-password" /></div>
+        <div class="mb-3"><label class="form-label">${t('users.field_role')}</label>
+          <select id="uf-role" class="form-select">
+            <option value="user">${t('users.role_user')}</option>
+            <option value="admin">${t('users.role_admin')}</option>
+          </select></div>
+        <div class="form-check mb-2">
+          <input type="checkbox" id="uf-2fa" class="form-check-input" />
+          <label class="form-check-label" for="uf-2fa">${t('users.field_2fa')}</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="uf-create">${t('modal.create')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(modalEl);
+  const m = new window.bootstrap.Modal(modalEl);
+  m.show();
+
+  modalEl.querySelector('#uf-create').addEventListener('click', async () => {
+    const username = modalEl.querySelector('#uf-username').value.trim();
+    const password = modalEl.querySelector('#uf-password').value;
+    if (!username || !password) { showToast(t('users.username_pwd_required'), 'error'); return; }
+    const isAdmin  = modalEl.querySelector('#uf-role').value === 'admin';
+    const enforce2fa = modalEl.querySelector('#uf-2fa').checked;
+    try {
+      await apiPost('/auth/users', {
+        username, password,
+        email: modalEl.querySelector('#uf-email').value.trim() || null,
+        is_superuser: isAdmin,
+        totp_enforced: enforce2fa,
+      });
+      showToast(t('users.created'), 'success');
+      m.hide();
+      await loadAll();
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
+async function openUserDrawer(username) {
+  await openDrawer({
+    title: username,
+    closeHash: '#users',
+    render: async (body) => {
+      body.innerHTML = '<div class="hub-loader"></div>';
+      const user = await apiGet(`/auth/users/${username}`).catch(() => null);
+      if (!user) { body.innerHTML = `<p style="padding:20px;font-size:13px;color:var(--tblr-secondary)">${t('msg.error')}</p>`; return; }
+
+      const userPerms = await apiGet(`/auth/users/${username}/permissions`).catch(() => []);
+
+      body.innerHTML = `
+        <div class="hub-tabs">
+          <button class="hub-tab active" data-tab="general">${t('users.tab_general')}</button>
+          <button class="hub-tab" data-tab="perms">${t('users.tab_permissions')}</button>
+        </div>
+        <div id="udr-panel"></div>`;
+
+      const panel = body.querySelector('#udr-panel');
+
+      async function switchTab(tab) {
+        body.querySelectorAll('.hub-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        if (tab === 'general') renderUserGeneral(panel, user);
+        if (tab === 'perms')   renderUserPerms(panel, user, userPerms);
+      }
+
+      body.querySelectorAll('.hub-tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+      switchTab('general');
+    },
+  });
+}
+
+function renderUserGeneral(panel, user) {
+  const row = (label, val) => `<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--hub-border);font-size:13px">
+    <div style="width:120px;color:var(--tblr-secondary);flex-shrink:0">${escapeHtml(label)}</div>
+    <div style="flex:1">${val}</div>
+  </div>`;
+
+  panel.innerHTML = `<div style="padding-top:4px">
+    ${row(t('users.field_username'), `<strong>${escapeHtml(user.username)}</strong>`)}
+    ${row(t('users.field_email'),    escapeHtml(user.email || '—'))}
+    ${row(t('users.col_role'),       user.is_superuser ? t('users.role_admin') : t('users.role_user'))}
+    ${row(t('users.col_2fa'),        user.totp_enabled ? (user.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')) : t('users.2fa_off'))}
+    ${row(t('users.col_lastlogin'),  relativeTime(user.last_login_at))}
+    ${row(t('users.col_status'),     `<span class="hub-badge ${user.is_active ? 'online' : 'offline'}">${user.is_active ? t('users.status_active') : t('users.status_disabled')}</span>`)}
+    </div>
+    ${!user.is_protected ? `<div style="display:flex;gap:8px;margin-top:16px">
+      ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-warning" id="udr-reset-2fa">${t('users.reset_2fa')}</button>` : ''}
+    </div>` : ''}`;
+
+  panel.querySelector('#udr-reset-2fa')?.addEventListener('click', async () => {
+    const ok = await confirmDialog(t('users.reset_2fa'), t('users.confirm_reset_2fa', { username: user.username }), { okLabel: t('users.reset_2fa'), okClass: 'btn-warning' });
+    if (!ok) return;
+    try {
+      await apiPost(`/auth/users/${user.username}/2fa`, {});
+      showToast(t('users.reset_2fa_done'), 'success');
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+}
+
+function renderUserPerms(panel, user, userPerms) {
+  if (user.is_superuser) {
+    panel.innerHTML = `<div style="padding:20px;text-align:center;color:var(--tblr-secondary);font-size:13px">Superuser — accesso completo</div>`;
+    return;
+  }
+  const grantedSet = new Set(userPerms.map(p => typeof p === 'string' ? p : p.slug));
+  panel.innerHTML = `<div style="padding-top:8px;display:flex;flex-direction:column;gap:6px">
+    ${_perms.map(p => {
+      const slug = typeof p === 'string' ? p : p.slug;
+      const has  = grantedSet.has(slug);
+      return `<label class="d-flex align-items-center gap-2" style="cursor:pointer;font-size:13px">
+        <input type="checkbox" class="form-check-input perm-chk" data-slug="${escapeHtml(slug)}" ${has ? 'checked' : ''} />
+        <span class="text-mono" style="font-size:12px">${escapeHtml(slug)}</span>
+      </label>`;
+    }).join('')}
+    <button class="btn btn-sm btn-primary mt-2" id="udr-save-perms">${t('modal.save')}</button>
+  </div>`;
+
+  panel.querySelector('#udr-save-perms')?.addEventListener('click', async () => {
+    const slugs = [...panel.querySelectorAll('.perm-chk:checked')].map(c => c.dataset.slug);
+    try {
+      await apiPost(`/auth/users/${user.username}/permissions`, { permissions: slugs });
+      showToast(t('msg.saved'), 'success');
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
 }

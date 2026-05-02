@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch } from '../api.js';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '../api.js';
 import { t } from '../i18n.js';
 import { escapeHtml, relativeTime, fmtDate, showToast, confirmDialog, formatBytes, fmtPercent, actionLabel } from '../utils.js';
 
@@ -42,7 +42,13 @@ export async function render(body, id) {
 async function renderInfo(panel, id, inst) {
   if (!inst) inst = await apiGet(`/instances/${id}`);
 
-  const group = inst.group_id ? await apiGet(`/groups/${inst.group_id}`).catch(() => null) : null;
+  const [groups] = await Promise.all([
+    apiGet('/groups').catch(() => []),
+  ]);
+
+  const group = inst.group_id
+    ? (groups.find(g => g.id === inst.group_id) || await apiGet(`/groups/${inst.group_id}`).catch(() => null))
+    : null;
 
   panel.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:14px;font-size:13px">
@@ -53,10 +59,18 @@ async function renderInfo(panel, id, inst) {
       ${infoRow(t('instances.col_contact'),  relativeTime(inst.last_seen_at))}
       ${infoRow(t('instance.fingerprint'),   `<span class="text-mono" style="font-size:11px;word-break:break-all">${escapeHtml(inst.fingerprint || '—')}</span>`)}
       ${infoRow(t('instance.enroll_status'), escapeHtml(inst.enrollment_status || '—'))}
-      ${infoRow(t('label.group'),            group ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>` : '—')}
+      ${infoRowEditable(t('label.group'), group
+        ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>`
+        : '—',
+        `<select id="idr-group-sel" class="form-select form-select-sm" style="max-width:200px">
+          <option value="">${t('instances.no_group')}</option>
+          ${groups.map(g => `<option value="${g.id}" ${inst.group_id === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm btn-primary ms-1" id="idr-group-save">${t('modal.save')}</button>`
+      )}
       ${infoRow(t('instances.col_tags'),     (inst.tags?.length
         ? inst.tags.map(tg => `<span class="tag-chip" style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')}">${escapeHtml(tg.name)}</span>`).join('')
-        : '—'))}
+        : '—') + `<button class="btn btn-sm btn-ghost-secondary ms-1" id="idr-edit-tags" style="font-size:11px;padding:1px 6px"><i class="ti ti-plus"></i></button>`)}
     </div>
 
     <!-- Telemetry chart -->
@@ -66,26 +80,49 @@ async function renderInfo(panel, id, inst) {
       <div id="idr-chart" style="margin-top:12px"></div>
     </div>`;
 
+  // Group save handler
+  panel.querySelector('#idr-group-save')?.addEventListener('click', async () => {
+    const sel = panel.querySelector('#idr-group-sel');
+    try {
+      await apiPatch(`/instances/${id}`, { group_id: sel.value || null });
+      showToast(t('msg.saved'), 'success');
+      inst.group_id = sel.value || null;
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+
+  // Tag edit handler
+  panel.querySelector('#idr-edit-tags')?.addEventListener('click', async () => {
+    const allTags = await apiGet('/tags').catch(() => []);
+    showTagEditModal(allTags, inst.tags || [], async (selectedIds) => {
+      try {
+        const tagNames = selectedIds.map(tid => allTags.find(tg => tg.id === tid)?.name).filter(Boolean);
+        await apiPut(`/instances/${id}/tags`, { tag_names: tagNames });
+        showToast(t('msg.saved'), 'success');
+        inst = await apiGet(`/instances/${id}`);
+        await renderInfo(panel, id, inst);
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+  });
+
   // Load and render telemetry
   try {
-    const tele = await apiGet(`/instances/${id}/telemetry?limit=1`);
-    const latest = Array.isArray(tele) ? tele[0] : null;
+    const latest = await apiGet(`/instances/${id}/telemetry/latest`).catch(() => null);
     if (latest) {
       const bars = document.getElementById('idr-tele-bars');
       if (bars) {
         bars.innerHTML = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             ${teleBar('CPU', fmtPercent(latest.cpu_percent), latest.cpu_percent)}
-            ${teleBar('RAM', fmtPercent(latest.memory_percent), latest.memory_percent)}
+            ${teleBar('RAM', fmtPercent(latest.ram_percent), latest.ram_percent)}
             ${teleBar(t('instance.disk'), fmtPercent(latest.disk_percent), latest.disk_percent)}
-            ${teleBar('Net ↑', formatBytes((latest.net_sent_bytes || 0) / 60) + '/s', 0)}
+            ${teleBar('Net ↑', formatBytes(latest.net_out_bps || 0) + '/s', 0)}
           </div>`;
       }
     }
     // Timeseries chart
-    const series = await apiGet(`/instances/${id}/telemetry?limit=20`);
+    const series = await apiGet(`/instances/${id}/telemetry?hours=1`);
     if (Array.isArray(series) && series.length > 1 && window.ApexCharts) {
-      const cats = series.map(p => fmtDate(p.timestamp));
+      const cats = series.map(p => fmtDate(p.ts));
       const chartEl = document.getElementById('idr-chart');
       if (chartEl) {
         if (chartEl._chart) chartEl._chart.destroy();
@@ -93,7 +130,7 @@ async function renderInfo(panel, id, inst) {
           chart: { type: 'line', height: 140, toolbar: { show: false }, sparkline: { enabled: false } },
           series: [
             { name: 'CPU %',  data: series.map(p => +(p.cpu_percent    || 0).toFixed(1)) },
-            { name: 'RAM %',  data: series.map(p => +(p.memory_percent || 0).toFixed(1)) },
+            { name: 'RAM %',  data: series.map(p => +(p.ram_percent    || 0).toFixed(1)) },
             { name: 'Disk %', data: series.map(p => +(p.disk_percent   || 0).toFixed(1)) },
           ],
           xaxis: { categories: cats, labels: { show: false } },
@@ -108,6 +145,57 @@ async function renderInfo(panel, id, inst) {
       }
     }
   } catch (_) {}
+}
+
+function showTagEditModal(allTags, currentTags, onSave) {
+  const currentIds = new Set(currentTags.map(t => t.id));
+  const selected = new Set(currentIds);
+
+  const m = document.createElement('div');
+  m.className = 'modal fade';
+  m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('instances.col_tags')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${allTags.map(tg => `
+            <span class="tag-chip tag-chip-sel ${selected.has(tg.id) ? 'active' : ''}"
+              data-id="${tg.id}"
+              style="cursor:pointer;background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')};opacity:${selected.has(tg.id) ? 1 : 0.5}">
+              ${escapeHtml(tg.name)}
+            </span>`).join('')}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="te-save">${t('modal.save')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  const modal = new window.bootstrap.Modal(m);
+  modal.show();
+
+  m.querySelectorAll('.tag-chip-sel').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const tid = chip.dataset.id;
+      if (selected.has(tid)) {
+        selected.delete(tid);
+        chip.style.opacity = '0.5';
+        chip.classList.remove('active');
+      } else {
+        selected.add(tid);
+        chip.style.opacity = '1';
+        chip.classList.add('active');
+      }
+    });
+  });
+
+  m.querySelector('#te-save').addEventListener('click', async () => {
+    await onSave([...selected]);
+    modal.hide();
+  });
+  m.addEventListener('hidden.bs.modal', () => m.remove());
 }
 
 function teleBar(label, value, pct) {
@@ -130,6 +218,13 @@ function infoRow(label, value) {
   return `<div style="display:flex;gap:12px;align-items:flex-start;border-bottom:1px solid var(--hub-border);padding-bottom:10px">
     <div style="width:120px;color:var(--tblr-secondary);flex-shrink:0;font-size:12px;padding-top:2px">${escapeHtml(label)}</div>
     <div style="flex:1;word-break:break-word">${value}</div>
+  </div>`;
+}
+
+function infoRowEditable(label, display, editHtml) {
+  return `<div style="display:flex;gap:12px;align-items:flex-start;border-bottom:1px solid var(--hub-border);padding-bottom:10px">
+    <div style="width:120px;color:var(--tblr-secondary);flex-shrink:0;font-size:12px;padding-top:2px">${escapeHtml(label)}</div>
+    <div style="flex:1;word-break:break-word">${editHtml || display}</div>
   </div>`;
 }
 
@@ -190,23 +285,57 @@ async function renderActions(panel, id, inst) {
 }
 
 async function renderSsh(panel, id) {
-  const assignments = await apiGet(`/ssh/assignments?instance_id=${id}`).catch(() => []);
-  if (!assignments?.length) {
-    panel.innerHTML = `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px"><i class="ti ti-lock" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>${t('ssh.none_assign')}</div>`;
+  const assignments = await apiGet(`/ssh/assignments?target_id=${id}`).catch(() => []);
+  const active = (assignments || []).filter(a => a.status !== 'revoked');
+
+  if (!active.length) {
+    panel.innerHTML = `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px"><i class="ti ti-lock" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>${t('ssh.none_assign')}</div>
+    <div style="text-align:center;margin-top:8px">
+      <button class="btn btn-sm btn-outline-secondary" id="ssh-assign-btn"><i class="ti ti-key me-1"></i>${t('instance.assign_ssh')}</button>
+    </div>`;
+    panel.querySelector('#ssh-assign-btn')?.addEventListener('click', () => showSshAssignModal(id, 'instance').then(() => renderSsh(panel, id)));
     return;
   }
-  panel.innerHTML = `<div class="data-table" style="margin-top:8px">
+
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <button class="btn btn-sm btn-outline-secondary" id="ssh-assign-btn"><i class="ti ti-key me-1"></i>${t('instance.assign_ssh')}</button>
+    </div>
+    <div class="data-table" style="margin-top:8px">
     <table><thead><tr>
       <th>${t('ssh.col_key')}</th>
       <th>${t('ssh.col_user')}</th>
       <th>${t('ssh.col_status')}</th>
+      <th></th>
     </tr></thead><tbody>
-    ${assignments.map(a => `<tr>
+    ${active.map(a => `<tr>
       <td>${escapeHtml(a.key_name || a.ssh_key_id)}</td>
-      <td><span class="text-mono">${escapeHtml(a.linux_user || '—')}</span></td>
+      <td><span class="text-mono">${escapeHtml(a.linux_user || a.target_user || '—')}</span></td>
       <td><span class="hub-badge ${a.status}">${escapeHtml(a.status)}</span></td>
+      <td style="text-align:right">
+        <button class="btn btn-sm btn-ghost-danger revoke-ssh-btn" data-id="${a.id}" title="${t('ssh.confirm_revoke')}">
+          <i class="ti ti-trash" style="font-size:13px"></i>
+        </button>
+      </td>
     </tr>`).join('')}
     </tbody></table></div>`;
+
+  panel.querySelector('#ssh-assign-btn')?.addEventListener('click', async () => {
+    await showSshAssignModal(id, 'instance');
+    await renderSsh(panel, id);
+  });
+
+  panel.querySelectorAll('.revoke-ssh-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('ssh.revoked'), okClass: 'btn-danger' });
+      if (!ok) return;
+      try {
+        await apiDelete(`/ssh/assignments/${btn.dataset.id}`);
+        showToast(t('ssh.revoked'), 'success');
+        await renderSsh(panel, id);
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+  });
 }
 
 async function renderAudit(panel, id) {
@@ -247,7 +376,13 @@ export async function showSshAssignModal(targetId, targetType) {
             ${keys.map(k => `<option value="${k.id}">${escapeHtml(k.name)}</option>`).join('')}
           </select></div>
         <div class="mb-3"><label class="form-label">${t('ssh.linux_user')}</label>
-          <input type="text" id="sa-user" class="form-control" value="madmin" /></div>
+          <input type="text" id="sa-user" class="form-control" value="root" /></div>
+        <div class="mb-3"><label class="form-label">${t('ssh.expires')}</label>
+          <select id="sa-expires" class="form-select form-select-sm">
+            <option value="">${t('ssh.expires_never')}</option>
+            <option value="7d">${t('ssh.expires_7d')}</option>
+            <option value="30d">${t('ssh.expires_30d')}</option>
+          </select></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
@@ -260,9 +395,17 @@ export async function showSshAssignModal(targetId, targetType) {
   modal.show();
   m.querySelector('#sa-ok').addEventListener('click', async () => {
     const ssh_key_id = m.querySelector('#sa-key').value;
-    const target_user = m.querySelector('#sa-user').value.trim() || 'madmin';
+    const target_user = m.querySelector('#sa-user').value.trim() || 'root';
+    const expiresVal = m.querySelector('#sa-expires').value;
+    let expires_at = null;
+    if (expiresVal) {
+      const days = parseInt(expiresVal);
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      expires_at = d.toISOString();
+    }
     try {
-      await apiPost('/ssh/assignments', { ssh_key_id, target_type: targetType, target_id: targetId, target_user });
+      await apiPost('/ssh/assignments', { ssh_key_id, target_type: targetType, target_id: targetId, target_user, expires_at });
       showToast(t('ssh.assigned'), 'success');
       modal.hide();
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }

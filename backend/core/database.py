@@ -61,6 +61,15 @@ async def init_db() -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
         logger.info("Database tables created")
 
+    # Safe incremental migrations for new columns on existing tables
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "ALTER TABLE managed_instance ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE ssh_key_assignment ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"
+        ))
+
     await _migrate_json_tags()
 
 

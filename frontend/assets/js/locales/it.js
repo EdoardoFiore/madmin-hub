@@ -189,6 +189,8 @@ export default {
   'inventory.key_added':       'Chiave aggiunta',
   'inventory.key_deleted':     'Chiave eliminata',
   'inventory.key_confirm_del': 'Eliminare chiave dal vault?',
+  'inventory.tag_edit':        'Modifica tag',
+  'inventory.key_edit':        'Modifica chiave',
   // Enrollment
   'enrollment.title':           'Enrollment Token',
   'enrollment.new_token':       'Nuovo token',
@@ -321,6 +323,11 @@ export default {
   'ssh.assign_status.pending': 'In attesa',
   'ssh.assign_status.active':  'Attiva',
   'ssh.assign_status.revoked': 'Revocata',
+  'ssh.expires':               'Scadenza accesso',
+  'ssh.expires_never':         'Mai',
+  'ssh.expires_7d':            '7 giorni',
+  'ssh.expires_30d':           '30 giorni',
+  'ssh.revoke':                'Revoca',
   // Settings
   'settings.title':              'Impostazioni',
   'settings.tab_general':        'Generale',

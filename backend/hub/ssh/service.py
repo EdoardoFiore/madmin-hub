@@ -96,6 +96,8 @@ async def push_to_instance(
         "fingerprint": key.fingerprint,
         "assignment_id": str(assignment.id),
     }
+    if assignment.expires_at:
+        params["expires_at"] = assignment.expires_at.isoformat()
     return await disp.dispatch(
         session,
         instance_id=instance_id,

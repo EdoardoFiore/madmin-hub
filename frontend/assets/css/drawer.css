@@ -70,3 +70,7 @@
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* Ensure Bootstrap modals render above the drawer */
+.modal { z-index: 1080 !important; }
+.modal-backdrop { z-index: 1075 !important; }

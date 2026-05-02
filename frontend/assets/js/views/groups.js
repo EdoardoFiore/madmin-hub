@@ -148,7 +148,8 @@ async function renderGroupInstances(panel, groupId) {
 
 async function renderGroupSsh(panel, groupId) {
   try {
-    const assignments = await apiGet(`/ssh/assignments?target_id=${groupId}&target_type=group`) || [];
+    const assignments = (await apiGet(`/ssh/assignments?target_id=${groupId}&target_type=group`) || [])
+      .filter(a => a.status !== 'revoked');
     panel.innerHTML = `
       <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
         <button class="btn btn-sm btn-outline-secondary" id="grp-assign-ssh">
@@ -158,11 +159,16 @@ async function renderGroupSsh(panel, groupId) {
       ${!assignments.length
         ? `<div style="text-align:center;padding:30px;color:var(--tblr-secondary);font-size:13px">${t('ssh.none_assign')}</div>`
         : `<div class="data-table mt-2"><table>
-            <thead><tr><th>${t('ssh.col_key')}</th><th>${t('ssh.col_user')}</th><th>${t('ssh.col_status')}</th></tr></thead>
+            <thead><tr><th>${t('ssh.col_key')}</th><th>${t('ssh.col_user')}</th><th>${t('ssh.col_status')}</th><th></th></tr></thead>
             <tbody>${assignments.map(a => `<tr>
               <td>${escapeHtml(a.key_name || a.ssh_key_id)}</td>
-              <td><span class="text-mono">${escapeHtml(a.linux_user || '—')}</span></td>
+              <td><span class="text-mono">${escapeHtml(a.target_user || '—')}</span></td>
               <td><span class="hub-badge ${a.status}">${escapeHtml(a.status)}</span></td>
+              <td style="text-align:right">
+                <button class="btn btn-sm btn-ghost-danger revoke-grp-ssh" data-id="${a.id}">
+                  <i class="ti ti-trash" style="font-size:13px"></i>
+                </button>
+              </td>
             </tr>`).join('')}</tbody>
           </table></div>`
       }`;
@@ -170,6 +176,17 @@ async function renderGroupSsh(panel, groupId) {
       const { showSshAssignModal } = await import('./instance_drawer.js');
       await showSshAssignModal(groupId, 'group');
       await renderGroupSsh(panel, groupId);
+    });
+    panel.querySelectorAll('.revoke-grp-ssh').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('ssh.revoked'), okClass: 'btn-danger' });
+        if (!ok) return;
+        try {
+          await apiDelete(`/ssh/assignments/${btn.dataset.id}`);
+          showToast(t('ssh.revoked'), 'success');
+          await renderGroupSsh(panel, groupId);
+        } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+      });
     });
   } catch (_) {
     panel.innerHTML = `<div class="alert alert-danger">${t('groups.load_error')}</div>`;

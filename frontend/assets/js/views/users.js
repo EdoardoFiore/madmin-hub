@@ -136,6 +136,21 @@ function showInviteModal() {
           <input type="checkbox" id="uf-2fa" class="form-check-input" />
           <label class="form-check-label" for="uf-2fa">${t('users.field_2fa')}</label>
         </div>
+        <hr style="margin:8px 0">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--tblr-secondary);margin-bottom:6px;cursor:pointer" id="uf-perms-toggle">
+            <i class="ti ti-chevron-right" id="uf-perms-icon"></i> ${t('users.permissions')}
+          </div>
+          <div id="uf-perms-section" style="display:none;padding-left:8px">
+            ${_perms.map(p => {
+              const slug = typeof p === 'string' ? p : p.slug;
+              return `<label class="d-flex align-items-center gap-2 mb-1" style="cursor:pointer;font-size:12px">
+                <input type="checkbox" class="form-check-input uf-perm-chk" data-slug="${escapeHtml(slug)}" />
+                <span class="text-mono">${escapeHtml(slug)}</span>
+              </label>`;
+            }).join('')}
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
@@ -146,6 +161,14 @@ function showInviteModal() {
   document.body.appendChild(modalEl);
   const m = new window.bootstrap.Modal(modalEl);
   m.show();
+
+  modalEl.querySelector('#uf-perms-toggle')?.addEventListener('click', () => {
+    const sec = modalEl.querySelector('#uf-perms-section');
+    const icon = modalEl.querySelector('#uf-perms-icon');
+    const hidden = sec.style.display === 'none';
+    sec.style.display = hidden ? 'block' : 'none';
+    icon.className = hidden ? 'ti ti-chevron-down' : 'ti ti-chevron-right';
+  });
 
   modalEl.querySelector('#uf-create').addEventListener('click', async () => {
     const username = modalEl.querySelector('#uf-username').value.trim();
@@ -162,6 +185,11 @@ function showInviteModal() {
         is_superuser: isAdmin,
         totp_enforced: enforce2fa,
       });
+      // Apply any selected permissions
+      const selectedPerms = [...modalEl.querySelectorAll('.uf-perm-chk:checked')].map(c => c.dataset.slug);
+      if (selectedPerms.length && !isAdmin) {
+        await apiPut(`/auth/users/${username}/permissions`, { permissions: selectedPerms }).catch(() => {});
+      }
       showToast(t('users.created'), 'success');
       m.hide();
       await loadAll();

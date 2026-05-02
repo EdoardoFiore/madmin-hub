@@ -39,6 +39,7 @@ class ManagedInstance(SQLModel, table=True):
     notes: Optional[str] = Field(default=None)
 
     group_id: Optional[uuid.UUID] = Field(default=None, foreign_key="instance_group.id", index=True)
+    ip_address: Optional[str] = Field(default=None, max_length=45)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

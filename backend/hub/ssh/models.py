@@ -36,5 +36,6 @@ class SSHKeyAssignment(SQLModel, table=True):
     status: str = Field(default="pending", max_length=20)  # pending/active/revoked
     pushed_at: Optional[datetime] = Field(default=None)
     revoked_at: Optional[datetime] = Field(default=None)
+    expires_at: Optional[datetime] = Field(default=None)
     assigned_by: Optional[str] = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=datetime.utcnow)

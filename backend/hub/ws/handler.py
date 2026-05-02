@@ -82,13 +82,14 @@ async def ws_endpoint(
     await websocket.accept()
     ws_manager.register(instance_id, websocket)
 
+    client_ip = websocket.client.host if websocket.client else None
     async with async_session_maker() as session:
         result = await session.execute(
             select(ManagedInstance).where(ManagedInstance.id == instance_id)
         )
         inst = result.scalar_one_or_none()
         if inst:
-            await mark_ws_connected(session, inst)
+            await mark_ws_connected(session, inst, ip=client_ip)
             # Flush any queued commands
             flushed = await disp.flush_pending_commands(session, instance_id)
             if flushed:

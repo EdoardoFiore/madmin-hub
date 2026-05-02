@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete } from '../api.js';
+import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js';
 import { t } from '../i18n.js';
 import { escapeHtml, relativeTime, showToast, confirmDialog } from '../utils.js';
 
@@ -73,6 +73,9 @@ async function renderTags(panel) {
               <td>${counts[tg.name] || 0}</td>
               <td>${relativeTime(tg.created_at)}</td>
               <td style="text-align:right" onclick="event.stopPropagation()">
+                <button class="btn btn-sm btn-ghost-secondary edit-tag" data-id="${tg.id}" data-name="${escapeHtml(tg.name)}" data-color="${escapeHtml(tg.color||'#206bc4')}">
+                  <i class="ti ti-pencil" style="font-size:14px"></i>
+                </button>
                 <button class="btn btn-sm btn-ghost-danger del-tag" data-id="${tg.id}" data-name="${escapeHtml(tg.name)}">
                   <i class="ti ti-trash" style="font-size:14px"></i>
                 </button>
@@ -83,6 +86,9 @@ async function renderTags(panel) {
       </div>`;
 
     panel.querySelector('#new-tag-btn')?.addEventListener('click', () => showNewTagModal(panel));
+    panel.querySelectorAll('.edit-tag').forEach(btn => {
+      btn.addEventListener('click', () => showEditTagModal(panel, { id: btn.dataset.id, name: btn.dataset.name, color: btn.dataset.color }));
+    });
     panel.querySelectorAll('.tag-row').forEach(row => {
       row.addEventListener('click', () => {
         window.__pendingTagFilter = row.dataset.name;
@@ -139,6 +145,40 @@ function showNewTagModal(panel) {
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
 }
 
+function showEditTagModal(panel, tag) {
+  const modalEl = document.createElement('div');
+  modalEl.className = 'modal fade';
+  modalEl.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('inventory.tag_edit')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">${t('inventory.tag_name')}</label>
+          <input type="text" id="te-name" class="form-control" value="${escapeHtml(tag.name)}" /></div>
+        <div class="mb-3"><label class="form-label">${t('inventory.tag_color')}</label>
+          <input type="color" id="te-color" class="form-control form-control-color" value="${escapeHtml(tag.color)}" /></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="te-save">${t('modal.save')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(modalEl);
+  const m = new window.bootstrap.Modal(modalEl);
+  m.show();
+  modalEl.querySelector('#te-save').addEventListener('click', async () => {
+    const name = modalEl.querySelector('#te-name').value.trim();
+    if (!name) return;
+    try {
+      await apiPatch(`/tags/${tag.id}`, { name, color: modalEl.querySelector('#te-color').value });
+      showToast(t('msg.saved'), 'success');
+      m.hide();
+      await renderTags(panel);
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
 // ── SSH Keys ──────────────────────────────────────────────────────────────────
 
 async function renderSshKeys(panel) {
@@ -183,6 +223,9 @@ async function renderSshKeys(panel) {
               <td><span class="hub-badge info">${escapeHtml(scope(k.id))}</span></td>
               <td>${relativeTime(k.created_at)}</td>
               <td style="text-align:right">
+                <button class="btn btn-sm btn-ghost-secondary edit-key" data-id="${k.id}" data-name="${escapeHtml(k.name)}" data-notes="${escapeHtml(k.notes||'')}">
+                  <i class="ti ti-pencil" style="font-size:14px"></i>
+                </button>
                 <button class="btn btn-sm btn-ghost-danger del-key" data-id="${k.id}">
                   <i class="ti ti-trash" style="font-size:14px"></i>
                 </button>
@@ -193,6 +236,9 @@ async function renderSshKeys(panel) {
       </div>`;
 
     panel.querySelector('#new-key-btn')?.addEventListener('click', () => showNewKeyModal(panel));
+    panel.querySelectorAll('.edit-key').forEach(btn => {
+      btn.addEventListener('click', () => showEditKeyModal(panel, { id: btn.dataset.id, name: btn.dataset.name, notes: btn.dataset.notes }));
+    });
     panel.querySelectorAll('.del-key').forEach(btn => {
       btn.addEventListener('click', async () => {
         const ok = await confirmDialog(t('inventory.key_confirm_del'), '', { okLabel: t('msg.deleted') });
@@ -239,6 +285,40 @@ function showNewKeyModal(panel) {
     try {
       await apiPost('/ssh/keys', { name, public_key: pub, notes: modalEl.querySelector('#kf-notes').value.trim() });
       showToast(t('inventory.key_added'), 'success');
+      m.hide();
+      await renderSshKeys(panel);
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
+function showEditKeyModal(panel, key) {
+  const modalEl = document.createElement('div');
+  modalEl.className = 'modal fade';
+  modalEl.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('inventory.key_edit')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">${t('inventory.key_name')}</label>
+          <input type="text" id="ke-name" class="form-control" value="${escapeHtml(key.name)}" /></div>
+        <div class="mb-3"><label class="form-label">${t('inventory.key_notes')}</label>
+          <input type="text" id="ke-notes" class="form-control" value="${escapeHtml(key.notes)}" /></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="ke-save">${t('modal.save')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(modalEl);
+  const m = new window.bootstrap.Modal(modalEl);
+  m.show();
+  modalEl.querySelector('#ke-save').addEventListener('click', async () => {
+    const name = modalEl.querySelector('#ke-name').value.trim();
+    if (!name) return;
+    try {
+      await apiPatch(`/ssh/keys/${key.id}`, { name, notes: modalEl.querySelector('#ke-notes').value.trim() || null });
+      showToast(t('msg.saved'), 'success');
       m.hide();
       await renderSshKeys(panel);
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }

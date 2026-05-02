@@ -51,7 +51,7 @@ async function loadDashboard(container) {
           <!-- Fleet donut -->
           <div class="data-table mb-3" style="padding:20px">
             <div style="font-weight:600;font-size:14px;margin-bottom:16px">${t('dashboard.donut_label')}</div>
-            ${total > 0
+            ${(online > 0 || offline > 0)
               ? `<div class="donut-wrap" style="height:200px"><div id="dash-donut"></div><div class="donut-center"><div class="num">${total}</div><div class="label">${t('dashboard.total')}</div></div></div>`
               : `<div class="data-table-empty"><i class="ti ti-server-off"></i>${t('dashboard.no_instances')}</div>`
             }
@@ -94,19 +94,19 @@ async function loadDashboard(container) {
         </div>
       </div>`;
 
-    // Render donut
-    if (total > 0 && window.ApexCharts) {
+    // Render donut — guard against zero-value series (causes ApexCharts SVG NaN errors)
+    if ((online > 0 || offline > 0) && window.ApexCharts) {
       const donutEl = document.getElementById('dash-donut');
       if (donutEl) {
         new window.ApexCharts(donutEl, {
           chart: { type: 'donut', width: 200, height: 200, sparkline: { enabled: true } },
-          series: [online, offline],
+          series: [Math.max(online, 0.01), Math.max(offline, 0.01)],
           labels: [t('status.online'), t('status.offline')],
           colors: ['#2fb344', '#d63939'],
           legend: { show: false },
           dataLabels: { enabled: false },
           plotOptions: { pie: { donut: { size: '72%' } } },
-          tooltip: { y: { formatter: v => v } },
+          tooltip: { y: { formatter: v => Math.round(v) } },
         }).render();
       }
     }

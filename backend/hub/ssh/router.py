@@ -2,6 +2,7 @@
 SSH router: key vault CRUD, assignment push/revoke.
 """
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,6 +26,11 @@ router = APIRouter(prefix="/api/ssh", tags=["SSH Keys"])
 class KeyCreate(BaseModel):
     name: str
     public_key: str
+    notes: Optional[str] = None
+
+
+class KeyUpdate(BaseModel):
+    name: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -71,6 +77,25 @@ async def create_key(
     }
 
 
+@router.patch("/keys/{key_id}")
+async def update_key(
+    key_id: uuid.UUID,
+    body: KeyUpdate,
+    user: User = Depends(require_permission("hub.ssh")),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(SSHKey).where(SSHKey.id == key_id))
+    key = result.scalar_one_or_none()
+    if not key:
+        raise HTTPException(status_code=404, detail="Chiave non trovata")
+    if body.name is not None:
+        key.name = body.name
+    if body.notes is not None:
+        key.notes = body.notes
+    session.add(key)
+    return {"id": str(key.id), "name": key.name, "notes": key.notes}
+
+
 @router.delete("/keys/{key_id}")
 async def delete_key(
     request: Request,
@@ -100,8 +125,9 @@ class AssignCreate(BaseModel):
     ssh_key_id: uuid.UUID
     target_type: str  # instance | group
     target_id: uuid.UUID
-    target_user: str = "madmin"
+    target_user: str = "root"
     allow_source_ips: List[str] = []
+    expires_at: Optional[datetime] = None
 
 
 @router.get("/assignments")
@@ -131,6 +157,7 @@ async def list_assignments(
             "status": a.status,
             "pushed_at": a.pushed_at.isoformat() if a.pushed_at else None,
             "revoked_at": a.revoked_at.isoformat() if a.revoked_at else None,
+            "expires_at": a.expires_at.isoformat() if a.expires_at else None,
             "assigned_by": a.assigned_by,
             "created_at": a.created_at.isoformat(),
         }
@@ -164,6 +191,7 @@ async def create_assignment(
         target_user=payload.target_user,
         allow_source_ips=json.dumps(payload.allow_source_ips),
         assigned_by=user.username,
+        expires_at=payload.expires_at,
     )
     session.add(assignment)
     await session.flush()

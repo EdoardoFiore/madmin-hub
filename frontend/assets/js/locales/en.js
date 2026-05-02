@@ -189,6 +189,8 @@ export default {
   'inventory.key_added':       'Key added',
   'inventory.key_deleted':     'Key deleted',
   'inventory.key_confirm_del': 'Delete key from vault?',
+  'inventory.tag_edit':        'Edit tag',
+  'inventory.key_edit':        'Edit key',
   // Enrollment
   'enrollment.title':           'Enrollment Tokens',
   'enrollment.new_token':       'New token',
@@ -321,6 +323,11 @@ export default {
   'ssh.assign_status.pending': 'Pending',
   'ssh.assign_status.active':  'Active',
   'ssh.assign_status.revoked': 'Revoked',
+  'ssh.expires':               'Access expiry',
+  'ssh.expires_never':         'Never',
+  'ssh.expires_7d':            '7 days',
+  'ssh.expires_30d':           '30 days',
+  'ssh.revoke':                'Revoke',
   // Settings
   'settings.title':              'Settings',
   'settings.tab_general':        'General',

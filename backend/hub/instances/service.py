@@ -87,12 +87,14 @@ async def get_instance_by_fingerprint(
     return result.scalar_one_or_none()
 
 
-async def mark_ws_connected(session: AsyncSession, instance: ManagedInstance) -> None:
+async def mark_ws_connected(session: AsyncSession, instance: ManagedInstance, ip: Optional[str] = None) -> None:
     now = datetime.utcnow()
     instance.ws_connected = True
     instance.ws_connected_at = now
     instance.last_seen_at = now
     instance.updated_at = now
+    if ip:
+        instance.ip_address = ip
     session.add(instance)
     await session.commit()
 
@@ -298,6 +300,7 @@ def instance_to_dict(i: ManagedInstance, tags: Optional[List[dict]] = None, grou
         "os_info": json.loads(i.os_info or "{}"),
         "tags": tags if tags is not None else json.loads(i.tags or "[]"),
         "notes": i.notes,
+        "ip_address": i.ip_address,
         "group_id": str(i.group_id) if i.group_id else None,
         "group": group,
         "created_at": i.created_at.isoformat(),

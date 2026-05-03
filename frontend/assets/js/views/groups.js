@@ -179,7 +179,7 @@ async function renderGroupSsh(panel, groupId) {
     });
     panel.querySelectorAll('.revoke-grp-ssh').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('ssh.revoked'), okClass: 'btn-danger' });
+        const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('modal.revoke'), okClass: 'btn-danger' });
         if (!ok) return;
         try {
           await apiDelete(`/ssh/assignments/${btn.dataset.id}`);

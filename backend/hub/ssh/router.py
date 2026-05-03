@@ -191,7 +191,7 @@ async def create_assignment(
         target_user=payload.target_user,
         allow_source_ips=json.dumps(payload.allow_source_ips),
         assigned_by=user.username,
-        expires_at=payload.expires_at,
+        expires_at=payload.expires_at.replace(tzinfo=None) if payload.expires_at else None,
     )
     session.add(assignment)
     await session.flush()

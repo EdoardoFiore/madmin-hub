@@ -42,8 +42,8 @@ async def list_instances(
     group_id: Optional[uuid.UUID] = None,
     tag: Optional[str] = None,
 ):
-    items = await inst_svc.list_instances(session, group_id=group_id, tag=tag)
-    return [inst_svc.instance_to_dict(i) for i in items]
+    instances, tags_map = await inst_svc.list_instances_with_tags(session, group_id=group_id, tag=tag)
+    return [inst_svc.instance_to_dict(i, tags=tags_map.get(i.id, [])) for i in instances]
 
 
 @router.get("/api/instances/{instance_id}")

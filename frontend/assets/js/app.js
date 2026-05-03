@@ -7,6 +7,7 @@ import { t, getLang, setLang } from './i18n.js';
 import { loadBranding, applyBranding } from './branding.js';
 import { start as routerStart } from './router.js';
 import { initDrawer } from './shell/drawer.js';
+import { debounce } from './utils.js';
 
 const TOKEN_KEY = 'hub_token';
 
@@ -206,17 +207,149 @@ function buildTopbar(user) {
   // Alerts
   initAlerts();
 
-  // Search (client-side nav — type to jump)
+  // Omnisearch
   if (searchEl) {
-    searchEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const q = searchEl.value.trim().toLowerCase();
-        if (!q) return;
-        const routes = ['instances', 'groups', 'users', 'audit', 'enrollment', 'inventory', 'settings', 'dashboard'];
-        const match = routes.find(r => r.startsWith(q));
-        if (match) { window.location.hash = match; searchEl.value = ''; searchEl.blur(); }
+    searchEl.placeholder = t('search.placeholder');
+    let _cache = null;
+    let _lastResults = [];
+    let _activeIdx = -1;
+
+    const wrap = document.getElementById('topbar-search-wrap');
+    const dropdown = document.createElement('div');
+    dropdown.id = 'omni-dropdown';
+    dropdown.style.cssText = [
+      'display:none;position:absolute;z-index:9999',
+      'width:100%',
+      'background:var(--hub-surface,#fff)',
+      'border:1px solid var(--hub-border)',
+      'border-radius:var(--hub-radius)',
+      'box-shadow:0 8px 32px rgba(0,0,0,.16)',
+      'max-height:480px;overflow-y:auto',
+      'top:calc(100% + 6px);left:0',
+    ].join(';');
+    if (wrap) wrap.appendChild(dropdown);
+
+    const NAV_ITEMS = [
+      ...SECTIONS.flatMap(s => s.items),
+      ...FOOTER_ITEMS,
+    ].filter(item => hasPermission(user, item.perm));
+
+    async function ensureCache() {
+      if (_cache) return;
+      const [instances, groups, sshKeys] = await Promise.all([
+        apiGet('/instances').catch(() => []),
+        apiGet('/groups').catch(() => []),
+        apiGet('/ssh/keys').catch(() => []),
+      ]);
+      const tagMap = new Map();
+      (instances || []).forEach(inst => {
+        (inst.tags || []).forEach(tg => {
+          const name = typeof tg === 'string' ? tg : tg.name;
+          const color = typeof tg === 'object' ? (tg.color || '#adb5bd') : '#adb5bd';
+          if (!tagMap.has(name)) tagMap.set(name, { name, color });
+        });
+      });
+      _cache = { instances: instances || [], groups: groups || [], tags: [...tagMap.values()], sshKeys: sshKeys || [] };
+    }
+
+    function buildResults(q) {
+      const ql = q.toLowerCase();
+      const res = [];
+      const inst = _cache.instances.filter(i => (i.name||'').toLowerCase().includes(ql) || (i.ip_address||'').toLowerCase().includes(ql)).slice(0, 3);
+      if (inst.length) { res.push({ type:'cat', label: t('search.cat_instances') }); inst.forEach(i => res.push({ type:'instance', id:i.id, label:i.name||i.id, sub:i.ip_address||'' })); }
+      const grps = _cache.groups.filter(g => g.name.toLowerCase().includes(ql)).slice(0, 3);
+      if (grps.length) { res.push({ type:'cat', label: t('search.cat_groups') }); grps.forEach(g => res.push({ type:'group', id:g.id, label:g.name, color:g.color })); }
+      const tags = _cache.tags.filter(tg => tg.name.toLowerCase().includes(ql)).slice(0, 3);
+      if (tags.length) { res.push({ type:'cat', label: t('search.cat_tags') }); tags.forEach(tg => res.push({ type:'tag', name:tg.name, label:tg.name, color:tg.color })); }
+      const menu = NAV_ITEMS.filter(item => t(item.key).toLowerCase().includes(ql)).slice(0, 3);
+      if (menu.length) { res.push({ type:'cat', label: t('search.cat_menu') }); menu.forEach(item => res.push({ type:'menu', route:item.route, label:t(item.key), icon:item.icon })); }
+      const keys = _cache.sshKeys.filter(k => k.name.toLowerCase().includes(ql)).slice(0, 3);
+      if (keys.length) { res.push({ type:'cat', label: t('search.cat_ssh') }); keys.forEach(k => res.push({ type:'sshkey', id:k.id, label:k.name, sub:k.fingerprint||'' })); }
+      return res;
+    }
+
+    function renderDropdown(results) {
+      _activeIdx = -1;
+      if (!results.length) {
+        dropdown.innerHTML = `<div style="padding:14px 16px;font-size:13px;color:var(--tblr-secondary);text-align:center">${t('search.no_results')}</div>`;
+        dropdown.style.display = 'block';
+        return;
+      }
+      let firstCat = true;
+      dropdown.innerHTML = results.map((r, i) => {
+        if (r.type === 'cat') {
+          const sep = firstCat ? '' : `<div style="height:1px;background:var(--hub-border);margin:4px 0"></div>`;
+          firstCat = false;
+          return `${sep}<div style="padding:10px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--tblr-secondary)">${escHtml(r.label)}</div>`;
+        }
+        const icon = r.type==='instance'?'ti-server':r.type==='group'?'ti-folders':r.type==='tag'?'ti-tag':r.type==='menu'?(r.icon||'ti-layout-dashboard'):'ti-key';
+        return `<div class="omni-result" data-idx="${i}" style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:13px;transition:background .1s">
+          <i class="ti ${escHtml(icon)}" style="font-size:15px;color:var(--tblr-secondary);flex-shrink:0;width:18px;text-align:center"></i>
+          <div style="flex:1;min-width:0">
+            <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500">${escHtml(r.label)}</div>
+            ${r.sub ? `<div style="font-size:11px;color:var(--tblr-secondary);margin-top:1px">${escHtml(r.sub)}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+      dropdown.innerHTML += `<div style="height:6px"></div>`;
+      dropdown.style.display = 'block';
+      dropdown.querySelectorAll('.omni-result').forEach(el => {
+        el.addEventListener('mouseenter', () => setActive(parseInt(el.dataset.idx)));
+        el.addEventListener('click', () => selectResult(_lastResults[parseInt(el.dataset.idx)]));
+      });
+    }
+
+    function setActive(idx) {
+      _activeIdx = idx;
+      dropdown.querySelectorAll('.omni-result').forEach(el => {
+        el.style.background = parseInt(el.dataset.idx) === idx ? 'var(--hub-surface-2, rgba(0,0,0,.05))' : '';
+      });
+    }
+
+    function navigateTo(hash) {
+      if (window.location.hash === '#' + hash) window.dispatchEvent(new Event('hashchange'));
+      else window.location.hash = hash;
+    }
+
+    function selectResult(r) {
+      if (!r || r.type === 'cat') return;
+      dropdown.style.display = 'none';
+      searchEl.value = '';
+      searchEl.blur();
+      if (r.type === 'instance')   { navigateTo(`instances/${r.id}`); }
+      else if (r.type === 'group') { window.__pendingGroupFilter = r.id; navigateTo('instances'); }
+      else if (r.type === 'tag')   { window.__pendingTagFilter = r.name; navigateTo('instances'); }
+      else if (r.type === 'menu')  { navigateTo(r.route); }
+      else if (r.type === 'sshkey') { window.__pendingKeyFocus = r.id; navigateTo('inventory/ssh'); }
+    }
+
+    const debouncedSearch = debounce(async (q) => {
+      if (q.length < 2) { dropdown.style.display = 'none'; return; }
+      await ensureCache();
+      _lastResults = buildResults(q);
+      renderDropdown(_lastResults);
+    }, 200);
+
+    searchEl.addEventListener('input', e => debouncedSearch(e.target.value.trim()));
+    searchEl.addEventListener('keydown', e => {
+      if (dropdown.style.display === 'none') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = _lastResults.findIndex((r, i) => i > _activeIdx && r.type !== 'cat');
+        if (next >= 0) setActive(next);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        let prev = -1;
+        for (let i = _activeIdx - 1; i >= 0; i--) { if (_lastResults[i]?.type !== 'cat') { prev = i; break; } }
+        if (prev >= 0) setActive(prev);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (_activeIdx >= 0) selectResult(_lastResults[_activeIdx]);
+      } else if (e.key === 'Escape') {
+        dropdown.style.display = 'none';
       }
     });
+    document.addEventListener('click', e => { if (wrap && !wrap.contains(e.target)) dropdown.style.display = 'none'; });
   }
 }
 

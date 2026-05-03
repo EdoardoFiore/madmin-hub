@@ -14,8 +14,15 @@ export default {
   'nav.section.provisioning':    'Provisioning',
   'nav.section.access':          'Accesso',
   'nav.section.observability':   'Osservabilità',
-  // Topbar
+  // Topbar / Omnisearch
   'topbar.search_placeholder': 'Cerca…',
+  'search.placeholder':     'Cerca istanze, gruppi, menu…',
+  'search.cat_instances':   'Istanze',
+  'search.cat_groups':      'Gruppi',
+  'search.cat_tags':        'Tag',
+  'search.cat_menu':        'Menu',
+  'search.cat_ssh':         'Chiavi SSH',
+  'search.no_results':      'Nessun risultato',
   // Alerts
   'alerts.title': 'Notifiche',
   'alerts.none':  'Nessuna notifica',
@@ -26,6 +33,8 @@ export default {
   'modal.save':   'Salva',
   'modal.create': 'Crea',
   'modal.close':  'Chiudi',
+  'modal.delete': 'Elimina',
+  'modal.revoke': 'Revoca',
   // Status badges
   'status.online':   'Online',
   'status.offline':  'Offline',
@@ -133,6 +142,8 @@ export default {
   'instance.cmd_done':      'Completato: {result}',
   'instance.no_telemetry':  'Nessun dato telemetria',
   'instance.load_error':    'Errore caricamento.',
+  'instance.net_chart':     'Banda di rete',
+  'instance.net_aggregate': 'Aggregato',
   // Groups
   'groups.title':           'Gruppi',
   'groups.new_group':       'Nuovo gruppo',
@@ -189,6 +200,14 @@ export default {
   'inventory.key_added':       'Chiave aggiunta',
   'inventory.key_deleted':     'Chiave eliminata',
   'inventory.key_confirm_del': 'Eliminare chiave dal vault?',
+  'inventory.key_confirm_del_active': 'Questa chiave ha {n} assegnazione/i attiva/e. Eliminarla revocherà la chiave da tutte le istanze/gruppi assegnati.',
+  'inventory.key_assignments': 'Assegnazioni attive',
+  'inventory.key_asgn_none':   'Nessuna assegnazione attiva',
+  'inventory.key_asgn_target': 'Target',
+  'inventory.key_asgn_user':   'Utente Linux',
+  'inventory.key_asgn_expires':'Scadenza',
+  'inventory.key_asgn_revoke': 'Revoca',
+  'inventory.key_asgn_revoked':'Assegnazione revocata',
   'inventory.tag_edit':        'Modifica tag',
   'inventory.key_edit':        'Modifica chiave',
   // Enrollment

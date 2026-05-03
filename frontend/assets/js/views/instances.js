@@ -44,10 +44,14 @@ export async function render(container, params) {
       <button class="btn btn-sm btn-ghost-secondary" id="bulk-clear">${t('instances.bulk_clear')}</button>
     </div>`;
 
-  // Apply pending tag filter from inventory click
+  // Apply pending filters from omnisearch / inventory click
   if (window.__pendingTagFilter) {
     _filters.tag = window.__pendingTagFilter;
     window.__pendingTagFilter = null;
+  }
+  if (window.__pendingGroupFilter) {
+    _filters.group = window.__pendingGroupFilter;
+    window.__pendingGroupFilter = null;
   }
 
   await loadAll();

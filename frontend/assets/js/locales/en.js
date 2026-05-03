@@ -14,8 +14,15 @@ export default {
   'nav.section.provisioning':    'Provisioning',
   'nav.section.access':          'Access',
   'nav.section.observability':   'Observability',
-  // Topbar
+  // Topbar / Omnisearch
   'topbar.search_placeholder': 'Search…',
+  'search.placeholder':     'Search instances, groups, menu…',
+  'search.cat_instances':   'Instances',
+  'search.cat_groups':      'Groups',
+  'search.cat_tags':        'Tags',
+  'search.cat_menu':        'Menu',
+  'search.cat_ssh':         'SSH Keys',
+  'search.no_results':      'No results',
   // Alerts
   'alerts.title': 'Notifications',
   'alerts.none':  'No notifications',
@@ -26,6 +33,8 @@ export default {
   'modal.save':   'Save',
   'modal.create': 'Create',
   'modal.close':  'Close',
+  'modal.delete': 'Delete',
+  'modal.revoke': 'Revoke',
   // Status badges
   'status.online':   'Online',
   'status.offline':  'Offline',
@@ -133,6 +142,8 @@ export default {
   'instance.cmd_done':      'Done: {result}',
   'instance.no_telemetry':  'No telemetry data',
   'instance.load_error':    'Error loading.',
+  'instance.net_chart':     'Network bandwidth',
+  'instance.net_aggregate': 'Aggregate',
   // Groups
   'groups.title':           'Groups',
   'groups.new_group':       'New group',
@@ -189,6 +200,14 @@ export default {
   'inventory.key_added':       'Key added',
   'inventory.key_deleted':     'Key deleted',
   'inventory.key_confirm_del': 'Delete key from vault?',
+  'inventory.key_confirm_del_active': 'This key has {n} active assignment(s). Deleting it will revoke the key from all assigned instances/groups.',
+  'inventory.key_assignments': 'Active assignments',
+  'inventory.key_asgn_none':   'No active assignments',
+  'inventory.key_asgn_target': 'Target',
+  'inventory.key_asgn_user':   'Linux user',
+  'inventory.key_asgn_expires':'Expires',
+  'inventory.key_asgn_revoke': 'Revoke',
+  'inventory.key_asgn_revoked':'Assignment revoked',
   'inventory.tag_edit':        'Edit tag',
   'inventory.key_edit':        'Edit key',
   // Enrollment

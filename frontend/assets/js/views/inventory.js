@@ -97,7 +97,7 @@ async function renderTags(panel) {
     });
     panel.querySelectorAll('.del-tag').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const ok = await confirmDialog(t('inventory.tag_confirm_del'), btn.dataset.name, { okLabel: t('msg.deleted') });
+        const ok = await confirmDialog(t('inventory.tag_confirm_del'), btn.dataset.name, { okLabel: t('modal.delete') });
         if (!ok) return;
         try {
           await apiDelete(`/tags/${btn.dataset.id}`);
@@ -190,9 +190,12 @@ async function renderSshKeys(panel) {
     const keyList  = keys || [];
     const asgList  = assignments || [];
 
-    // Compute scope per key
+    function activeAsgns(keyId) {
+      return asgList.filter(a => a.ssh_key_id === keyId && a.status !== 'revoked');
+    }
+
     function scope(keyId) {
-      const asgns = asgList.filter(a => a.ssh_key_id === keyId);
+      const asgns = activeAsgns(keyId);
       if (!asgns.length) return t('inventory.key_scope_vault');
       const hasGroup    = asgns.some(a => a.target_type === 'group');
       const hasInstance = asgns.some(a => a.target_type === 'instance');
@@ -211,39 +214,134 @@ async function renderSshKeys(panel) {
         ${!keyList.length
           ? `<div class="data-table-empty"><i class="ti ti-key"></i>${t('inventory.ssh_none')}</div>`
           : `<table><thead><tr>
+              <th style="width:24px"></th>
               <th>${t('inventory.col_key_name')}</th>
               <th>${t('inventory.col_key_fp')}</th>
               <th>${t('inventory.col_key_scope')}</th>
               <th>${t('inventory.col_key_created')}</th>
               <th></th>
-            </tr></thead><tbody>
-            ${keyList.map(k => `<tr>
-              <td><strong>${escapeHtml(k.name)}</strong>${k.notes ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(k.notes)}</small>` : ''}</td>
-              <td><span class="text-mono">${escapeHtml(k.fingerprint || '—')}</span></td>
-              <td><span class="hub-badge info">${escapeHtml(scope(k.id))}</span></td>
-              <td>${relativeTime(k.created_at)}</td>
-              <td style="text-align:right">
-                <button class="btn btn-sm btn-ghost-secondary edit-key" data-id="${k.id}" data-name="${escapeHtml(k.name)}" data-notes="${escapeHtml(k.notes||'')}">
-                  <i class="ti ti-pencil" style="font-size:14px"></i>
-                </button>
-                <button class="btn btn-sm btn-ghost-danger del-key" data-id="${k.id}">
-                  <i class="ti ti-trash" style="font-size:14px"></i>
-                </button>
-              </td>
-            </tr>`).join('')}
+            </tr></thead><tbody id="ssh-keys-tbody">
+            ${keyList.map(k => {
+              const active = activeAsgns(k.id);
+              return `<tr class="key-row" data-key-id="${k.id}">
+                <td style="padding:6px 4px">
+                  ${active.length
+                    ? `<button class="btn btn-sm btn-ghost-secondary toggle-asgn" data-key-id="${k.id}" title="${t('inventory.key_assignments')}" style="padding:2px 5px">
+                        <i class="ti ti-chevron-right" style="font-size:13px"></i>
+                      </button>`
+                    : ''}
+                </td>
+                <td><strong>${escapeHtml(k.name)}</strong>${k.notes ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(k.notes)}</small>` : ''}</td>
+                <td><span class="text-mono" style="font-size:11px">${escapeHtml(k.fingerprint || '—')}</span></td>
+                <td><span class="hub-badge info">${escapeHtml(scope(k.id))}</span>${active.length ? `<span class="ms-1" style="font-size:11px;color:var(--tblr-secondary)">(${active.length})</span>` : ''}</td>
+                <td>${relativeTime(k.created_at)}</td>
+                <td style="text-align:right">
+                  <button class="btn btn-sm btn-ghost-secondary edit-key" data-id="${k.id}" data-name="${escapeHtml(k.name)}" data-notes="${escapeHtml(k.notes||'')}">
+                    <i class="ti ti-pencil" style="font-size:14px"></i>
+                  </button>
+                  <button class="btn btn-sm btn-ghost-danger del-key" data-id="${k.id}" data-name="${escapeHtml(k.name)}" data-active-count="${active.length}">
+                    <i class="ti ti-trash" style="font-size:14px"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr class="asgn-row" id="asgn-row-${k.id}" style="display:none">
+                <td></td>
+                <td colspan="5" style="padding:0 0 6px 8px">
+                  <div style="background:var(--hub-surface-2,var(--hub-surface));border:1px solid var(--hub-border);border-radius:var(--hub-radius-sm);padding:8px 12px;font-size:12px">
+                    <div style="font-weight:600;margin-bottom:6px;color:var(--tblr-secondary)">${t('inventory.key_assignments')}</div>
+                    ${!active.length
+                      ? `<div style="color:var(--tblr-secondary)">${t('inventory.key_asgn_none')}</div>`
+                      : `<table style="width:100%;border-collapse:collapse">
+                          <thead><tr style="color:var(--tblr-secondary)">
+                            <th style="padding:3px 8px 3px 0;font-weight:500">${t('inventory.key_asgn_target')}</th>
+                            <th style="padding:3px 8px 3px 0;font-weight:500">${t('inventory.key_asgn_user')}</th>
+                            <th style="padding:3px 8px 3px 0;font-weight:500">${t('ssh.col_status')}</th>
+                            <th style="padding:3px 8px 3px 0;font-weight:500">${t('inventory.key_asgn_expires')}</th>
+                            <th></th>
+                          </tr></thead>
+                          <tbody>
+                            ${active.map(a => `<tr data-asgn-id="${a.id}">
+                              <td style="padding:3px 8px 3px 0">
+                                <span class="hub-badge ${a.target_type === 'group' ? 'info' : 'default'}" style="font-size:10px">${escapeHtml(a.target_type)}</span>
+                                <span class="text-mono ms-1" style="font-size:11px">${escapeHtml(a.target_id.slice(0,8))}…</span>
+                              </td>
+                              <td style="padding:3px 8px 3px 0"><span class="text-mono">${escapeHtml(a.target_user || 'root')}</span></td>
+                              <td style="padding:3px 8px 3px 0"><span class="hub-badge ${a.status}">${escapeHtml(a.status)}</span></td>
+                              <td style="padding:3px 8px 3px 0">${a.expires_at ? relativeTime(a.expires_at) : '—'}</td>
+                              <td style="text-align:right">
+                                <button class="btn btn-sm btn-ghost-danger revoke-asgn-btn" data-id="${a.id}" title="${t('inventory.key_asgn_revoke')}">
+                                  <i class="ti ti-x" style="font-size:12px"></i>
+                                </button>
+                              </td>
+                            </tr>`).join('')}
+                          </tbody>
+                        </table>`
+                    }
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
             </tbody></table>`
         }
       </div>`;
 
     panel.querySelector('#new-key-btn')?.addEventListener('click', () => showNewKeyModal(panel));
+
+    panel.querySelectorAll('.toggle-asgn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = document.getElementById(`asgn-row-${btn.dataset.keyId}`);
+        if (!row) return;
+        const open = row.style.display !== 'none';
+        row.style.display = open ? 'none' : '';
+        btn.querySelector('i').className = open ? 'ti ti-chevron-right' : 'ti ti-chevron-down';
+        btn.style.cssText = open ? 'padding:2px 5px' : 'padding:2px 5px;color:var(--hub-primary,#206bc4)';
+      });
+    });
+
+    panel.querySelectorAll('.revoke-asgn-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('inventory.key_asgn_revoke'), okClass: 'btn-danger' });
+        if (!ok) return;
+        try {
+          await apiDelete(`/ssh/assignments/${btn.dataset.id}`);
+          showToast(t('inventory.key_asgn_revoked'), 'success');
+          await renderSshKeys(panel);
+        } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+      });
+    });
+
     panel.querySelectorAll('.edit-key').forEach(btn => {
       btn.addEventListener('click', () => showEditKeyModal(panel, { id: btn.dataset.id, name: btn.dataset.name, notes: btn.dataset.notes }));
     });
+
+    if (window.__pendingKeyFocus) {
+      const focusId = window.__pendingKeyFocus;
+      window.__pendingKeyFocus = null;
+      const keyRow = panel.querySelector(`.key-row[data-key-id="${focusId}"]`);
+      if (keyRow) {
+        keyRow.querySelector('.toggle-asgn')?.click();
+        keyRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        keyRow.style.outline = '2px solid var(--hub-primary, #206bc4)';
+        keyRow.style.borderRadius = 'var(--hub-radius-sm)';
+        setTimeout(() => { keyRow.style.outline = ''; keyRow.style.borderRadius = ''; }, 2000);
+      }
+    }
+
     panel.querySelectorAll('.del-key').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const ok = await confirmDialog(t('inventory.key_confirm_del'), '', { okLabel: t('msg.deleted') });
+        const activeCount = parseInt(btn.dataset.activeCount || '0', 10);
+        const body = activeCount > 0
+          ? t('inventory.key_confirm_del_active').replace('{n}', activeCount)
+          : btn.dataset.name;
+        const ok = await confirmDialog(t('inventory.key_confirm_del'), body, { okLabel: t('modal.delete'), okClass: activeCount > 0 ? 'btn-danger' : undefined });
         if (!ok) return;
         try {
+          if (activeCount > 0) {
+            const asgns = asgList.filter(a => a.ssh_key_id === btn.dataset.id && a.status !== 'revoked');
+            for (const a of asgns) {
+              await apiDelete(`/ssh/assignments/${a.id}`);
+            }
+          }
           await apiDelete(`/ssh/keys/${btn.dataset.id}`);
           showToast(t('inventory.key_deleted'), 'success');
           await renderSshKeys(panel);

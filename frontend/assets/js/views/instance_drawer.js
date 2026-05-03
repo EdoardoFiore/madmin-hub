@@ -59,18 +59,27 @@ async function renderInfo(panel, id, inst) {
       ${infoRow(t('instances.col_contact'),  relativeTime(inst.last_seen_at))}
       ${infoRow(t('instance.fingerprint'),   `<span class="text-mono" style="font-size:11px;word-break:break-all">${escapeHtml(inst.fingerprint || '—')}</span>`)}
       ${infoRow(t('instance.enroll_status'), escapeHtml(inst.enrollment_status || '—'))}
-      ${infoRowEditable(t('label.group'), group
-        ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>`
-        : '—',
-        `<select id="idr-group-sel" class="form-select form-select-sm" style="max-width:200px">
-          <option value="">${t('instances.no_group')}</option>
-          ${groups.map(g => `<option value="${g.id}" ${inst.group_id === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
-        </select>
-        <button class="btn btn-sm btn-primary ms-1" id="idr-group-save">${t('modal.save')}</button>`
+      ${infoRow(t('label.group'),
+        `<div id="idr-group-display" style="display:flex;align-items:center;gap:6px">
+          ${group
+            ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>`
+            : `<span style="color:var(--tblr-secondary)">—</span>`}
+          <button class="btn btn-sm btn-ghost-secondary" id="idr-group-edit-btn" style="padding:1px 5px"><i class="ti ti-pencil" style="font-size:12px"></i></button>
+        </div>
+        <div id="idr-group-edit" style="display:none;align-items:center;gap:6px">
+          <select id="idr-group-sel" class="form-select form-select-sm" style="max-width:180px">
+            <option value="">${t('instances.no_group')}</option>
+            ${groups.map(g => `<option value="${g.id}" ${inst.group_id === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-sm btn-primary" id="idr-group-save">${t('modal.save')}</button>
+          <button class="btn btn-sm btn-ghost-secondary" id="idr-group-cancel"><i class="ti ti-x" style="font-size:12px"></i></button>
+        </div>`
       )}
-      ${infoRow(t('instances.col_tags'),     (inst.tags?.length
-        ? inst.tags.map(tg => `<span class="tag-chip" style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')}">${escapeHtml(tg.name)}</span>`).join('')
-        : '—') + `<button class="btn btn-sm btn-ghost-secondary ms-1" id="idr-edit-tags" style="font-size:11px;padding:1px 6px"><i class="ti ti-plus"></i></button>`)}
+      ${infoRow(t('instances.col_tags'),
+        (inst.tags?.length
+          ? inst.tags.map(tg => `<span class="tag-chip" style="background:${escapeHtml(tg.color||'#adb5bd')}22;color:${escapeHtml(tg.color||'#adb5bd')}">${escapeHtml(tg.name)}</span>`).join('')
+          : '<span style="color:var(--tblr-secondary)">—</span>') +
+        `<button class="btn btn-sm btn-ghost-secondary ms-1" id="idr-edit-tags" style="padding:1px 5px"><i class="ti ti-pencil" style="font-size:12px"></i></button>`)}
     </div>
 
     <!-- Telemetry chart -->
@@ -78,15 +87,30 @@ async function renderInfo(panel, id, inst) {
       <div style="font-weight:600;font-size:13px;margin-bottom:12px">${t('instance.telemetry')}</div>
       <div id="idr-tele-bars"></div>
       <div id="idr-chart" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Network bandwidth chart -->
+    <div style="margin-top:20px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">${t('instance.net_chart')}</div>
+      <div id="idr-net-chart"></div>
     </div>`;
 
-  // Group save handler
+  // Group toggle display/edit
+  panel.querySelector('#idr-group-edit-btn')?.addEventListener('click', () => {
+    panel.querySelector('#idr-group-display').style.display = 'none';
+    panel.querySelector('#idr-group-edit').style.display = 'flex';
+  });
+  panel.querySelector('#idr-group-cancel')?.addEventListener('click', () => {
+    panel.querySelector('#idr-group-display').style.display = 'flex';
+    panel.querySelector('#idr-group-edit').style.display = 'none';
+  });
   panel.querySelector('#idr-group-save')?.addEventListener('click', async () => {
     const sel = panel.querySelector('#idr-group-sel');
     try {
       await apiPatch(`/instances/${id}`, { group_id: sel.value || null });
       showToast(t('msg.saved'), 'success');
       inst.group_id = sel.value || null;
+      await renderInfo(panel, id, inst);
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });
 
@@ -116,6 +140,7 @@ async function renderInfo(panel, id, inst) {
             ${teleBar('RAM', fmtPercent(latest.ram_percent), latest.ram_percent)}
             ${teleBar(t('instance.disk'), fmtPercent(latest.disk_percent), latest.disk_percent)}
             ${teleBar('Net ↑', formatBytes(latest.net_out_bps || 0) + '/s', 0)}
+            ${latest.uptime_seconds != null ? teleBar('Uptime', fmtUptime(latest.uptime_seconds), 0) : ''}
           </div>`;
       }
     }
@@ -143,6 +168,30 @@ async function renderInfo(panel, id, inst) {
         });
         chartEl._chart.render();
       }
+    }
+
+    // Network bandwidth chart
+    const netChartEl = document.getElementById('idr-net-chart');
+    if (Array.isArray(series) && series.length > 1 && window.ApexCharts && netChartEl) {
+      if (netChartEl._netChart) netChartEl._netChart.destroy();
+      netChartEl._netChart = new window.ApexCharts(netChartEl, {
+        chart: { type: 'area', height: 130, toolbar: { show: false } },
+        series: [
+          { name: '↓ In',  data: series.map(p => +(((p.net_in_bps  || 0) / 1024).toFixed(2))) },
+          { name: '↑ Out', data: series.map(p => +(((p.net_out_bps || 0) / 1024).toFixed(2))) },
+        ],
+        xaxis: { categories: series.map(p => fmtDate(p.ts)), labels: { show: false } },
+        yaxis: { min: 0, labels: { formatter: v => v + ' KB/s' } },
+        stroke: { width: 2, curve: 'smooth' },
+        fill: { type: 'gradient', gradient: { opacityFrom: 0.3, opacityTo: 0.05 } },
+        colors: ['#2fb344', '#206bc4'],
+        dataLabels: { enabled: false },
+        markers: { size: 0 },
+        legend: { show: true, position: 'top', fontSize: '11px' },
+        grid: { borderColor: 'var(--hub-border)' },
+        tooltip: { theme: document.documentElement.getAttribute('data-bs-theme'), y: { formatter: v => v + ' KB/s' } },
+      });
+      netChartEl._netChart.render();
     }
   } catch (_) {}
 }
@@ -196,6 +245,16 @@ function showTagEditModal(allTags, currentTags, onSave) {
     modal.hide();
   });
   m.addEventListener('hidden.bs.modal', () => m.remove());
+}
+
+function fmtUptime(seconds) {
+  if (!seconds) return '—';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}g ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 function teleBar(label, value, pct) {
@@ -293,7 +352,9 @@ async function renderSsh(panel, id) {
     <div style="text-align:center;margin-top:8px">
       <button class="btn btn-sm btn-outline-secondary" id="ssh-assign-btn"><i class="ti ti-key me-1"></i>${t('instance.assign_ssh')}</button>
     </div>`;
-    panel.querySelector('#ssh-assign-btn')?.addEventListener('click', () => showSshAssignModal(id, 'instance').then(() => renderSsh(panel, id)));
+    panel.querySelector('#ssh-assign-btn')?.addEventListener('click', async () => {
+      if (await showSshAssignModal(id, 'instance')) await renderSsh(panel, id);
+    });
     return;
   }
 
@@ -321,13 +382,12 @@ async function renderSsh(panel, id) {
     </tbody></table></div>`;
 
   panel.querySelector('#ssh-assign-btn')?.addEventListener('click', async () => {
-    await showSshAssignModal(id, 'instance');
-    await renderSsh(panel, id);
+    if (await showSshAssignModal(id, 'instance')) await renderSsh(panel, id);
   });
 
   panel.querySelectorAll('.revoke-ssh-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('ssh.revoked'), okClass: 'btn-danger' });
+      const ok = await confirmDialog(t('ssh.confirm_revoke'), '', { okLabel: t('modal.revoke'), okClass: 'btn-danger' });
       if (!ok) return;
       try {
         await apiDelete(`/ssh/assignments/${btn.dataset.id}`);
@@ -363,52 +423,56 @@ export async function showSshAssignModal(targetId, targetType) {
   const keys = await apiGet('/ssh/keys').catch(() => []);
   if (!keys?.length) {
     showToast(t('ssh.no_keys'), 'warning');
-    return;
+    return false;
   }
-  const m = document.createElement('div');
-  m.className = 'modal fade';
-  m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">${t('instance.assign_ssh')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <div class="mb-3"><label class="form-label">${t('ssh.col_key')}</label>
-          <select id="sa-key" class="form-select">
-            ${keys.map(k => `<option value="${k.id}">${escapeHtml(k.name)}</option>`).join('')}
-          </select></div>
-        <div class="mb-3"><label class="form-label">${t('ssh.linux_user')}</label>
-          <input type="text" id="sa-user" class="form-control" value="root" /></div>
-        <div class="mb-3"><label class="form-label">${t('ssh.expires')}</label>
-          <select id="sa-expires" class="form-select form-select-sm">
-            <option value="">${t('ssh.expires_never')}</option>
-            <option value="7d">${t('ssh.expires_7d')}</option>
-            <option value="30d">${t('ssh.expires_30d')}</option>
-          </select></div>
+  return new Promise(resolve => {
+    let assigned = false;
+    const m = document.createElement('div');
+    m.className = 'modal fade';
+    m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">${t('instance.assign_ssh')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="mb-3"><label class="form-label">${t('ssh.col_key')}</label>
+            <select id="sa-key" class="form-select">
+              ${keys.map(k => `<option value="${k.id}">${escapeHtml(k.name)}</option>`).join('')}
+            </select></div>
+          <div class="mb-3"><label class="form-label">${t('ssh.linux_user')}</label>
+            <input type="text" id="sa-user" class="form-control" value="root" /></div>
+          <div class="mb-3"><label class="form-label">${t('ssh.expires')}</label>
+            <select id="sa-expires" class="form-select form-select-sm">
+              <option value="">${t('ssh.expires_never')}</option>
+              <option value="7d">${t('ssh.expires_7d')}</option>
+              <option value="30d">${t('ssh.expires_30d')}</option>
+            </select></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+          <button type="button" class="btn btn-primary" id="sa-ok">${t('modal.save')}</button>
+        </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
-        <button type="button" class="btn btn-primary" id="sa-ok">${t('modal.save')}</button>
-      </div>
-    </div>
-  </div>`;
-  document.body.appendChild(m);
-  const modal = new window.bootstrap.Modal(m);
-  modal.show();
-  m.querySelector('#sa-ok').addEventListener('click', async () => {
-    const ssh_key_id = m.querySelector('#sa-key').value;
-    const target_user = m.querySelector('#sa-user').value.trim() || 'root';
-    const expiresVal = m.querySelector('#sa-expires').value;
-    let expires_at = null;
-    if (expiresVal) {
-      const days = parseInt(expiresVal);
-      const d = new Date();
-      d.setDate(d.getDate() + days);
-      expires_at = d.toISOString();
-    }
-    try {
-      await apiPost('/ssh/assignments', { ssh_key_id, target_type: targetType, target_id: targetId, target_user, expires_at });
-      showToast(t('ssh.assigned'), 'success');
-      modal.hide();
-    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    </div>`;
+    document.body.appendChild(m);
+    const modal = new window.bootstrap.Modal(m);
+    modal.show();
+    m.querySelector('#sa-ok').addEventListener('click', async () => {
+      const ssh_key_id = m.querySelector('#sa-key').value;
+      const target_user = m.querySelector('#sa-user').value.trim() || 'root';
+      const expiresVal = m.querySelector('#sa-expires').value;
+      let expires_at = null;
+      if (expiresVal) {
+        const days = parseInt(expiresVal);
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        expires_at = d.toISOString();
+      }
+      try {
+        await apiPost('/ssh/assignments', { ssh_key_id, target_type: targetType, target_id: targetId, target_user, expires_at });
+        showToast(t('ssh.assigned'), 'success');
+        assigned = true;
+        modal.hide();
+      } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    });
+    m.addEventListener('hidden.bs.modal', () => { m.remove(); resolve(assigned); });
   });
-  m.addEventListener('hidden.bs.modal', () => m.remove());
 }

@@ -58,4 +58,6 @@ def telemetry_to_dict(t: InstanceTelemetry) -> dict:
         "net_out_bps": t.net_out_bps,
         "services_status": json.loads(t.services_status or "{}"),
         "modules_status": json.loads(t.modules_status or "[]"),
+        "uptime_seconds": json.loads(t.raw or "{}").get("uptime_seconds"),
+        "net_interfaces": json.loads(t.raw or "{}").get("net_interfaces", {}),
     }

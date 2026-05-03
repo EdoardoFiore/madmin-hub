@@ -64,10 +64,13 @@ async def list_keys(session: AsyncSession) -> List[SSHKey]:
 
 
 async def delete_key(session: AsyncSession, key_id: uuid.UUID) -> bool:
+    from sqlalchemy import delete as sa_delete
+    from .models import SSHKeyAssignment
     result = await session.execute(select(SSHKey).where(SSHKey.id == key_id))
     key = result.scalar_one_or_none()
     if not key:
         return False
+    await session.execute(sa_delete(SSHKeyAssignment).where(SSHKeyAssignment.ssh_key_id == key_id))
     await session.delete(key)
     return True
 
@@ -92,7 +95,7 @@ async def push_to_instance(
     ak_line = _build_authorized_keys_line(key.public_key, source_ips)
     params = {
         "target_user": assignment.target_user,
-        "authorized_keys_line": ak_line,
+        "public_key": ak_line,
         "fingerprint": key.fingerprint,
         "assignment_id": str(assignment.id),
     }

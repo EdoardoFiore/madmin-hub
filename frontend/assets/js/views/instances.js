@@ -2,17 +2,131 @@ import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js';
 import { t } from '../i18n.js';
 import { debounce, escapeHtml, relativeTime, statusBadge, showToast, confirmDialog } from '../utils.js';
 import { openDrawer } from '../shell/drawer.js';
+import { getUser } from '../app.js';
 
 let _instances = [], _groups = [], _tags = [];
 let _selected = new Set();
 let _filters = { search: '', group: '', tag: '', status: '' };
+let _groupMap = {};
+
+const COLUMN_DEFS = [
+  { key: 'status',      required: true,  label: () => t('instances.col_status'),  render: i => statusBadge(i.ws_connected, i.enrollment_status) },
+  { key: 'name',        required: true,  label: () => t('instances.col_name'),    render: i => `<strong>${escapeHtml(i.name || i.id)}</strong>${i.ip_address ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(i.ip_address)}</small>` : ''}` },
+  { key: 'group',       required: false, label: () => t('instances.col_group'),   render: i => { const g = _groupMap[i.group_id]; return g ? `<span class="group-badge" style="border-color:${escapeHtml(g.color||'#adb5bd')}">${escapeHtml(g.name)}</span>` : '<span class="text-muted">—</span>'; } },
+  { key: 'version',     required: false, label: () => t('instances.col_version'), render: i => `<span class="text-mono">${escapeHtml(i.version || '—')}</span>` },
+  { key: 'last_seen',   required: false, label: () => t('instances.col_contact'), render: i => relativeTime(i.last_seen_at) },
+  { key: 'tags',        required: false, label: () => t('instances.col_tags'),    render: i => { const arr = Array.isArray(i.tags) ? i.tags : []; return arr.map(tg => { const n = typeof tg==='string'?tg:tg.name; const c = typeof tg==='object'?tg.color:'#adb5bd'; return `<span class="tag-chip" style="background:${escapeHtml(c)}22;color:${escapeHtml(c)}">${escapeHtml(n)}</span>`; }).join('') || '—'; } },
+  { key: 'ip',          required: false, label: () => t('instances.col_ip'),      render: i => escapeHtml(i.ip_address || '—') },
+  { key: 'fingerprint', required: false, label: () => t('instance.fingerprint'),  render: i => i.fingerprint ? `<span class="text-mono" style="font-size:11px">${escapeHtml(i.fingerprint.substring(0,20))}…</span>` : '—' },
+  { key: 'os',          required: false, label: () => 'OS',                       render: i => { try { const o = JSON.parse(i.os_info||'{}'); return escapeHtml(o.os_name || o.platform || '—'); } catch(_) { return '—'; } } },
+  { key: 'notes',       required: false, label: () => t('label.notes'),           render: i => escapeHtml(i.notes || '—') },
+  { key: 'created',     required: false, label: () => t('label.created'),         render: i => relativeTime(i.created_at) },
+];
+const DEFAULT_COLS = ['status', 'name', 'group', 'version', 'last_seen', 'tags'];
+let _visibleColumns = [...DEFAULT_COLS];
+
+function loadColumnPrefs() {
+  const user = getUser();
+  if (!user) return;
+  try {
+    const prefs = typeof user.preferences === 'string'
+      ? JSON.parse(user.preferences || '{}')
+      : (user.preferences || {});
+    if (Array.isArray(prefs.instances_columns) && prefs.instances_columns.length) {
+      _visibleColumns = prefs.instances_columns;
+    }
+  } catch (_) {}
+}
+
+async function saveColumnPrefs() {
+  const user = getUser();
+  if (!user) return;
+  try {
+    const prefs = typeof user.preferences === 'string'
+      ? JSON.parse(user.preferences || '{}')
+      : { ...(user.preferences || {}) };
+    prefs.instances_columns = _visibleColumns;
+    await apiPatch('/auth/me/preferences', { preferences: JSON.stringify(prefs) });
+    user.preferences = prefs;
+  } catch (_) {}
+}
+
+function showColumnModal() {
+  const optCols = COLUMN_DEFS.filter(c => !c.required);
+  const visOpt  = _visibleColumns.filter(k => optCols.find(c => c.key === k));
+  const hidOpt  = optCols.filter(c => !_visibleColumns.includes(c.key)).map(c => c.key);
+  let modalOrder = [...visOpt, ...hidOpt];
+
+  const m = document.createElement('div');
+  m.className = 'modal fade';
+  m.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">${t('instances.columns_title')}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" style="padding:12px 16px">
+        <p style="font-size:12px;color:var(--tblr-secondary);margin-bottom:10px"><i class="ti ti-info-circle me-1"></i>${t('instances.columns_hint')}</p>
+        <div id="col-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+        <button type="button" class="btn btn-primary" id="col-save">${t('modal.save')}</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  const modal = new window.bootstrap.Modal(m);
+
+  function renderColList(container) {
+    container.innerHTML = modalOrder.map(key => {
+      const col = optCols.find(c => c.key === key);
+      if (!col) return '';
+      const visible = _visibleColumns.includes(key);
+      return `<div class="d-flex align-items-center gap-2 mb-1" data-key="${escapeHtml(key)}" style="padding:4px 0">
+        <input type="checkbox" class="form-check-input col-chk" data-key="${escapeHtml(key)}" ${visible ? 'checked' : ''} />
+        <span style="flex:1;font-size:13px">${escapeHtml(col.label())}</span>
+        <button class="btn btn-xs btn-ghost-secondary col-up" data-key="${escapeHtml(key)}" title="Su"><i class="ti ti-arrow-up"></i></button>
+        <button class="btn btn-xs btn-ghost-secondary col-dn" data-key="${escapeHtml(key)}" title="Giù"><i class="ti ti-arrow-down"></i></button>
+      </div>`;
+    }).join('');
+
+    container.querySelectorAll('.col-up').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = modalOrder.indexOf(btn.dataset.key);
+        if (idx > 0) { modalOrder.splice(idx, 1); modalOrder.splice(idx - 1, 0, btn.dataset.key); renderColList(container); }
+      });
+    });
+    container.querySelectorAll('.col-dn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = modalOrder.indexOf(btn.dataset.key);
+        if (idx < modalOrder.length - 1) { modalOrder.splice(idx, 1); modalOrder.splice(idx + 1, 0, btn.dataset.key); renderColList(container); }
+      });
+    });
+  }
+
+  renderColList(m.querySelector('#col-list'));
+
+  m.querySelector('#col-save').addEventListener('click', async () => {
+    const checked = new Set([...m.querySelectorAll('.col-chk:checked')].map(c => c.dataset.key));
+    const required = COLUMN_DEFS.filter(c => c.required).map(c => c.key);
+    _visibleColumns = [...required, ...modalOrder.filter(k => checked.has(k))];
+    modal.hide();
+    renderTable();
+    await saveColumnPrefs();
+  });
+
+  m.addEventListener('hidden.bs.modal', () => m.remove());
+  modal.show();
+}
 
 export async function render(container, params) {
+  loadColumnPrefs();
   container.innerHTML = `
     <div class="hub-page-header">
       <div>
         <h1 class="hub-page-title">${t('instances.title')}</h1>
       </div>
+      <button class="btn btn-sm btn-outline-secondary" id="inst-cols-btn">
+        <i class="ti ti-columns me-1"></i>${t('instances.columns_btn')}
+      </button>
     </div>
     <div id="inst-stats" class="row g-3 mb-3"></div>
     <div class="filter-bar mb-0" id="inst-filter">
@@ -56,6 +170,7 @@ export async function render(container, params) {
 
   await loadAll();
   wireFilters();
+  document.getElementById('inst-cols-btn')?.addEventListener('click', showColumnModal);
 
   // If route has an ID, open the drawer
   if (params?.length && params[0]) {
@@ -187,39 +302,26 @@ function renderTable() {
     return;
   }
 
-  const groupMap = Object.fromEntries(_groups.map(g => [g.id, g]));
+  _groupMap = Object.fromEntries(_groups.map(g => [g.id, g]));
+
+  const activeCols = COLUMN_DEFS
+    .filter(c => _visibleColumns.includes(c.key))
+    .sort((a, b) => _visibleColumns.indexOf(a.key) - _visibleColumns.indexOf(b.key));
 
   const thead = `<tr>
     <th style="width:36px"><input type="checkbox" id="chk-all" class="form-check-input" /></th>
-    <th>${t('instances.col_status')}</th>
-    <th>${t('instances.col_name')}</th>
-    <th>${t('instances.col_group')}</th>
-    <th>${t('instances.col_version')}</th>
-    <th>${t('instances.col_contact')}</th>
-    <th>${t('instances.col_tags')}</th>
+    ${activeCols.map(c => `<th>${escapeHtml(c.label())}</th>`).join('')}
     <th style="width:60px"></th>
   </tr>`;
 
   const tbody = rows.map(inst => {
-    const group = groupMap[inst.group_id];
-    const tags  = (Array.isArray(inst.tags) ? inst.tags : [])
-      .map(tg => {
-        const name = typeof tg === 'string' ? tg : tg.name;
-        const color = typeof tg === 'object' ? tg.color : '#adb5bd';
-        return `<span class="tag-chip" style="background:${escapeHtml(color)}22;color:${escapeHtml(color)}">${escapeHtml(name)}</span>`;
-      }).join('');
-    const checked = _selected.has(inst.id) ? 'checked' : '';
+    const checked  = _selected.has(inst.id) ? 'checked' : '';
     const selected = _selected.has(inst.id) ? 'selected' : '';
     return `<tr class="clickable ${selected}" data-id="${inst.id}">
       <td onclick="event.stopPropagation()">
         <input type="checkbox" class="form-check-input row-chk" data-id="${inst.id}" ${checked} />
       </td>
-      <td>${statusBadge(inst.ws_connected, inst.enrollment_status)}</td>
-      <td><strong>${escapeHtml(inst.name || inst.id)}</strong>${inst.ip_address ? `<br><small class="text-muted" style="font-size:11px">${escapeHtml(inst.ip_address)}</small>` : ''}</td>
-      <td>${group ? `<span class="group-badge" style="border-color:${escapeHtml(group.color||'#adb5bd')}">${escapeHtml(group.name)}</span>` : '<span class="text-muted">—</span>'}</td>
-      <td><span class="text-mono">${escapeHtml(inst.version || '—')}</span></td>
-      <td>${relativeTime(inst.last_seen_at)}</td>
-      <td>${tags || '—'}</td>
+      ${activeCols.map(c => `<td>${c.render(inst)}</td>`).join('')}
       <td onclick="event.stopPropagation()">
         ${inst.enrollment_status === 'revoked'
           ? `<button class="btn btn-xs btn-danger action-purge" data-id="${inst.id}" title="${t('instances.purge')}"><i class="ti ti-trash"></i></button>`

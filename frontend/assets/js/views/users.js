@@ -67,7 +67,7 @@ function renderTable() {
       <td>${escapeHtml(u.email || '—')}</td>
       <td>${u.is_superuser ? t('users.role_admin') : t('users.role_user')}</td>
       <td>${u.totp_enabled ? (u.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')) : t('users.2fa_off')}</td>
-      <td>${relativeTime(u.last_login_at)}</td>
+      <td>${relativeTime(u.last_login)}</td>
       <td><span class="hub-badge ${u.is_active ? 'online' : 'offline'}">${u.is_active ? t('users.status_active') : t('users.status_disabled')}</span></td>
       <td style="text-align:right" onclick="event.stopPropagation()">
         ${!u.is_protected ? `
@@ -132,10 +132,7 @@ function showInviteModal() {
             <option value="user">${t('users.role_user')}</option>
             <option value="admin">${t('users.role_admin')}</option>
           </select></div>
-        <div class="form-check mb-2">
-          <input type="checkbox" id="uf-2fa" class="form-check-input" />
-          <label class="form-check-label" for="uf-2fa">${t('users.field_2fa')}</label>
-        </div>
+        <div id="uf-error" class="alert alert-danger" style="display:none;margin:0 0 8px;font-size:13px;padding:8px 12px"></div>
         <hr style="margin:8px 0">
         <div>
           <div style="font-size:12px;font-weight:600;color:var(--tblr-secondary);margin-bottom:6px;cursor:pointer" id="uf-perms-toggle">
@@ -171,21 +168,28 @@ function showInviteModal() {
   });
 
   modalEl.querySelector('#uf-create').addEventListener('click', async () => {
+    const errEl   = modalEl.querySelector('#uf-error');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    errEl.style.display = 'none';
+
     const username = modalEl.querySelector('#uf-username').value.trim();
     const password = modalEl.querySelector('#uf-password').value;
     const confirm  = modalEl.querySelector('#uf-password-confirm').value;
-    if (!username || !password) { showToast(t('users.username_pwd_required'), 'error'); return; }
-    if (password !== confirm) { showToast(t('users.pwd_mismatch'), 'error'); return; }
-    const isAdmin  = modalEl.querySelector('#uf-role').value === 'admin';
-    const enforce2fa = modalEl.querySelector('#uf-2fa').checked;
+
+    if (!username || !password) { showErr(t('users.username_pwd_required')); return; }
+    if (password !== confirm)   { showErr(t('users.pwd_mismatch')); return; }
+    if (password.length < 8 || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      showErr('Password debole: minimo 8 caratteri, una maiuscola, una cifra, un carattere speciale.');
+      return;
+    }
+
+    const isAdmin = modalEl.querySelector('#uf-role').value === 'admin';
     try {
       await apiPost('/auth/users', {
         username, password,
         email: modalEl.querySelector('#uf-email').value.trim() || null,
         is_superuser: isAdmin,
-        totp_enforced: enforce2fa,
       });
-      // Apply any selected permissions
       const selectedPerms = [...modalEl.querySelectorAll('.uf-perm-chk:checked')].map(c => c.dataset.slug);
       if (selectedPerms.length && !isAdmin) {
         await apiPut(`/auth/users/${username}/permissions`, { permissions: selectedPerms }).catch(() => {});
@@ -193,7 +197,7 @@ function showInviteModal() {
       showToast(t('users.created'), 'success');
       m.hide();
       await loadAll();
-    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+    } catch (e) { showErr(e.detail || t('msg.error')); }
   });
 
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
@@ -242,7 +246,7 @@ function renderUserGeneral(panel, user) {
     ${row(t('users.field_email'),    escapeHtml(user.email || '—'))}
     ${row(t('users.col_role'),       user.is_superuser ? t('users.role_admin') : t('users.role_user'))}
     ${row(t('users.col_2fa'),        user.totp_enabled ? (user.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')) : t('users.2fa_off'))}
-    ${row(t('users.col_lastlogin'),  relativeTime(user.last_login_at))}
+    ${row(t('users.col_lastlogin'),  relativeTime(user.last_login))}
     ${row(t('users.col_status'),     `<span class="hub-badge ${user.is_active ? 'online' : 'offline'}">${user.is_active ? t('users.status_active') : t('users.status_disabled')}</span>`)}
     </div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
@@ -254,7 +258,7 @@ function renderUserGeneral(panel, user) {
     const ok = await confirmDialog(t('users.reset_2fa'), t('users.confirm_reset_2fa', { username: user.username }), { okLabel: t('users.reset_2fa'), okClass: 'btn-warning' });
     if (!ok) return;
     try {
-      await apiPost(`/auth/users/${user.username}/2fa`, {});
+      await apiDelete(`/auth/users/${user.username}/2fa`);
       showToast(t('users.reset_2fa_done'), 'success');
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });
@@ -301,6 +305,10 @@ function renderUserGeneral(panel, user) {
 function renderUserPerms(panel, user, userPerms) {
   if (user.is_superuser) {
     panel.innerHTML = `<div style="padding:20px;text-align:center;color:var(--tblr-secondary);font-size:13px">Superuser — accesso completo</div>`;
+    return;
+  }
+  if (!_perms.length) {
+    panel.innerHTML = `<div style="padding:16px;color:var(--tblr-secondary);font-size:13px"><i class="ti ti-lock me-1"></i>Permesso <code>permissions.manage</code> necessario per gestire i permessi.</div>`;
     return;
   }
   const grantedSet = new Set(userPerms.map(p => typeof p === 'string' ? p : p.slug));

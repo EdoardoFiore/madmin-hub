@@ -256,17 +256,25 @@ function buildTopbar(user) {
       const ql = q.toLowerCase();
       const res = [];
       const inst = _cache.instances.filter(i => (i.name||'').toLowerCase().includes(ql) || (i.ip_address||'').toLowerCase().includes(ql)).slice(0, 3);
-      if (inst.length) { res.push({ type:'cat', label: t('search.cat_instances') }); inst.forEach(i => res.push({ type:'instance', id:i.id, label:i.name||i.id, sub:i.ip_address||'' })); }
+      if (inst.length) { res.push({ type:'cat', catType:'instance', label: t('search.cat_instances') }); inst.forEach(i => res.push({ type:'instance', id:i.id, label:i.name||i.id, sub:i.ip_address||'' })); }
       const grps = _cache.groups.filter(g => g.name.toLowerCase().includes(ql)).slice(0, 3);
-      if (grps.length) { res.push({ type:'cat', label: t('search.cat_groups') }); grps.forEach(g => res.push({ type:'group', id:g.id, label:g.name, color:g.color })); }
+      if (grps.length) { res.push({ type:'cat', catType:'group', label: t('search.cat_groups') }); grps.forEach(g => res.push({ type:'group', id:g.id, label:g.name, color:g.color })); }
       const tags = _cache.tags.filter(tg => tg.name.toLowerCase().includes(ql)).slice(0, 3);
-      if (tags.length) { res.push({ type:'cat', label: t('search.cat_tags') }); tags.forEach(tg => res.push({ type:'tag', name:tg.name, label:tg.name, color:tg.color })); }
+      if (tags.length) { res.push({ type:'cat', catType:'tag', label: t('search.cat_tags') }); tags.forEach(tg => res.push({ type:'tag', name:tg.name, label:tg.name, color:tg.color })); }
       const menu = NAV_ITEMS.filter(item => t(item.key).toLowerCase().includes(ql)).slice(0, 3);
-      if (menu.length) { res.push({ type:'cat', label: t('search.cat_menu') }); menu.forEach(item => res.push({ type:'menu', route:item.route, label:t(item.key), icon:item.icon })); }
+      if (menu.length) { res.push({ type:'cat', catType:'menu', label: t('search.cat_menu') }); menu.forEach(item => res.push({ type:'menu', route:item.route, label:t(item.key), icon:item.icon })); }
       const keys = _cache.sshKeys.filter(k => k.name.toLowerCase().includes(ql)).slice(0, 3);
-      if (keys.length) { res.push({ type:'cat', label: t('search.cat_ssh') }); keys.forEach(k => res.push({ type:'sshkey', id:k.id, label:k.name, sub:k.fingerprint||'' })); }
+      if (keys.length) { res.push({ type:'cat', catType:'sshkey', label: t('search.cat_ssh') }); keys.forEach(k => res.push({ type:'sshkey', id:k.id, label:k.name, sub:k.fingerprint||'' })); }
       return res;
     }
+
+    const _typeColor = {
+      instance: 'var(--tblr-azure,#4299e1)',
+      group:    'var(--tblr-purple,#ae3ec9)',
+      tag:      'var(--tblr-green,#2fb344)',
+      menu:     'var(--tblr-secondary,#6c757d)',
+      sshkey:   'var(--tblr-orange,#f76707)',
+    };
 
     function renderDropdown(results) {
       _activeIdx = -1;
@@ -278,17 +286,17 @@ function buildTopbar(user) {
       let firstCat = true;
       dropdown.innerHTML = results.map((r, i) => {
         if (r.type === 'cat') {
+          const color = _typeColor[r.catType] || 'var(--tblr-secondary)';
           const sep = firstCat ? '' : `<div style="height:1px;background:var(--hub-border);margin:4px 0"></div>`;
           firstCat = false;
-          return `${sep}<div style="padding:10px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--tblr-secondary)">${escHtml(r.label)}</div>`;
+          return `${sep}<div style="padding:8px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:${color};border-left:3px solid ${color};margin-left:6px;padding-left:10px">${escHtml(r.label)}</div>`;
         }
         const icon = r.type==='instance'?'ti-server':r.type==='group'?'ti-folders':r.type==='tag'?'ti-tag':r.type==='menu'?(r.icon||'ti-layout-dashboard'):'ti-key';
-        return `<div class="omni-result" data-idx="${i}" style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:13px;transition:background .1s">
-          <i class="ti ${escHtml(icon)}" style="font-size:15px;color:var(--tblr-secondary);flex-shrink:0;width:18px;text-align:center"></i>
-          <div style="flex:1;min-width:0">
-            <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500">${escHtml(r.label)}</div>
-            ${r.sub ? `<div style="font-size:11px;color:var(--tblr-secondary);margin-top:1px">${escHtml(r.sub)}</div>` : ''}
-          </div>
+        const iconColor = _typeColor[r.type] || 'var(--tblr-secondary)';
+        return `<div class="omni-result" data-idx="${i}" style="position:relative;padding:8px 14px 8px 40px;cursor:pointer;font-size:13px;transition:background .1s;line-height:1.4">
+          <i class="ti ${escHtml(icon)}" style="position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:15px;color:${iconColor};line-height:1"></i>
+          <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.label)}</div>
+          ${r.sub ? `<div style="font-size:11px;color:var(--tblr-secondary);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.sub)}</div>` : ''}
         </div>`;
       }).join('');
       dropdown.innerHTML += `<div style="height:6px"></div>`;

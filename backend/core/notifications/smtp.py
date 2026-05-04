@@ -36,6 +36,7 @@ async def send_email(
     if html:
         msg.add_alternative(html, subtype="html")
 
+    use_ssl = s.port == 465
     try:
         await aiosmtplib.send(
             msg,
@@ -43,9 +44,10 @@ async def send_email(
             port=s.port,
             username=s.username or None,
             password=get_smtp_password_plain(s),
-            start_tls=s.use_tls,
+            use_tls=use_ssl,
+            start_tls=s.use_tls and not use_ssl,
         )
         return True
     except Exception as e:
-        logger.error(f"SMTP send failed: {e}")
+        logger.error("SMTP send failed (host=%s port=%s tls=%s ssl=%s): %s", s.host, s.port, s.use_tls, use_ssl, e)
         return False

@@ -1,6 +1,6 @@
 import { apiGet, apiPost, apiPatch } from '../api.js';
 import { t } from '../i18n.js';
-import { escapeHtml, showToast } from '../utils.js';
+import { escapeHtml, showToast, inputDialog } from '../utils.js';
 import { applyBranding } from '../branding.js';
 
 export async function render(container, params) {
@@ -61,12 +61,13 @@ async function renderGeneral(panel) {
 
   panel.querySelector('#sg-save').addEventListener('click', async () => {
     try {
-      await apiPatch('/settings/system', {
+      const updated = await apiPatch('/settings/system', {
         company_name:     panel.querySelector('#sg-company').value.trim() || null,
         hub_url:          panel.querySelector('#sg-huburl').value.trim() || null,
         support_url:      panel.querySelector('#sg-support').value.trim() || null,
         default_language: panel.querySelector('#sg-lang').value,
       });
+      if (updated) applyBranding(updated);
       showToast(t('settings.saved'), 'success');
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });
@@ -91,6 +92,13 @@ async function renderSmtp(panel) {
       <input type="email" id="ss-from" class="form-control" value="${escapeHtml(s.from_address||'')}" /></div>
     <div class="mb-3"><label class="form-label">${t('settings.smtp_from_name')}</label>
       <input type="text" id="ss-from-name" class="form-control" value="${escapeHtml(s.from_name||'')}" /></div>
+    <div class="mb-3">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="ss-tls" ${s.use_tls !== false ? 'checked' : ''} />
+        <label class="form-check-label" for="ss-tls">${t('settings.smtp_tls')}</label>
+      </div>
+      <div class="form-text">${t('settings.smtp_tls_hint')}</div>
+    </div>
     <div class="d-flex gap-2">
       <button class="btn btn-primary" id="ss-save">${t('settings.smtp_save')}</button>
       <button class="btn btn-outline-secondary" id="ss-test">${t('settings.smtp_test')}</button>
@@ -100,11 +108,13 @@ async function renderSmtp(panel) {
   panel.querySelector('#ss-save').addEventListener('click', async () => {
     const pass = panel.querySelector('#ss-pass').value;
     const payload = {
+      enabled:      true,
       host:         panel.querySelector('#ss-host').value.trim(),
       port:         +panel.querySelector('#ss-port').value,
       username:     panel.querySelector('#ss-user').value.trim(),
       from_address: panel.querySelector('#ss-from').value.trim(),
       from_name:    panel.querySelector('#ss-from-name').value.trim(),
+      use_tls:      panel.querySelector('#ss-tls').checked,
     };
     if (pass) payload.password = pass;
     try {
@@ -114,8 +124,14 @@ async function renderSmtp(panel) {
   });
 
   panel.querySelector('#ss-test').addEventListener('click', async () => {
+    const email = await inputDialog(
+      t('settings.smtp_test'),
+      t('settings.smtp_test_email_hint'),
+      { placeholder: 'destinatario@esempio.com', type: 'email', okLabel: t('settings.smtp_test') }
+    );
+    if (email === null) return;
     try {
-      await apiPost('/settings/smtp/test', {});
+      await apiPost('/settings/smtp/test', email ? { to: email } : {});
       showToast(t('settings.smtp_test_sent'), 'success');
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });
@@ -123,14 +139,19 @@ async function renderSmtp(panel) {
 
 // ── Branding ──────────────────────────────────────────────────────────────────
 
+const BRANDING_DEFAULTS = { primary_color: '#206bc4', company_name: 'MADMIN Hub' };
+
 async function renderBranding(panel) {
   const s = await apiGet('/settings/system').catch(() => ({}));
   panel.innerHTML = `<div class="data-table" style="padding:20px;margin-top:8px">
+    <div class="mb-3"><label class="form-label">${t('settings.company_name')}</label>
+      <input type="text" id="sb-company" class="form-control" value="${escapeHtml(s.company_name||'')}" placeholder="MADMIN Hub" /></div>
     <div class="mb-3"><label class="form-label">${t('settings.primary_color')}</label>
       <div class="d-flex align-items-center gap-3">
-        <input type="color" id="sb-color" class="form-control form-control-color" value="${s.primary_color||'#206bc4'}" />
-        <span id="sb-color-val" class="text-mono" style="font-size:13px">${s.primary_color||'#206bc4'}</span>
-        <span style="width:24px;height:24px;border-radius:50%;background:${escapeHtml(s.primary_color||'#206bc4')}" id="sb-swatch"></span>
+        <input type="color" id="sb-color" class="form-control form-control-color" value="${escapeHtml(s.primary_color||BRANDING_DEFAULTS.primary_color)}" />
+        <span id="sb-color-val" class="text-mono" style="font-size:13px">${escapeHtml(s.primary_color||BRANDING_DEFAULTS.primary_color)}</span>
+        <span style="width:24px;height:24px;border-radius:50%;background:${escapeHtml(s.primary_color||BRANDING_DEFAULTS.primary_color)}" id="sb-swatch"></span>
+        <button class="btn btn-sm btn-outline-secondary" id="sb-reset" type="button">${t('settings.reset_defaults')}</button>
       </div></div>
     <div class="mb-3"><label class="form-label">${t('settings.logo_url')}</label>
       <input type="url" id="sb-logo" class="form-control" value="${escapeHtml(s.logo_url||'')}" /></div>
@@ -140,13 +161,21 @@ async function renderBranding(panel) {
   </div>`;
 
   panel.querySelector('#sb-color').addEventListener('input', e => {
-    document.getElementById('sb-color-val').textContent = e.target.value;
-    document.getElementById('sb-swatch').style.background = e.target.value;
+    panel.querySelector('#sb-color-val').textContent = e.target.value;
+    panel.querySelector('#sb-swatch').style.background = e.target.value;
+  });
+
+  panel.querySelector('#sb-reset').addEventListener('click', () => {
+    panel.querySelector('#sb-color').value = BRANDING_DEFAULTS.primary_color;
+    panel.querySelector('#sb-color-val').textContent = BRANDING_DEFAULTS.primary_color;
+    panel.querySelector('#sb-swatch').style.background = BRANDING_DEFAULTS.primary_color;
+    panel.querySelector('#sb-company').value = BRANDING_DEFAULTS.company_name;
   });
 
   panel.querySelector('#sb-save').addEventListener('click', async () => {
     try {
       const updated = await apiPatch('/settings/system', {
+        company_name:  panel.querySelector('#sb-company').value.trim() || null,
         primary_color: panel.querySelector('#sb-color').value,
         logo_url:      panel.querySelector('#sb-logo').value.trim() || null,
         favicon_url:   panel.querySelector('#sb-fav').value.trim() || null,

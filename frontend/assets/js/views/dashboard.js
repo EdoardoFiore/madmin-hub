@@ -1,6 +1,6 @@
 import { apiGet } from '../api.js';
 import { t } from '../i18n.js';
-import { relativeTime, fmtDate, escapeHtml, actionLabel } from '../utils.js';
+import { relativeTime, fmtDate, escapeHtml } from '../utils.js';
 import { getUser } from '../app.js';
 
 export async function render(container) {
@@ -161,11 +161,105 @@ function alertsPanel(alerts) {
     </div>`).join('');
 }
 
+function tryParseBody(s) {
+  try { return s ? JSON.parse(s) : null; } catch { return null; }
+}
+
+function humanizeActivity(a) {
+  const m = a.method;
+  const p = a.path;
+  const body = tryParseBody(a.body);
+  const segs = p.replace(/^\/api\//, '').split('/');
+
+  const name = body?.name ? ` <span class="text-muted fst-italic">"${escapeHtml(body.name)}"</span>` : '';
+
+  // Instances
+  if (p === '/api/agents/enroll')
+    return { icon: 'ti-server', text: t('activity.instance_enrolled') };
+  if (segs[0] === 'instances' && segs[2] === 'tags')
+    return { icon: 'ti-tag', text: t('activity.instance_tags') };
+  if (p === '/api/instances/bulk')
+    return { icon: 'ti-server', text: t('activity.instance_bulk') };
+  if (segs[0] === 'instances' && segs[1] && m === 'PATCH')
+    return { icon: 'ti-server', text: t('activity.instance_updated') };
+  if (segs[0] === 'instances' && segs[1] && m === 'DELETE')
+    return { icon: 'ti-server', text: t('activity.instance_deleted') };
+
+  // Groups
+  if (segs[0] === 'groups' && m === 'POST')
+    return { icon: 'ti-folders', text: t('activity.group_created') + name };
+  if (segs[0] === 'groups' && m === 'PATCH')
+    return { icon: 'ti-folders', text: t('activity.group_updated') + name };
+  if (segs[0] === 'groups' && m === 'DELETE')
+    return { icon: 'ti-folders', text: t('activity.group_deleted') };
+
+  // Enrollment tokens
+  if (segs[0] === 'enrollment' && segs[1] === 'tokens' && m === 'POST')
+    return { icon: 'ti-key', text: t('activity.token_created') + name };
+  if (segs[0] === 'enrollment' && segs[1] === 'tokens' && m === 'DELETE')
+    return { icon: 'ti-key', text: t('activity.token_revoked') };
+
+  // Tags
+  if (segs[0] === 'tags' && m === 'POST')
+    return { icon: 'ti-tag', text: t('activity.tag_created') + name };
+  if (segs[0] === 'tags' && m === 'PATCH')
+    return { icon: 'ti-tag', text: t('activity.tag_updated') + name };
+  if (segs[0] === 'tags' && m === 'DELETE')
+    return { icon: 'ti-tag', text: t('activity.tag_deleted') };
+
+  // SSH
+  if (segs[0] === 'ssh' && segs[1] === 'keys' && m === 'POST')
+    return { icon: 'ti-lock', text: t('activity.ssh_key_added') + name };
+  if (segs[0] === 'ssh' && segs[1] === 'keys' && m === 'PATCH')
+    return { icon: 'ti-lock', text: t('activity.ssh_key_updated') };
+  if (segs[0] === 'ssh' && segs[1] === 'keys' && m === 'DELETE')
+    return { icon: 'ti-lock', text: t('activity.ssh_key_deleted') };
+  if (segs[0] === 'ssh' && segs[1] === 'assignments' && m === 'POST')
+    return { icon: 'ti-lock', text: t('activity.ssh_assigned') };
+  if (segs[0] === 'ssh' && segs[1] === 'assignments' && m === 'DELETE')
+    return { icon: 'ti-lock', text: t('activity.ssh_revoked') };
+
+  // Users (admin ops on other users)
+  if (segs[0] === 'auth' && segs[1] === 'users' && segs[3] === '2fa' && m === 'DELETE')
+    return { icon: 'ti-shield', text: t('activity.user_2fa_reset', { who: segs[2] }) };
+  if (segs[0] === 'auth' && segs[1] === 'users' && segs[3] === 'permissions')
+    return { icon: 'ti-user', text: t('activity.user_perms', { who: segs[2] }) };
+  if (segs[0] === 'auth' && segs[1] === 'users' && !segs[2] && m === 'POST')
+    return { icon: 'ti-user', text: t('activity.user_created', { who: body?.username || '—' }) };
+  if (segs[0] === 'auth' && segs[1] === 'users' && segs[2] && m === 'PATCH')
+    return { icon: 'ti-user', text: t('activity.user_updated', { who: segs[2] }) };
+  if (segs[0] === 'auth' && segs[1] === 'users' && segs[2] && m === 'DELETE')
+    return { icon: 'ti-user', text: t('activity.user_deleted', { who: segs[2] }) };
+
+  // Own account
+  if (segs[0] === 'auth' && segs[1] === 'me' && segs[2] === 'password')
+    return { icon: 'ti-shield', text: t('activity.me_password') };
+  if (segs[0] === 'auth' && segs[1] === 'me' && segs[3] === 'enable')
+    return { icon: 'ti-shield', text: t('activity.me_2fa_enabled') };
+  if (segs[0] === 'auth' && segs[1] === 'me' && segs[2] === '2fa' && m === 'DELETE')
+    return { icon: 'ti-shield', text: t('activity.me_2fa_disabled') };
+
+  // Settings
+  if (p === '/api/settings/smtp/test')
+    return { icon: 'ti-mail', text: t('activity.smtp_test') };
+  if (p === '/api/settings/smtp')
+    return { icon: 'ti-mail', text: t('activity.smtp_configured') };
+  if (p === '/api/settings/system')
+    return { icon: 'ti-settings', text: t('activity.settings_updated') };
+
+  // Filter login noise
+  if (p === '/api/auth/token' || p === '/api/auth/token/2fa') return null;
+
+  return { icon: 'ti-activity', text: `${m} ${escapeHtml(p)}` };
+}
+
 function activityItem(a) {
+  const h = humanizeActivity(a);
+  if (!h) return '';
   return `<div class="activity-feed-item">
-    <div class="activity-feed-icon">${actionLabel(a.method)}</div>
+    <div class="activity-feed-icon"><i class="ti ${h.icon}"></i></div>
     <div class="activity-feed-text">
-      <strong>${escapeHtml(a.username || '—')}</strong> ${escapeHtml(a.path || '')}
+      <strong>${escapeHtml(a.username || '—')}</strong> ${h.text}
       <div class="activity-feed-time">${relativeTime(a.ts)}</div>
     </div>
   </div>`;

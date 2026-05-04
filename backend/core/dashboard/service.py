@@ -28,6 +28,7 @@ async def list_recent_activity(session: AsyncSession, limit: int = 20) -> List[d
             "path": a.path,
             "status": a.status_code,
             "summary": a.response_summary,
+            "body":    a.request_body,
         }
         for a in items
     ]

@@ -147,6 +147,8 @@ function buildTopbar(user) {
   if (ddName) ddName.textContent = user.username;
   if (ddEmail && user.email) ddEmail.textContent = user.email;
   if (lbl) lbl.textContent = t('user.logout');
+  const lblAccount = document.getElementById('lbl-account');
+  if (lblAccount) lblAccount.textContent = t('nav.my_account');
   if (searchEl) searchEl.placeholder = t('topbar.search_placeholder');
 
   document.getElementById('lbl-alerts-title')?.textContent && (document.getElementById('lbl-alerts-title').textContent = t('alerts.title'));

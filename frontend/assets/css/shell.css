@@ -7,7 +7,8 @@
   grid-template-areas:
     "sidebar topbar"
     "sidebar main";
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   transition: grid-template-columns .2s ease;
 }
 .hub-shell.collapsed { grid-template-columns: var(--hub-sidebar-collapsed) 1fr; }
@@ -211,6 +212,7 @@
   grid-area: main;
   padding: 24px;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .hub-page-header {

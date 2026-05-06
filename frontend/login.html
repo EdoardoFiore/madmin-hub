@@ -32,8 +32,8 @@
       <div id="2fa-section" style="display:none">
         <div class="mb-3">
           <label class="form-label" id="lbl-2fa-code"></label>
-          <input id="totp-input" type="text" class="form-control" maxlength="8"
-                 autocomplete="one-time-code" inputmode="numeric" style="letter-spacing:4px;font-size:20px;text-align:center" />
+          <input id="totp-input" type="text" class="form-control" maxlength="12"
+                 autocomplete="one-time-code" style="letter-spacing:4px;font-size:20px;text-align:center" />
         </div>
         <button id="totp-submit" class="btn btn-primary w-100 mb-2"></button>
         <button id="totp-back" class="btn btn-link w-100" style="font-size:13px"></button>
@@ -139,9 +139,10 @@
       clearError();
       const code = document.getElementById('totp-input').value.trim();
       if (!code) return;
-      const res = await fetch(`${API}/auth/token/2fa?code=${encodeURIComponent(code)}`, {
+      const res = await fetch(`${API}/auth/token/2fa`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tempToken}`, 'X-Language': getLang() },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tempToken}`, 'X-Language': getLang() },
+        body: JSON.stringify({ code }),
       });
       const data = await res.json();
       if (!res.ok) { showError(data.detail || t('login.bad_code')); return; }

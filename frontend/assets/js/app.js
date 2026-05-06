@@ -213,6 +213,27 @@ function buildTopbar(user) {
     e.preventDefault(); logout();
   });
 
+  // User menu dropdown
+  const userMenuBtn = document.getElementById('user-menu-btn');
+  const userDropdownMenu = userMenuBtn?.closest('.dropdown')?.querySelector('.dropdown-menu');
+  if (userMenuBtn && userDropdownMenu) {
+    function openUserMenu() {
+      userDropdownMenu.classList.add('show');
+      userMenuBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeUserMenu() {
+      userDropdownMenu.classList.remove('show');
+      userMenuBtn.setAttribute('aria-expanded', 'false');
+    }
+    userMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      userDropdownMenu.classList.contains('show') ? closeUserMenu() : openUserMenu();
+    });
+    document.addEventListener('click', (e) => {
+      if (!userMenuBtn.closest('.dropdown').contains(e.target)) closeUserMenu();
+    });
+  }
+
   // Alerts
   initAlerts();
 

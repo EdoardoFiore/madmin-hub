@@ -191,6 +191,14 @@
   background: var(--hub-surface);
   border: 1px solid var(--hub-border);
   cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  outline-offset: 2px;
+}
+.hub-topbar-actions .dropdown-menu {
+  right: 0;
+  left: auto;
 }
 .hub-user-avatar {
   width: 28px; height: 28px;

@@ -10,6 +10,7 @@ export async function render(body, id) {
       <button class="hub-tab active" data-tab="info">${t('instance.tab_info')}</button>
       <button class="hub-tab" data-tab="actions">${t('instance.tab_actions')}</button>
       <button class="hub-tab" data-tab="ssh">${t('instance.tab_ssh')}</button>
+      <button class="hub-tab" data-tab="backups">${t('instance.tab_backups')}</button>
       <button class="hub-tab" data-tab="audit">${t('instance.tab_audit')}</button>
     </div>
     <div id="idr-panel"></div>`;
@@ -24,6 +25,7 @@ export async function render(body, id) {
       if (tab === 'info')    await renderInfo(panel, id, _inst);
       if (tab === 'actions') await renderActions(panel, id, _inst);
       if (tab === 'ssh')     await renderSsh(panel, id);
+      if (tab === 'backups') await renderBackups(panel, id);
       if (tab === 'audit')   await renderAudit(panel, id);
     } catch (e) {
       panel.innerHTML = `<div style="color:var(--hub-status-offline);padding:20px;font-size:13px">${t('instance.load_error')}</div>`;
@@ -339,7 +341,7 @@ async function renderActions(panel, id, inst) {
   }
 
   panel.querySelector('#act-reload')?.addEventListener('click', () => sendCmd('info'));
-  panel.querySelector('#act-backup')?.addEventListener('click', () => sendCmd('backup'));
+  panel.querySelector('#act-backup')?.addEventListener('click', () => sendCmd('backup.run'));
   panel.querySelector('#act-assign-ssh')?.addEventListener('click', () => showSshAssignModal(id, 'instance'));
 }
 
@@ -475,4 +477,99 @@ export async function showSshAssignModal(targetId, targetType) {
     });
     m.addEventListener('hidden.bs.modal', () => { m.remove(); resolve(assigned); });
   });
+}
+
+async function renderBackups(panel, id) {
+  try {
+    const [backups, repos] = await Promise.all([
+      apiGet(`/instances/${id}/backups`).catch(() => []),
+      apiGet('/backups/repos').catch(() => []),
+    ]);
+
+    const repoMap = {};
+    (repos || []).forEach(r => { repoMap[r.id] = r; });
+    const defaultRepo = (repos || []).find(r => r.is_default) || repos?.[0];
+
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <select id="bkp-repo-sel" class="form-select form-select-sm" style="max-width:180px">
+            ${(repos || []).map(r => `<option value="${r.id}" ${r.is_default ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" id="bkp-run-btn">
+          <i class="ti ti-cloud-upload me-1"></i>${t('backup.run_btn')}
+        </button>
+      </div>
+      <div id="bkp-result" style="margin-bottom:8px"></div>
+      ${!backups?.length
+        ? `<div style="text-align:center;padding:24px;color:var(--tblr-secondary);font-size:13px">
+            <i class="ti ti-database-off" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>
+            ${t('backup.none')}
+           </div>`
+        : `<div class="data-table">
+            <table><thead><tr>
+              <th>${t('backup.col_date')}</th>
+              <th>${t('backup.col_file')}</th>
+              <th>${t('backup.col_size')}</th>
+              <th>${t('backup.col_repo')}</th>
+              <th>${t('backup.col_by')}</th>
+              <th></th>
+            </tr></thead><tbody>
+            ${backups.map(b => {
+              const repo = repoMap[b.repo_id];
+              const isLocal = repo?.type === 'local';
+              return `<tr>
+                <td style="white-space:nowrap;font-size:12px">${b.created_at ? new Date(b.created_at + 'Z').toLocaleString() : '—'}</td>
+                <td style="font-family:monospace;font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(b.filename)}</td>
+                <td style="white-space:nowrap">${b.size_bytes != null ? formatBytes(b.size_bytes) : '—'}</td>
+                <td>${escapeHtml(b.repo_name || repo?.name || '—')}</td>
+                <td>${escapeHtml(b.triggered_by || '—')}</td>
+                <td style="text-align:right;white-space:nowrap">
+                  ${isLocal ? `<a href="/api/instances/${id}/backups/${b.id}/download" target="_blank" class="btn btn-sm btn-ghost-secondary me-1" title="${t('backup.download')}">
+                    <i class="ti ti-download" style="font-size:13px"></i>
+                  </a>` : ''}
+                  <button class="btn btn-sm btn-ghost-secondary restore-bkp-btn" data-id="${b.id}" title="${t('backup.restore')}">
+                    <i class="ti ti-history" style="font-size:13px"></i>
+                  </button>
+                </td>
+              </tr>`;
+            }).join('')}
+            </tbody></table>
+           </div>`
+      }`;
+
+    panel.querySelector('#bkp-run-btn')?.addEventListener('click', async () => {
+      const repoId = panel.querySelector('#bkp-repo-sel')?.value;
+      const res = document.getElementById('bkp-result');
+      const btn = panel.querySelector('#bkp-run-btn');
+      btn.disabled = true;
+      if (res) res.innerHTML = `<div class="alert alert-info py-2" style="font-size:13px">${t('backup.running')}</div>`;
+      try {
+        await apiPost(`/instances/${id}/exec/backup.run`, { params: {}, repo_id: repoId });
+        if (res) res.innerHTML = `<div class="alert alert-success py-2" style="font-size:13px">${t('backup.done')}</div>`;
+        await renderBackups(panel, id);
+      } catch (e) {
+        if (res) res.innerHTML = `<div class="alert alert-danger py-2" style="font-size:13px">${t('backup.failed')}: ${escapeHtml(e.detail || '')}</div>`;
+      }
+      btn.disabled = false;
+    });
+
+    panel.querySelectorAll('.restore-bkp-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await confirmDialog(t('backup.restore_confirm'), '', { okLabel: t('backup.restore'), okClass: 'btn-warning' });
+        if (!ok) return;
+        const res = document.getElementById('bkp-result');
+        try {
+          await apiPost(`/instances/${id}/backups/${btn.dataset.id}/restore`, {});
+          if (res) res.innerHTML = `<div class="alert alert-success py-2" style="font-size:13px">${t('backup.restore_done')}</div>`;
+        } catch (e) {
+          if (res) res.innerHTML = `<div class="alert alert-danger py-2" style="font-size:13px">${t('backup.restore_failed')}: ${escapeHtml(e.detail || '')}</div>`;
+        }
+      });
+    });
+
+  } catch (e) {
+    panel.innerHTML = `<div class="alert alert-danger">${t('backup.load_error')}</div>`;
+  }
 }

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     enrollment_token_ttl_minutes: int = Field(default=15, ge=5, le=60)
     command_timeout_seconds: int = Field(default=30, ge=5, le=300)
     ws_max_frame_bytes: int = Field(default=1_048_576, ge=1024)
+    backup_storage_path: str = Field(default="/var/lib/madmin-hub/backups")
 
     @property
     def cors_origins(self) -> List[str]:

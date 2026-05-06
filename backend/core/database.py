@@ -57,6 +57,7 @@ async def init_db() -> None:
         )
         from hub.telemetry.models import InstanceTelemetry, InstanceCommand  # noqa
         from hub.ssh.models import SSHKey, SSHKeyAssignment  # noqa
+        from hub.backups.models import BackupRepo, InstanceBackup, BackupSchedule  # noqa
 
         await conn.run_sync(SQLModel.metadata.create_all)
         logger.info("Database tables created")

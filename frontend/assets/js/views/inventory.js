@@ -10,8 +10,9 @@ export async function render(container, params) {
       <h1 class="hub-page-title">${t('inventory.title')}</h1>
     </div>
     <div class="hub-tabs" id="inv-tabs">
-      <button class="hub-tab ${tab === 'ssh'  ? 'active' : ''}" data-tab="ssh">${t('inventory.tab_ssh')}</button>
-      <button class="hub-tab ${tab === 'tags' ? 'active' : ''}" data-tab="tags">${t('inventory.tab_tags')}</button>
+      <button class="hub-tab ${tab === 'ssh'     ? 'active' : ''}" data-tab="ssh">${t('inventory.tab_ssh')}</button>
+      <button class="hub-tab ${tab === 'tags'    ? 'active' : ''}" data-tab="tags">${t('inventory.tab_tags')}</button>
+      <button class="hub-tab ${tab === 'storage' ? 'active' : ''}" data-tab="storage">${t('inventory.tab_storage')}</button>
     </div>
     <div id="inv-panel"></div>`;
 
@@ -21,8 +22,9 @@ export async function render(container, params) {
     window.location.hash = `inventory/${t2}`;
     container.querySelectorAll('.hub-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t2));
     panel.innerHTML = '<div class="hub-loader"></div>';
-    if (t2 === 'tags') await renderTags(panel);
-    if (t2 === 'ssh')  await renderSshKeys(panel);
+    if (t2 === 'tags')    await renderTags(panel);
+    if (t2 === 'ssh')     await renderSshKeys(panel);
+    if (t2 === 'storage') await renderStorage(panel);
   }
 
   container.querySelectorAll('.hub-tab').forEach(btn => {
@@ -421,5 +423,225 @@ function showEditKeyModal(panel, key) {
       await renderSshKeys(panel);
     } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
   });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
+// ── Storage repos ──────────────────────────────────────────────────────────────
+
+const REPO_TYPES = [
+  { value: 'local', label: () => t('inventory.repo_type_local') },
+  { value: 'sftp',  label: () => t('inventory.repo_type_sftp') },
+  { value: 'ftp',   label: () => t('inventory.repo_type_ftp') },
+  { value: 'scp',   label: () => t('inventory.repo_type_scp') },
+];
+
+function repoTypeLabel(type) {
+  return REPO_TYPES.find(r => r.value === type)?.label() || type;
+}
+
+function repoHostDisplay(repo) {
+  if (repo.type === 'local') return repo.local_path || t('inventory.repo_local_path').split('(')[0].trim();
+  return `${repo.host || '—'}${repo.port ? ':' + repo.port : ''}`;
+}
+
+async function renderStorage(panel) {
+  try {
+    const repos = await apiGet('/backups/repos');
+
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button class="btn btn-primary btn-sm" id="new-repo-btn">
+          <i class="ti ti-plus me-1"></i>${t('inventory.new_repo')}
+        </button>
+      </div>
+      <div class="data-table">
+        ${!repos.length
+          ? `<div class="data-table-empty"><i class="ti ti-database"></i>${t('inventory.storage_none')}</div>`
+          : `<table><thead><tr>
+              <th>${t('inventory.col_repo_name')}</th>
+              <th>${t('inventory.col_repo_type')}</th>
+              <th>${t('inventory.col_repo_host')}</th>
+              <th>${t('inventory.col_repo_default')}</th>
+              <th></th>
+            </tr></thead><tbody>
+            ${repos.map(repo => `<tr>
+              <td><strong>${escapeHtml(repo.name)}</strong></td>
+              <td><span class="hub-badge pending">${escapeHtml(repoTypeLabel(repo.type))}</span></td>
+              <td style="font-family:monospace;font-size:12px">${escapeHtml(repoHostDisplay(repo))}</td>
+              <td>${repo.is_default ? '<span class="hub-badge online">✓</span>' : ''}</td>
+              <td style="text-align:right">
+                <button class="btn btn-sm btn-ghost-secondary test-repo-btn me-1" data-id="${repo.id}" title="${t('inventory.repo_test')}">
+                  <i class="ti ti-plug" style="font-size:14px"></i>
+                </button>
+                <button class="btn btn-sm btn-ghost-secondary edit-repo-btn me-1" data-id="${repo.id}">
+                  <i class="ti ti-pencil" style="font-size:14px"></i>
+                </button>
+                ${!repo.is_default ? `<button class="btn btn-sm btn-ghost-danger del-repo-btn" data-id="${repo.id}" data-name="${escapeHtml(repo.name)}">
+                  <i class="ti ti-trash" style="font-size:14px"></i>
+                </button>` : ''}
+              </td>
+            </tr>`).join('')}
+            </tbody></table>`
+        }
+      </div>`;
+
+    panel.querySelector('#new-repo-btn')?.addEventListener('click', () => showRepoModal(panel));
+
+    panel.querySelectorAll('.test-repo-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="ti ti-loader-2 ti-spin" style="font-size:14px"></i>';
+        try {
+          const r = await apiPost(`/backups/repos/${btn.dataset.id}/test`, {});
+          showToast(r.ok ? `${t('inventory.repo_test_ok')}: ${r.detail}` : `${t('inventory.repo_test_fail')}: ${r.detail}`, r.ok ? 'success' : 'error');
+        } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      });
+    });
+
+    panel.querySelectorAll('.edit-repo-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const repo = repos.find(r => r.id === btn.dataset.id);
+        if (repo) await showRepoModal(panel, repo);
+      });
+    });
+
+    panel.querySelectorAll('.del-repo-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await confirmDialog(`${t('inventory.repo_confirm_del')} "${escapeHtml(btn.dataset.name)}"?`, '', { okLabel: t('modal.delete'), okClass: 'btn-danger' });
+        if (!ok) return;
+        try {
+          await apiDelete(`/backups/repos/${btn.dataset.id}`);
+          showToast(t('inventory.repo_deleted'), 'success');
+          await renderStorage(panel);
+        } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+      });
+    });
+
+  } catch (e) {
+    panel.innerHTML = `<div class="alert alert-danger">${t('msg.error')}</div>`;
+  }
+}
+
+function repoFormHtml(repo) {
+  const type = repo?.type || 'local';
+  const isRemote = type !== 'local';
+  return `
+    <div class="mb-3">
+      <label class="form-label">${t('inventory.repo_name')} *</label>
+      <input type="text" id="rf-name" class="form-control" value="${escapeHtml(repo?.name || '')}" required />
+    </div>
+    <div class="mb-3">
+      <label class="form-label">${t('inventory.repo_type')} *</label>
+      <select id="rf-type" class="form-select">
+        ${REPO_TYPES.map(rt => `<option value="${rt.value}" ${type === rt.value ? 'selected' : ''}>${rt.label()}</option>`).join('')}
+      </select>
+    </div>
+    <div id="rf-remote-fields" style="display:${isRemote ? 'block' : 'none'}">
+      <div class="row g-2 mb-3">
+        <div class="col-8">
+          <label class="form-label">${t('inventory.repo_host')}</label>
+          <input type="text" id="rf-host" class="form-control" value="${escapeHtml(repo?.host || '')}" />
+        </div>
+        <div class="col-4">
+          <label class="form-label">${t('inventory.repo_port')}</label>
+          <input type="number" id="rf-port" class="form-control" value="${repo?.port || ''}" />
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">${t('inventory.repo_user')}</label>
+        <input type="text" id="rf-user" class="form-control" value="${escapeHtml(repo?.username || '')}" />
+      </div>
+      <div class="mb-3">
+        <label class="form-label">${t('inventory.repo_password')}${repo?.has_password ? ' <span class="text-muted">(lascia vuoto per mantenere)</span>' : ''}</label>
+        <input type="password" id="rf-pass" class="form-control" placeholder="${repo?.has_password ? '••••••••' : ''}" />
+      </div>
+      <div class="mb-3">
+        <label class="form-label">${t('inventory.repo_path')}</label>
+        <input type="text" id="rf-path" class="form-control" value="${escapeHtml(repo?.remote_path || '/backups')}" />
+      </div>
+    </div>
+    <div id="rf-local-fields" style="display:${!isRemote ? 'block' : 'none'}">
+      <div class="mb-3">
+        <label class="form-label">${t('inventory.repo_local_path')}</label>
+        <input type="text" id="rf-local-path" class="form-control" value="${escapeHtml(repo?.local_path || '')}" />
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">${t('inventory.repo_retention')}</label>
+      <input type="number" id="rf-retention" class="form-control" value="${repo?.retention_days ?? 30}" min="1" />
+    </div>
+    <div class="mb-3 form-check">
+      <input type="checkbox" id="rf-default" class="form-check-input" ${repo?.is_default ? 'checked' : ''} />
+      <label class="form-check-label" for="rf-default">${t('inventory.repo_is_default')}</label>
+    </div>`;
+}
+
+async function showRepoModal(panel, repo) {
+  const isEdit = !!repo;
+  const modalEl = document.createElement('div');
+  modalEl.innerHTML = `
+    <div class="modal fade" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">${isEdit ? t('inventory.repo_edit') : t('inventory.new_repo')}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">${repoFormHtml(repo)}</div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
+            <button type="button" class="btn btn-primary" id="repo-save-btn">${isEdit ? t('modal.save') : t('modal.create')}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const m = new bootstrap.Modal(modalEl.querySelector('.modal'));
+
+  // Toggle remote/local fields based on type selection
+  modalEl.querySelector('#rf-type')?.addEventListener('change', e => {
+    const isRemote = e.target.value !== 'local';
+    modalEl.querySelector('#rf-remote-fields').style.display = isRemote ? 'block' : 'none';
+    modalEl.querySelector('#rf-local-fields').style.display = isRemote ? 'none' : 'block';
+  });
+
+  modalEl.querySelector('#repo-save-btn')?.addEventListener('click', async () => {
+    const name = modalEl.querySelector('#rf-name').value.trim();
+    const type = modalEl.querySelector('#rf-type').value;
+    if (!name) return;
+
+    const payload = {
+      name,
+      type,
+      retention_days: parseInt(modalEl.querySelector('#rf-retention').value) || 30,
+      is_default: modalEl.querySelector('#rf-default').checked,
+      remote_path: modalEl.querySelector('#rf-path')?.value.trim() || '/backups',
+      local_path: modalEl.querySelector('#rf-local-path')?.value.trim() || null,
+    };
+    if (type !== 'local') {
+      payload.host = modalEl.querySelector('#rf-host').value.trim() || null;
+      payload.port = parseInt(modalEl.querySelector('#rf-port').value) || null;
+      payload.username = modalEl.querySelector('#rf-user').value.trim() || null;
+      const pw = modalEl.querySelector('#rf-pass').value;
+      if (pw) payload.password = pw;
+    }
+
+    try {
+      if (isEdit) {
+        await apiPatch(`/backups/repos/${repo.id}`, payload);
+        showToast(t('inventory.repo_saved'), 'success');
+      } else {
+        await apiPost('/backups/repos', payload);
+        showToast(t('inventory.repo_created'), 'success');
+      }
+      m.hide();
+      await renderStorage(panel);
+    } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
+  });
+
+  m.show();
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
 }

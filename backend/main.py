@@ -40,12 +40,18 @@ async def lifespan(app: FastAPI):
     async with async_session_maker() as session:
         await token_blacklist.load_from_db(session)
 
+    # Ensure default backup repo exists
+    from hub.backups.service import ensure_default_local_repo
+    async with async_session_maker() as session:
+        await ensure_default_local_repo(session)
+
     # Start background tasks
-    from hub.tasks import audit_cleanup_task, telemetry_retention_task
+    from hub.tasks import audit_cleanup_task, telemetry_retention_task, backup_scheduler_task
 
     tasks = [
         asyncio.create_task(telemetry_retention_task(interval_hours=6)),
         asyncio.create_task(audit_cleanup_task(interval_hours=24)),
+        asyncio.create_task(backup_scheduler_task(interval_minutes=5)),
     ]
 
     logger.info("MADMIN Hub ready.")
@@ -99,6 +105,7 @@ def create_app() -> FastAPI:
     from hub.ws.handler import router as ws_router
     from hub.ws.relay import router as relay_router
     from hub.ssh.router import router as ssh_router
+    from hub.backups.router import router as backups_router
 
     app.include_router(auth_router)
     app.include_router(audit_router)
@@ -109,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_router)
     app.include_router(relay_router)
     app.include_router(ssh_router)
+    app.include_router(backups_router)
 
     @app.get("/api/health", tags=["System"])
     async def health():

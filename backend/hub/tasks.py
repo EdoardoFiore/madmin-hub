@@ -1,8 +1,9 @@
 """
-Hub background tasks: telemetry retention, command cleanup, audit cleanup.
+Hub background tasks: telemetry retention, command cleanup, audit cleanup, backup scheduler.
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -57,3 +58,63 @@ async def audit_cleanup_task(interval_hours: int = 24):
             break
         except Exception as e:
             logger.error(f"Audit cleanup error: {e}")
+
+
+async def backup_scheduler_task(interval_minutes: int = 5):
+    """Check for due backup schedules and dispatch backup.run to online agents."""
+    while True:
+        await asyncio.sleep(interval_minutes * 60)
+        try:
+            from core.database import async_session_maker
+            from hub.backups.service import get_due_schedules, resolve_schedule_instances, get_repo
+            from hub.ws import dispatcher as disp
+            from config import get_settings
+
+            settings = get_settings()
+            now = datetime.utcnow()
+
+            async with async_session_maker() as session:
+                schedules = await get_due_schedules(session, now)
+
+                for sched in schedules:
+                    repo = await get_repo(session, sched.repo_id)
+                    if not repo:
+                        continue
+
+                    instances = await resolve_schedule_instances(session, sched)
+
+                    for inst in instances:
+                        if not inst.ws_connected:
+                            continue
+                        try:
+                            # Agent always uploads to hub via HTTP; hub transfers to repo.
+                            params: dict = {
+                                "remote_protocol": "http",
+                                "remote_host": (
+                                    f"{settings.hub_public_url}/api/instances/{inst.id}/backups/upload"
+                                    f"?repo_id={repo.id}"
+                                ),
+                                "remote_password": "__agent_self_token__",
+                            }
+
+                            await disp.dispatch(
+                                session,
+                                instance_id=inst.id,
+                                action="backup.run",
+                                params=params,
+                                requested_by="scheduler",
+                                timeout=300,
+                            )
+                            logger.info(f"Scheduled backup dispatched to {inst.id}")
+                        except Exception as e:
+                            logger.error(f"Scheduled backup failed for {inst.id}: {e}")
+
+                    sched.last_run = now
+                    sched.next_run = now + timedelta(hours=sched.interval_hours)
+                    session.add(sched)
+                    await session.commit()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Backup scheduler error: {e}")

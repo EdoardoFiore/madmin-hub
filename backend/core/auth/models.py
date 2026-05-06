@@ -41,6 +41,8 @@ class User(SQLModel, table=True):
     totp_secret: Optional[str] = Field(default=None, max_length=512)
     totp_enabled: bool = Field(default=False)
     totp_enforced: bool = Field(default=False)
+    totp_locked: bool = Field(default=False)
+    backup_codes: Optional[str] = Field(default=None)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = Field(default=None)
@@ -85,6 +87,10 @@ class UserUpdate(SQLModel):
     totp_enforced: Optional[bool] = None
 
 
+class MeUpdate(SQLModel):
+    email: Optional[str] = None
+
+
 class UserResponse(SQLModel):
     id: uuid.UUID
     username: str
@@ -94,6 +100,9 @@ class UserResponse(SQLModel):
     is_protected: bool = False
     totp_enabled: bool = False
     totp_enforced: bool = False
+    totp_locked: bool = False
+    has_backup_codes: bool = False
+    backup_codes_remaining: int = 0
     created_at: datetime
     last_login: Optional[datetime]
     permissions: List[str] = []

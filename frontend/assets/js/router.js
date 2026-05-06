@@ -29,7 +29,6 @@ const ROUTES = {
   users:      { load: () => import('./views/users.js'),       title: 'nav.users' },
   audit:      { load: () => import('./views/audit.js'),       title: 'nav.audit' },
   settings:   { load: () => import('./views/settings.js'),    title: 'nav.settings' },
-  account:    { load: () => import('./views/account.js'),     title: 'nav.my_account' },
 };
 
 const ALIASES = { instance: 'instances' };

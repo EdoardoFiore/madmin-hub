@@ -13,7 +13,6 @@ import uuid
 from datetime import timedelta
 from typing import List, Optional
 
-import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -22,9 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_session
 from core.i18n import get_lang, tr
 
-from . import service
+from . import service, totp
 from .dependencies import get_current_user, require_permission
 from .models import (
+    MeUpdate,
     PermissionResponse,
     Token,
     User,
@@ -55,6 +55,10 @@ class PreferencesUpdate(BaseModel):
 
 class TOTPVerify(BaseModel):
     code: str
+
+
+class DisableTOTPPayload(BaseModel):
+    password: str
 
 
 # --- Init ---
@@ -105,19 +109,48 @@ async def login(
     return Token(access_token=token)
 
 
+class TwoFactorLoginPayload(BaseModel):
+    code: str
+
+
 @router.post("/token/2fa", response_model=Token)
 async def login_2fa(
     request: Request,
-    code: str,
+    payload: TwoFactorLoginPayload,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     lang = get_lang(request)
     if not current_user.totp_enabled or not current_user.totp_secret:
         raise HTTPException(status_code=400, detail=tr("2fa_not_enabled", lang))
+    if current_user.totp_locked:
+        raise HTTPException(status_code=401, detail=tr("2fa_locked", lang))
+
     secret = service.decrypt_secret(current_user.totp_secret, purpose="totp")
-    if not pyotp.TOTP(secret).verify(code, valid_window=1):
-        raise HTTPException(status_code=401, detail=tr("invalid_2fa_code", lang))
+    code = payload.code.strip()
+    matched = totp.verify_totp(secret, code)
+
+    if not matched:
+        ok, new_codes = totp.verify_backup_code(current_user.backup_codes, code)
+        if ok:
+            current_user.backup_codes = new_codes
+            session.add(current_user)
+            matched = True
+
+    if not matched:
+        attempts = service.record_2fa_failure(current_user.id)
+        if attempts >= service._2FA_MAX_ATTEMPTS:
+            current_user.totp_locked = True
+            session.add(current_user)
+            await token_blacklist.revoke_user(session, current_user.id)
+            service.reset_2fa_attempts(current_user.id)
+            raise HTTPException(status_code=401, detail=tr("2fa_locked_now", lang))
+        raise HTTPException(
+            status_code=401,
+            detail=f"{tr('invalid_2fa_code', lang)} ({attempts}/{service._2FA_MAX_ATTEMPTS})",
+        )
+
+    service.reset_2fa_attempts(current_user.id)
     await service.update_last_login(session, current_user)
     token = service.create_access_token(
         {"sub": current_user.username, "user_id": str(current_user.id)}
@@ -129,6 +162,20 @@ async def login_2fa(
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
+    return service.user_to_response(current_user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    payload: MeUpdate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if payload.email is not None:
+        current_user.email = payload.email or None
+    session.add(current_user)
+    await session.flush()
+    await session.refresh(current_user)
     return service.user_to_response(current_user)
 
 
@@ -172,9 +219,13 @@ async def change_my_password(
 
 @router.get("/me/2fa/status")
 async def my_2fa_status(current_user: User = Depends(get_current_user)):
+    remaining = totp.count_unused_backup_codes(current_user.backup_codes)
     return {
         "enabled": current_user.totp_enabled,
         "enforced": current_user.totp_enforced,
+        "locked": current_user.totp_locked,
+        "has_backup_codes": remaining > 0,
+        "backup_codes_remaining": remaining,
     }
 
 
@@ -187,13 +238,12 @@ async def setup_2fa(
     lang = get_lang(request)
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail=tr("2fa_already_enabled", lang))
-    secret = pyotp.random_base32()
+    secret = totp.generate_totp_secret()
     current_user.totp_secret = service.encrypt_secret(secret, purpose="totp")
     session.add(current_user)
-    uri = pyotp.TOTP(secret).provisioning_uri(
-        name=current_user.username, issuer_name="MADMIN Hub"
-    )
-    return {"secret": secret, "provisioning_uri": uri}
+    uri = totp.generate_provisioning_uri(secret, current_user.username)
+    qr = totp.generate_qr_base64(uri)
+    return {"secret": secret, "provisioning_uri": uri, "qr_code": qr}
 
 
 @router.post("/me/2fa/enable")
@@ -206,25 +256,57 @@ async def enable_2fa(
     lang = get_lang(request)
     if not current_user.totp_secret:
         raise HTTPException(status_code=400, detail=tr("no_2fa_setup", lang))
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail=tr("2fa_already_enabled", lang))
     secret = service.decrypt_secret(current_user.totp_secret, purpose="totp")
-    if not pyotp.TOTP(secret).verify(payload.code, valid_window=1):
+    if not totp.verify_totp(secret, payload.code.strip()):
         raise HTTPException(status_code=401, detail=tr("invalid_code", lang))
+
+    plain_codes = totp.generate_backup_codes()
+    current_user.backup_codes = totp.hash_backup_codes(plain_codes)
     current_user.totp_enabled = True
+    current_user.totp_locked = False
     session.add(current_user)
-    return {"detail": tr("2fa_enabled", lang)}
+    return {"detail": tr("2fa_enabled", lang), "backup_codes": plain_codes}
+
+
+@router.post("/me/2fa/backup-codes")
+async def regenerate_backup_codes(
+    request: Request,
+    payload: TOTPVerify,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    lang = get_lang(request)
+    if not current_user.totp_enabled or not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail=tr("2fa_not_enabled", lang))
+    secret = service.decrypt_secret(current_user.totp_secret, purpose="totp")
+    if not totp.verify_totp(secret, payload.code.strip()):
+        raise HTTPException(status_code=401, detail=tr("invalid_code", lang))
+    plain_codes = totp.generate_backup_codes()
+    current_user.backup_codes = totp.hash_backup_codes(plain_codes)
+    session.add(current_user)
+    return {"backup_codes": plain_codes}
 
 
 @router.delete("/me/2fa/disable")
 async def disable_2fa(
     request: Request,
+    payload: DisableTOTPPayload,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     lang = get_lang(request)
-    if current_user.totp_enforced:
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail=tr("2fa_not_enabled", lang))
+    if current_user.totp_enforced and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail=tr("2fa_enforced", lang))
+    if not service.verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail=tr("invalid_current_password", lang))
     current_user.totp_enabled = False
     current_user.totp_secret = None
+    current_user.totp_locked = False
+    current_user.backup_codes = None
     session.add(current_user)
     return {"detail": tr("2fa_disabled", lang)}
 
@@ -323,8 +405,10 @@ async def admin_reset_2fa(
         raise HTTPException(status_code=404, detail="User not found")
     target.totp_enabled = False
     target.totp_secret = None
-    target.totp_enforced = False
+    target.totp_locked = False
+    target.backup_codes = None
     session.add(target)
+    service.reset_2fa_attempts(target.id)
     await token_blacklist.revoke_user(session, target.id)
     return {"detail": tr("2fa_reset_done", lang)}
 

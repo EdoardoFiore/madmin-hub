@@ -98,6 +98,12 @@ function applyFilters(users) {
   });
 }
 
+function twoFaBadge(u) {
+  if (u.totp_locked) return `<span class="hub-badge revoked" style="font-size:11px">${t('account.2fa_locked')}</span>`;
+  if (u.totp_enabled) return `<span class="hub-badge info" style="font-size:11px">${u.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')}</span>`;
+  return `<span class="hub-badge offline" style="font-size:11px">${t('users.2fa_off')}</span>`;
+}
+
 function renderTable() {
   const el = document.getElementById('users-table');
   if (!el) return;
@@ -122,7 +128,11 @@ function renderTable() {
       <th style="width:120px"></th>
     </tr></thead>
     <tbody>
-    ${filtered.map(u => `<tr class="clickable" data-username="${escapeHtml(u.username)}">
+    ${filtered.map(u => {
+      const isSelf = cur && u.username === cur.username;
+      const rowStyle = isSelf ? 'opacity:.55' : '';
+      const rowTitle = isSelf ? `title="${t('users.self_disabled_hint')}"` : '';
+      return `<tr class="${isSelf || !canManage ? '' : 'clickable'}" data-username="${escapeHtml(u.username)}" style="${rowStyle}" ${rowTitle}>
       <td>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="width:32px;height:32px;border-radius:50%;background:rgba(var(--hub-primary-rgb),.12);color:var(--hub-primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">
@@ -131,28 +141,27 @@ function renderTable() {
           <div>
             <strong>${escapeHtml(u.username)}</strong>
             ${u.is_protected ? `<span class="hub-badge revoked ms-1" style="font-size:10px">${t('users.protected')}</span>` : ''}
+            ${isSelf ? `<span class="hub-badge info ms-1" style="font-size:10px">${t('users.self_label')}</span>` : ''}
           </div>
         </div>
       </td>
       <td style="color:var(--tblr-secondary);font-size:13px">${escapeHtml(u.email || '—')}</td>
       <td><span class="hub-badge ${u.is_active ? 'online' : 'offline'}">${u.is_active ? t('users.status_active') : t('users.status_disabled')}</span></td>
-      <td><span class="hub-badge ${u.totp_enabled ? 'info' : 'revoked'}" style="font-size:11px">${u.totp_enabled ? (u.totp_enforced ? t('users.2fa_enforced_label') : t('users.2fa_on')) : t('users.2fa_off')}</span></td>
+      <td>${twoFaBadge(u)}</td>
       <td style="font-size:13px">${u.is_superuser ? `<span style="color:var(--hub-primary);font-weight:600">${t('users.role_admin')}</span>` : t('users.role_user')}</td>
       <td style="font-size:12px;color:var(--tblr-secondary)">${relativeTime(u.last_login)}</td>
       <td style="text-align:right" onclick="event.stopPropagation()">
-        ${canManage ? `
+        ${canManage && !isSelf ? `
           <button class="btn btn-sm btn-ghost-secondary edit-btn" data-username="${escapeHtml(u.username)}" title="${t('users.edit')}">
             <i class="ti ti-pencil" style="font-size:14px"></i>
           </button>` : ''}
-        ${canManage && !u.is_protected ? `
-          <button class="btn btn-sm btn-ghost-secondary key-btn" data-username="${escapeHtml(u.username)}" title="${t('users.reset_password')}">
-            <i class="ti ti-key" style="font-size:14px"></i>
-          </button>
+        ${canManage && !u.is_protected && !isSelf ? `
           <button class="btn btn-sm btn-ghost-danger del-btn" data-username="${escapeHtml(u.username)}" title="${t('users.delete')}">
             <i class="ti ti-trash" style="font-size:14px"></i>
           </button>` : ''}
       </td>
-    </tr>`).join('')}
+    </tr>`;
+    }).join('')}
     </tbody>
   </table></div>`;
 
@@ -170,13 +179,6 @@ function renderTable() {
     });
   });
 
-  el.querySelectorAll('.key-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const u = _users.find(x => x.username === btn.dataset.username);
-      if (u) showResetPwdModal(u);
-    });
-  });
-
   el.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const ok = await confirmDialog(t('users.delete'), t('users.confirm_delete', { username: btn.dataset.username }), { okLabel: t('users.delete'), okClass: 'btn-danger' });
@@ -190,15 +192,34 @@ function renderTable() {
   });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Permissions tab content ───────────────────────────────────────────────────
 
-function buildPermsTab(modalEl, grantedSet, isAdminChecked) {
+function buildRolePermsTab(modalEl, grantedSet, isAdminChecked) {
   const canManagePerms = !!_allPerms.length;
-  if (!canManagePerms) {
-    return `<div style="padding:20px;text-align:center;color:var(--tblr-secondary);font-size:13px">
-      <i class="ti ti-lock" style="font-size:24px;display:block;margin-bottom:8px;opacity:.4"></i>
-      Permesso <code>permissions.manage</code> necessario.
+
+  const roleSelect = `
+    <div style="margin-bottom:16px">
+      <label class="form-label" style="font-size:13px;font-weight:600">${t('users.field_role')}</label>
+      <select id="um-role" class="form-select" style="max-width:280px">
+        <option value="user" ${!isAdminChecked ? 'selected' : ''}>${t('users.role_user')}</option>
+        <option value="admin" ${isAdminChecked ? 'selected' : ''}>${t('users.role_admin')}</option>
+      </select>
+      <div style="font-size:12px;color:var(--tblr-secondary);margin-top:4px">${t('users.role_hint')}</div>
     </div>`;
+
+  if (!canManagePerms && !isAdminChecked) {
+    return `${roleSelect}
+      <div style="padding:20px;text-align:center;color:var(--tblr-secondary);font-size:13px;background:var(--hub-surface);border:1px dashed var(--hub-border);border-radius:6px">
+        <i class="ti ti-lock" style="font-size:24px;display:block;margin-bottom:8px;opacity:.4"></i>
+        Permesso <code>permissions.manage</code> necessario per gestire i singoli slug.
+      </div>`;
+  }
+
+  if (isAdminChecked) {
+    return `${roleSelect}
+      <div class="alert alert-info py-2 px-3" style="font-size:13px;margin:0">
+        <i class="ti ti-shield-check me-1"></i>${t('users.perm_admin_full')}
+      </div>`;
   }
 
   const groupsHtml = PERM_GROUPS.map(g => {
@@ -224,9 +245,7 @@ function buildPermsTab(modalEl, grantedSet, isAdminChecked) {
     </div>`;
   }).join('');
 
-  return `<div id="perms-container" style="padding-top:4px">
-    ${isAdminChecked ? `<div class="alert alert-info py-2 px-3" style="font-size:13px"><i class="ti ti-shield-check me-1"></i>${t('users.perm_admin_full')}</div>` : groupsHtml}
-  </div>`;
+  return `${roleSelect}<div id="perms-container">${groupsHtml}</div>`;
 }
 
 function wirePermsTab(modalEl) {
@@ -260,17 +279,15 @@ function wirePermsTab(modalEl) {
 
 async function showUserModal(user) {
   const isEdit = !!user;
-  const cur = getUser();
-  const canManagePerms = cur?.is_superuser || (Array.isArray(cur?.permissions) && cur.permissions.includes('permissions.manage'));
   const grantedSet = new Set(isEdit ? (user.permissions || []).map(p => typeof p === 'string' ? p : p.slug) : []);
-  const isAdminChecked = isEdit ? user.is_superuser : false;
+  let roleIsAdmin = isEdit ? !!user.is_superuser : false;
 
   const tabs = isEdit
     ? `<button class="hub-tab active" data-tab="general">${t('users.tab_general')}</button>
-       <button class="hub-tab" data-tab="perms">${t('users.tab_permissions')}</button>
+       <button class="hub-tab" data-tab="perms">${t('users.tab_role_permissions')}</button>
        <button class="hub-tab" data-tab="security">${t('users.tab_security')}</button>`
     : `<button class="hub-tab active" data-tab="general">${t('users.tab_general')}</button>
-       <button class="hub-tab" data-tab="perms">${t('users.tab_permissions')}</button>`;
+       <button class="hub-tab" data-tab="perms">${t('users.tab_role_permissions')}</button>`;
 
   const modalEl = document.createElement('div');
   modalEl.className = 'modal fade';
@@ -299,7 +316,40 @@ async function showUserModal(user) {
   m.show();
 
   const panel = modalEl.querySelector('#um-panel');
-  const footer = modalEl.querySelector('#um-footer');
+
+  // Persisted form state across tab switches (password fields are NOT preserved
+  // for safety — re-entered if needed)
+  const formState = {
+    username: '',
+    email: isEdit ? (user.email || '') : '',
+    password: '',
+    password_confirm: '',
+    is_active: isEdit ? !!user.is_active : true,
+    totp_enforced: isEdit ? !!user.totp_enforced : false,
+  };
+
+  function captureGeneral() {
+    if (!isEdit) formState.username = panel.querySelector('#um-username')?.value.trim() || '';
+    formState.email = panel.querySelector('#um-email')?.value.trim() || '';
+    formState.password = panel.querySelector('#um-password')?.value || '';
+    formState.password_confirm = panel.querySelector('#um-password-confirm')?.value || '';
+    if (isEdit) formState.is_active = panel.querySelector('#um-active')?.checked ?? true;
+  }
+
+  function captureRole() {
+    const sel = panel.querySelector('#um-role');
+    if (sel) roleIsAdmin = sel.value === 'admin';
+    if (!roleIsAdmin) {
+      // Capture currently checked perms into grantedSet
+      grantedSet.clear();
+      panel.querySelectorAll('.perm-chk:checked').forEach(c => grantedSet.add(c.dataset.slug));
+    }
+  }
+
+  function captureSecurity() {
+    const en = panel.querySelector('#um-2fa-enforced');
+    if (en) formState.totp_enforced = en.checked;
+  }
 
   function renderGeneral() {
     panel.innerHTML = `
@@ -312,7 +362,7 @@ async function showUserModal(user) {
         </div>
         <div class="col-md-6">
           <label class="form-label">${t('users.field_email')}</label>
-          <input type="email" id="um-email" class="form-control" value="${isEdit ? escapeHtml(user.email || '') : ''}" placeholder="es. nome@azienda.it" />
+          <input type="email" id="um-email" class="form-control" placeholder="es. nome@azienda.it" />
         </div>
         <div class="col-md-6">
           <label class="form-label">${t('users.field_password')} ${!isEdit ? '*' : `<span style="font-size:11px;color:var(--tblr-secondary)">(${t('users.pwd_leave_blank')})</span>`}</label>
@@ -322,16 +372,9 @@ async function showUserModal(user) {
           <label class="form-label">${t('users.field_password_confirm')} ${!isEdit ? '*' : ''}</label>
           <input type="password" id="um-password-confirm" class="form-control" autocomplete="new-password" />
         </div>
-        <div class="col-md-6">
-          <label class="form-label">${t('users.field_role')}</label>
-          <select id="um-role" class="form-select">
-            <option value="user" ${isEdit && !user.is_superuser ? 'selected' : ''}>${t('users.role_user')}</option>
-            <option value="admin" ${isEdit && user.is_superuser ? 'selected' : ''}>${t('users.role_admin')}</option>
-          </select>
-        </div>
-        ${isEdit ? `<div class="col-md-6 d-flex align-items-end">
-          <label class="d-flex align-items-center gap-2" style="cursor:pointer;font-size:14px">
-            <input type="checkbox" id="um-active" class="form-check-input" ${user.is_active ? 'checked' : ''} style="width:18px;height:18px" />
+        ${isEdit ? `<div class="col-md-6">
+          <label class="d-flex align-items-center gap-2" style="cursor:pointer;font-size:14px;margin-top:30px">
+            <input type="checkbox" id="um-active" class="form-check-input" ${formState.is_active ? 'checked' : ''} style="width:18px;height:18px" />
             ${t('users.active_label')}
           </label>
         </div>` : ''}
@@ -340,137 +383,135 @@ async function showUserModal(user) {
         </div>
       </div>`;
 
-    if (isEdit) {
-      modalEl.querySelector('#um-role')?.addEventListener('change', () => {
-        const adminSelected = modalEl.querySelector('#um-role').value === 'admin';
-        refreshPermsForAdmin(adminSelected);
-      });
-    }
+    // Restore persisted values via DOM properties (safer than HTML interpolation)
+    const unameEl = panel.querySelector('#um-username');
+    if (unameEl) unameEl.value = formState.username;
+    const emailEl = panel.querySelector('#um-email');
+    if (emailEl) emailEl.value = formState.email;
+    const pwdEl = panel.querySelector('#um-password');
+    if (pwdEl) pwdEl.value = formState.password;
+    const pwdConfEl = panel.querySelector('#um-password-confirm');
+    if (pwdConfEl) pwdConfEl.value = formState.password_confirm;
   }
 
   function renderPerms() {
-    const adminSelected = modalEl.querySelector('#um-role')?.value === 'admin';
-    panel.innerHTML = buildPermsTab(modalEl, grantedSet, adminSelected || (isEdit && user.is_superuser && !modalEl.querySelector('#um-role')));
+    panel.innerHTML = buildRolePermsTab(modalEl, grantedSet, roleIsAdmin);
+    const sel = panel.querySelector('#um-role');
+    sel?.addEventListener('change', () => {
+      // Capture current selection before re-render
+      if (!roleIsAdmin) {
+        grantedSet.clear();
+        panel.querySelectorAll('.perm-chk:checked').forEach(c => grantedSet.add(c.dataset.slug));
+      }
+      roleIsAdmin = sel.value === 'admin';
+      renderPerms();
+    });
     wirePermsTab(modalEl);
   }
 
   function renderSecurity() {
+    if (!isEdit) return;
+    const remaining = user.backup_codes_remaining ?? 0;
     panel.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="card" style="border:1px solid var(--hub-border);border-radius:var(--hub-radius);padding:16px">
           <div style="font-size:13px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px">
-            <i class="ti ti-shield" style="color:var(--hub-primary)"></i> 2FA
+            <i class="ti ti-shield" style="color:var(--hub-primary)"></i> ${t('account.2fa_section')}
           </div>
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-            <span style="font-size:13px">Stato:</span>
-            <span class="hub-badge ${user.totp_enabled ? 'info' : 'revoked'}">${user.totp_enabled ? t('account.2fa_enabled') : t('account.2fa_disabled')}</span>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+            <span style="font-size:13px;color:var(--tblr-secondary)">${t('users.col_status')}:</span>
+            ${
+              user.totp_locked
+                ? `<span class="hub-badge revoked">${t('account.2fa_locked')}</span>`
+                : (user.totp_enabled
+                    ? `<span class="hub-badge online">${t('account.2fa_enabled')}</span>`
+                    : `<span class="hub-badge offline">${t('account.2fa_disabled')}</span>`)
+            }
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${user.totp_enabled ? `<div style="font-size:12px;color:var(--tblr-secondary);margin-bottom:12px">${t('account.codes_remaining', { n: remaining })}</div>` : ''}
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px">
             <label class="d-flex align-items-center gap-2" style="cursor:pointer;font-size:13px">
-              <input type="checkbox" id="um-2fa-enforced" class="form-check-input" ${user.totp_enforced ? 'checked' : ''} />
+              <input type="checkbox" id="um-2fa-enforced" class="form-check-input" ${formState.totp_enforced ? 'checked' : ''} />
               ${t('users.2fa_required')}
             </label>
+            ${(user.totp_enabled || user.totp_locked) && !user.is_protected ? `
+              <button class="btn btn-sm btn-outline-warning" id="um-reset-2fa">
+                <i class="ti ti-refresh me-1"></i>${t('users.reset_2fa')}
+              </button>` : ''}
           </div>
-          ${user.totp_enabled && !user.is_protected ? `
-          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--hub-border)">
-            <button class="btn btn-sm btn-outline-warning" id="um-reset-2fa">
-              <i class="ti ti-refresh me-1"></i>${t('users.reset_2fa')}
-            </button>
-          </div>` : ''}
-        </div>
-        <div class="card" style="border:1px solid var(--hub-border);border-radius:var(--hub-radius);padding:16px">
-          <div style="font-size:13px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px">
-            <i class="ti ti-lock-password" style="color:var(--hub-primary)"></i> ${t('users.reset_password')}
-          </div>
-          <button class="btn btn-sm btn-outline-secondary" id="um-reset-pwd-btn">
-            <i class="ti ti-key me-1"></i>${t('users.reset_password')}
-          </button>
+          <div style="font-size:11px;color:var(--tblr-secondary);margin-top:10px">${t('users.reset_2fa_hint')}</div>
         </div>
       </div>`;
 
-    modalEl.querySelector('#um-reset-2fa')?.addEventListener('click', async () => {
+    panel.querySelector('#um-reset-2fa')?.addEventListener('click', async () => {
       const ok = await confirmDialog(t('users.reset_2fa'), t('users.reset_2fa_confirm', { username: user.username }), { okLabel: t('users.reset_2fa'), okClass: 'btn-warning' });
       if (!ok) return;
       try {
         await apiDelete(`/auth/users/${user.username}/2fa`);
         showToast(t('users.reset_2fa_done'), 'success');
         user.totp_enabled = false;
-        user.totp_enforced = false;
+        user.totp_locked = false;
+        user.backup_codes_remaining = 0;
         renderSecurity();
       } catch (e) { showToast(e.detail || t('msg.error'), 'error'); }
     });
-
-    modalEl.querySelector('#um-reset-pwd-btn')?.addEventListener('click', () => {
-      m.hide();
-      setTimeout(() => showResetPwdModal(user), 400);
-    });
-  }
-
-  function refreshPermsForAdmin(isAdmin) {
-    const activeTab = [...modalEl.querySelectorAll('.hub-tab')].find(b => b.classList.contains('active'))?.dataset.tab;
-    if (activeTab === 'perms') renderPerms();
   }
 
   function switchTab(tab) {
+    // Capture state from previous tab before re-render
+    const prev = [...modalEl.querySelectorAll('.hub-tab')].find(b => b.classList.contains('active'))?.dataset.tab;
+    if (prev === 'general')  captureGeneral();
+    if (prev === 'perms')    captureRole();
+    if (prev === 'security') captureSecurity();
+
     modalEl.querySelectorAll('.hub-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    const showSave = tab !== 'security';
-    modalEl.querySelector('#um-save').style.display = showSave ? '' : 'none';
-    if (tab === 'general')   renderGeneral();
-    if (tab === 'perms')     renderPerms();
-    if (tab === 'security')  renderSecurity();
+    if (tab === 'general')  renderGeneral();
+    if (tab === 'perms')    renderPerms();
+    if (tab === 'security') renderSecurity();
   }
 
   modalEl.querySelectorAll('.hub-tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   switchTab('general');
 
   modalEl.querySelector('#um-save')?.addEventListener('click', async () => {
+    // Always capture state from active tab
     const activeTab = [...modalEl.querySelectorAll('.hub-tab')].find(b => b.classList.contains('active'))?.dataset.tab;
-    const errEl = modalEl.querySelector('#um-error');
-    const showErr = msg => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } else showToast(msg, 'error'); };
+    if (activeTab === 'general')  captureGeneral();
+    if (activeTab === 'perms')    captureRole();
+    if (activeTab === 'security') captureSecurity();
 
-    if (activeTab === 'perms') {
-      if (!_allPerms.length) { m.hide(); return; }
-      try {
-        const slugs = [...modalEl.querySelectorAll('.perm-chk:checked')].map(c => c.dataset.slug);
-        const targetUsername = isEdit ? user.username : null;
-        if (targetUsername) {
-          await apiPut(`/auth/users/${targetUsername}/permissions`, { permissions: slugs });
-          showToast(t('msg.saved'), 'success');
-          await loadAll();
-        }
-      } catch (e) { showErr(e.detail || t('msg.error')); return; }
-      m.hide();
-      return;
-    }
-
+    const errEl = panel.querySelector('#um-error');
+    const showErr = msg => {
+      if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+      else showToast(msg, 'error');
+    };
     if (errEl) errEl.style.display = 'none';
-    const username = isEdit ? user.username : modalEl.querySelector('#um-username')?.value.trim();
-    const email    = modalEl.querySelector('#um-email')?.value.trim() || null;
-    const password = modalEl.querySelector('#um-password')?.value || '';
-    const confirm  = modalEl.querySelector('#um-password-confirm')?.value || '';
-    const isAdmin  = modalEl.querySelector('#um-role')?.value === 'admin';
-    const isActive = isEdit ? modalEl.querySelector('#um-active')?.checked ?? true : true;
+
+    const username = isEdit ? user.username : formState.username;
+    const email    = formState.email || null;
+    const password = formState.password;
+    const confirm  = formState.password_confirm;
+    const isActive = isEdit ? formState.is_active : true;
+    const totpEnforced = isEdit ? formState.totp_enforced : false;
 
     if (!isEdit && !username) { showErr(t('users.username_pwd_required')); return; }
     if (!isEdit && !password) { showErr(t('users.username_pwd_required')); return; }
     if (password && password !== confirm) { showErr(t('users.pwd_mismatch')); return; }
-    if (!isEdit && password.length < 8) { showErr('Password debole: min 8 caratteri, una maiuscola, una cifra, un carattere speciale.'); return; }
 
     try {
       if (!isEdit) {
-        const newUser = await apiPost('/auth/users', { username, password, email, is_superuser: isAdmin });
-        if (_allPerms.length && !isAdmin) {
-          const slugs = [...modalEl.querySelectorAll('.perm-chk:checked')].map(c => c.dataset.slug);
-          if (slugs.length) await apiPut(`/auth/users/${username}/permissions`, { permissions: slugs }).catch(() => {});
+        await apiPost('/auth/users', { username, password, email, is_superuser: roleIsAdmin });
+        if (_allPerms.length && !roleIsAdmin && grantedSet.size) {
+          await apiPut(`/auth/users/${username}/permissions`, { permissions: [...grantedSet] }).catch(() => {});
         }
         showToast(t('users.created'), 'success');
       } else {
-        const payload = { is_superuser: isAdmin, is_active: isActive };
+        const payload = { is_superuser: roleIsAdmin, is_active: isActive, totp_enforced: totpEnforced };
         if (email !== user.email) payload.email = email;
         if (password) payload.password = password;
         await apiPatch(`/auth/users/${user.username}`, payload);
         if (_allPerms.length) {
-          const slugs = isAdmin ? [] : [...modalEl.querySelectorAll('.perm-chk:checked')].map(c => c.dataset.slug);
+          const slugs = roleIsAdmin ? [] : [...grantedSet];
           await apiPut(`/auth/users/${user.username}/permissions`, { permissions: slugs }).catch(() => {});
         }
         showToast(t('users.saved'), 'success');
@@ -478,56 +519,6 @@ async function showUserModal(user) {
       m.hide();
       await loadAll();
     } catch (e) { showErr(e.detail || t('msg.error')); }
-  });
-
-  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
-}
-
-// ── Reset Password Modal ──────────────────────────────────────────────────────
-
-function showResetPwdModal(user) {
-  const modalEl = document.createElement('div');
-  modalEl.className = 'modal fade';
-  modalEl.innerHTML = `<div class="modal-dialog modal-sm modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">${t('users.reset_password')}</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div style="font-size:13px;color:var(--tblr-secondary);margin-bottom:12px">${t('users.reset_pwd_for', { username: user.username })}</div>
-        <div class="mb-3">
-          <label class="form-label">${t('users.pwd_new')} *</label>
-          <input type="password" id="rp-new" class="form-control" autocomplete="new-password" />
-        </div>
-        <div class="mb-2">
-          <label class="form-label">${t('users.field_password_confirm')} *</label>
-          <input type="password" id="rp-confirm" class="form-control" autocomplete="new-password" />
-        </div>
-        <div id="rp-error" class="alert alert-danger py-2" style="display:none;font-size:13px;margin:0"></div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">${t('modal.cancel')}</button>
-        <button type="button" class="btn btn-primary" id="rp-save">${t('modal.save')}</button>
-      </div>
-    </div>
-  </div>`;
-  document.body.appendChild(modalEl);
-  const m = new window.bootstrap.Modal(modalEl);
-  m.show();
-
-  modalEl.querySelector('#rp-save').addEventListener('click', async () => {
-    const errEl = modalEl.querySelector('#rp-error');
-    errEl.style.display = 'none';
-    const newPwd = modalEl.querySelector('#rp-new').value;
-    const confirm = modalEl.querySelector('#rp-confirm').value;
-    if (!newPwd) { errEl.textContent = t('users.username_pwd_required'); errEl.style.display = ''; return; }
-    if (newPwd !== confirm) { errEl.textContent = t('users.pwd_mismatch'); errEl.style.display = ''; return; }
-    try {
-      await apiPatch(`/auth/users/${user.username}`, { password: newPwd });
-      showToast(t('users.password_reset_done'), 'success');
-      m.hide();
-    } catch (e) { errEl.textContent = e.detail || t('msg.error'); errEl.style.display = ''; }
   });
 
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());

@@ -148,7 +148,7 @@ function buildTopbar(user) {
   if (ddEmail && user.email) ddEmail.textContent = user.email;
   if (lbl) lbl.textContent = t('user.logout');
   const lblAccount = document.getElementById('lbl-account');
-  if (lblAccount) lblAccount.textContent = t('nav.my_account');
+  if (lblAccount) lblAccount.textContent = t('topbar.profile');
   if (searchEl) searchEl.placeholder = t('topbar.search_placeholder');
 
   document.getElementById('lbl-alerts-title')?.textContent && (document.getElementById('lbl-alerts-title').textContent = t('alerts.title'));
@@ -200,6 +200,13 @@ function buildTopbar(user) {
       window.location.reload();
     };
   }
+
+  // Profile
+  document.getElementById('dd-account')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const { openProfileModal } = await import('./views/profile_modal.js');
+    openProfileModal();
+  });
 
   // Logout
   document.getElementById('dd-logout')?.addEventListener('click', (e) => {

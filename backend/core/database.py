@@ -70,6 +70,12 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE ssh_key_assignment ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"
         ))
+        await conn.execute(text(
+            'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS totp_locked BOOLEAN NOT NULL DEFAULT FALSE'
+        ))
+        await conn.execute(text(
+            'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS backup_codes TEXT'
+        ))
 
     await _migrate_json_tags()
 

@@ -227,7 +227,25 @@ async def create_first_user(session: AsyncSession, username: str, password: str)
     return user
 
 
+# Per-user 2FA failure tracking (in-memory). Temp tokens expire in 5 min so this is fine.
+_2FA_MAX_ATTEMPTS = 5
+_2fa_attempts: dict[str, int] = {}
+
+
+def record_2fa_failure(user_id: uuid.UUID) -> int:
+    key = str(user_id)
+    n = _2fa_attempts.get(key, 0) + 1
+    _2fa_attempts[key] = n
+    return n
+
+
+def reset_2fa_attempts(user_id: uuid.UUID) -> None:
+    _2fa_attempts.pop(str(user_id), None)
+
+
 def user_to_response(user: User) -> dict:
+    from .totp import count_unused_backup_codes
+    remaining = count_unused_backup_codes(user.backup_codes)
     return {
         "id": user.id,
         "username": user.username,
@@ -237,6 +255,9 @@ def user_to_response(user: User) -> dict:
         "is_protected": user.is_protected,
         "totp_enabled": user.totp_enabled,
         "totp_enforced": user.totp_enforced,
+        "totp_locked": user.totp_locked,
+        "has_backup_codes": remaining > 0,
+        "backup_codes_remaining": remaining,
         "created_at": user.created_at,
         "last_login": user.last_login,
         "permissions": [p.slug for p in user.permissions],

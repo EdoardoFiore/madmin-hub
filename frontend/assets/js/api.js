@@ -60,8 +60,8 @@ export async function apiPut(path, data) {
   return res.json();
 }
 
-export async function apiDelete(path) {
-  const res = await request('DELETE', path);
+export async function apiDelete(path, data = null) {
+  const res = await request('DELETE', path, data);
   if (!res) return null;
   if (!res.ok) throw await res.json();
   return res.json();

@@ -135,8 +135,10 @@ async def create_user(session: AsyncSession, data: UserCreate) -> User:
     )
     session.add(user)
     await session.flush()
-    await session.refresh(user)
-    return user
+    result = await session.execute(
+        select(User).options(selectinload(User.permissions)).where(User.id == user.id)
+    )
+    return result.scalar_one()
 
 
 async def update_user(session: AsyncSession, user_id: uuid.UUID, data: UserUpdate) -> User:
@@ -160,8 +162,10 @@ async def update_user(session: AsyncSession, user_id: uuid.UUID, data: UserUpdat
 
     session.add(user)
     await session.flush()
-    await session.refresh(user)
-    return user
+    result = await session.execute(
+        select(User).options(selectinload(User.permissions)).where(User.id == user.id)
+    )
+    return result.scalar_one()
 
 
 async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> bool:

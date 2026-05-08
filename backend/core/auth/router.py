@@ -406,6 +406,7 @@ async def admin_reset_2fa(
     target.totp_enabled = False
     target.totp_secret = None
     target.totp_locked = False
+    target.totp_enforced = False
     target.backup_codes = None
     session.add(target)
     service.reset_2fa_attempts(target.id)

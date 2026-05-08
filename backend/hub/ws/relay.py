@@ -58,9 +58,14 @@ async def exec_command(
             repo = await get_default_repo(session)
 
         if repo:
+            from sqlalchemy import select
+            from core.settings.models import SystemSettings
+            sys_result = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+            sys_settings = sys_result.scalar_one_or_none()
+            base_url = (sys_settings.hub_url if sys_settings and sys_settings.hub_url else None) or settings.hub_public_url
             body.params["remote_protocol"] = "http"
             body.params["remote_host"] = (
-                f"{settings.hub_public_url}/api/instances/{instance_id}/backups/upload"
+                f"{base_url.rstrip('/')}/api/instances/{instance_id}/backups/upload"
                 f"?repo_id={repo.id}"
             )
             body.params["remote_password"] = "__agent_self_token__"

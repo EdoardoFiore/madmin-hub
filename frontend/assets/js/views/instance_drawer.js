@@ -1,6 +1,7 @@
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '../api.js';
 import { t } from '../i18n.js';
 import { escapeHtml, relativeTime, fmtDate, showToast, confirmDialog, formatBytes, fmtPercent, actionLabel } from '../utils.js';
+import { describeAuditPath } from '../formatters.js';
 
 export async function render(body, id) {
   if (!id) { body.innerHTML = `<p>${t('instance.missing_id')}</p>`; return; }
@@ -413,11 +414,14 @@ async function renderAudit(panel, id) {
       <th>${t('audit.col_user')}</th>
       <th>${t('audit.col_action')}</th>
     </tr></thead><tbody>
-    ${items.map(a => `<tr>
-      <td style="white-space:nowrap;font-size:11px">${escapeHtml(a.timestamp ? new Date(a.timestamp+'Z').toLocaleString() : '—')}</td>
-      <td>${escapeHtml(a.username || '—')}</td>
-      <td>${actionLabel(a.method)}</td>
-    </tr>`).join('')}
+    ${items.map(a => {
+      const desc = describeAuditPath(a.path);
+      return `<tr>
+        <td style="white-space:nowrap;font-size:11px">${escapeHtml(a.timestamp ? new Date(a.timestamp+'Z').toLocaleString() : '—')}</td>
+        <td style="font-size:12px">${escapeHtml(a.username || '—')}</td>
+        <td style="font-size:12px">${desc ? escapeHtml(desc) : actionLabel(a.method)}</td>
+      </tr>`;
+    }).join('')}
     </tbody></table></div>`;
 }
 
@@ -568,6 +572,50 @@ async function renderBackups(panel, id) {
         }
       });
     });
+
+    // ── Local backups on instance ──
+    const localSection = document.createElement('div');
+    localSection.style.marginTop = '20px';
+    localSection.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-top:1px solid var(--hub-border);padding-top:14px">
+        <span style="font-size:13px;font-weight:600">${t('backup.local_title')}</span>
+        <button class="btn btn-sm btn-ghost-secondary" id="bkp-local-refresh">
+          <i class="ti ti-refresh" style="font-size:13px"></i>
+        </button>
+      </div>
+      <div id="bkp-local-body"><div style="color:var(--tblr-secondary);font-size:12px;padding:8px 0">${t('backup.local_hint')}</div></div>`;
+    panel.appendChild(localSection);
+
+    const loadLocalBackups = async () => {
+      const body = panel.querySelector('#bkp-local-body');
+      if (!body) return;
+      body.innerHTML = `<div style="font-size:12px;color:var(--tblr-secondary);padding:6px 0"><i class="ti ti-loader-2 ti-spin me-1"></i>${t('backup.local_loading')}</div>`;
+      try {
+        const res = await apiPost(`/instances/${id}/exec/backup.list`, { params: {}, timeout: 20 });
+        const list = res?.result?.backups || [];
+        if (!list.length) {
+          body.innerHTML = `<div style="font-size:12px;color:var(--tblr-secondary);padding:6px 0">${t('backup.local_none')}</div>`;
+          return;
+        }
+        body.innerHTML = `<div class="data-table">
+          <table><thead><tr>
+            <th style="font-size:11px">${t('backup.col_date')}</th>
+            <th style="font-size:11px">${t('backup.col_file')}</th>
+            <th style="font-size:11px">${t('backup.col_size')}</th>
+          </tr></thead><tbody>
+          ${list.map(b => `<tr>
+            <td style="white-space:nowrap;font-size:11px">${b.created_at ? new Date(b.created_at).toLocaleString() : '—'}</td>
+            <td style="font-family:monospace;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(b.filename)}">${escapeHtml(b.filename)}</td>
+            <td style="font-size:11px;white-space:nowrap">${b.size_bytes != null ? formatBytes(b.size_bytes) : '—'}</td>
+          </tr>`).join('')}
+          </tbody></table></div>`;
+      } catch (e) {
+        const msg = e?.detail || e?.message || '';
+        body.innerHTML = `<div style="font-size:12px;color:var(--hub-status-offline);padding:6px 0">${t('backup.local_error')}${msg ? ': ' + escapeHtml(msg) : ''}</div>`;
+      }
+    };
+
+    panel.querySelector('#bkp-local-refresh')?.addEventListener('click', loadLocalBackups);
 
   } catch (e) {
     panel.innerHTML = `<div class="alert alert-danger">${t('backup.load_error')}</div>`;

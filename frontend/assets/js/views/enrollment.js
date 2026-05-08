@@ -19,7 +19,7 @@ export async function render(container) {
   await loadAll();
 
   document.getElementById('new-token-btn')?.addEventListener('click', () => {
-    if (!_hubUrl) {
+    if (_hubUrl === null) {
       showToast(t('enrollment.hub_url_missing'), 'warning');
       window.location.hash = 'settings/general';
       return;
@@ -30,19 +30,21 @@ export async function render(container) {
 
 async function loadAll() {
   try {
-    const [tokens, groups, settings] = await Promise.all([
+    const [tokens, groups, settingsData] = await Promise.all([
       apiGet('/enrollment/tokens'),
       apiGet('/groups'),
-      apiGet('/settings/system').catch(() => null),
+      apiGet('/settings/system').catch(() => undefined),  // undefined = no permission, null = known empty
     ]);
     _tokens = tokens || [];
     _groups = groups || [];
-    _hubUrl = settings?.hub_url || null;
+    // Only set null (→ warn+disable) when we got the settings and hub_url is explicitly empty.
+    // If fetch failed (403 / no permission), leave _hubUrl as non-null so button stays enabled.
+    _hubUrl = settingsData === undefined ? '__unknown__' : (settingsData?.hub_url || null);
 
-    // Warn if hub_url not set
+    // Warn only when we know for sure hub_url is not configured (admin-visible)
     const btn = document.getElementById('new-token-btn');
     const wrap = document.getElementById('new-token-wrap');
-    if (!_hubUrl && btn) {
+    if (_hubUrl === null && btn) {
       btn.disabled = true;
       btn.title = t('enrollment.hub_url_missing');
       wrap.insertAdjacentHTML('afterbegin', `<div class="alert alert-warning py-2 mb-2" style="font-size:13px">

@@ -136,6 +136,9 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         duration_ms = int((time.time() - start) * 1000)
         status_code = response.status_code
 
+        # Dependency may override username (e.g. agent token auth sets request.state.audit_username)
+        username = getattr(request.state, "audit_username", username)
+
         from .service import is_excluded
 
         if is_excluded(path, method):

@@ -74,6 +74,10 @@ EOF
 chmod 600 "$HUB_DIR/backend/.env"
 chown -R "$HUB_USER:$HUB_USER" "$HUB_DIR"
 
+# --- Data directories ---
+mkdir -p /var/lib/madmin-hub/backups
+chown -R "$HUB_USER:$HUB_USER" /var/lib/madmin-hub
+
 # --- Systemd ---
 log "Configuring systemd service…"
 cat > /etc/systemd/system/madmin-hub.service <<EOF
@@ -145,12 +149,15 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    client_max_body_size 512m;
+
     location / {
         proxy_pass       http://127.0.0.1:8080;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
     }
 }
 EOF

@@ -8,62 +8,104 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css" />
   <link rel="stylesheet" href="/assets/css/design.css" />
   <style>
-    body { background: var(--hub-surface); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .login-wrap { width: 100%; max-width: 400px; padding: 24px; }
-    .login-logo { text-align: center; margin-bottom: 28px; }
-    .login-logo-text { font-size: 22px; font-weight: 700; color: var(--hub-primary); letter-spacing: -.3px; }
-    .login-card { background: var(--hub-surface-2); border: 1px solid var(--hub-border); border-radius: var(--hub-radius); padding: 28px 28px 24px; box-shadow: var(--hub-shadow-md); }
-    .login-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; text-align: center; }
-    .form-label { font-size: 13px; font-weight: 500; }
-    .form-control { font-size: 14px; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      background: linear-gradient(135deg, #1a1f2c 0%, #2d3748 100%);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+    .login-logo {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: var(--hub-primary);
+      text-align: center;
+      margin-bottom: .5rem;
+    }
+    .login-logo img { max-height: 52px; display: block; margin: 0 auto .5rem; }
+    .login-subtitle { text-align: center; color: rgba(255,255,255,.45); margin-bottom: 1.75rem; font-size: 13px; }
+    .alert { display: none; }
+    .alert.show { display: block; }
+    #totp-input::placeholder { letter-spacing: normal; font-size: 13px; }
+    .copyright { text-align: center; color: rgba(255,255,255,.3); margin-top: 1.25rem; font-size: 12px; }
   </style>
 </head>
 <body>
-  <div class="login-wrap">
-    <div class="login-logo">
-      <img id="login-logo-img" src="" alt="" style="max-height:48px;display:none;margin-bottom:8px" />
-      <div class="login-logo-text" id="login-brand">MADMIN Hub</div>
-    </div>
+  <div class="container">
     <div class="login-card">
-      <div class="login-title" id="login-heading"></div>
-      <div id="login-error" class="alert alert-danger py-2" style="display:none;font-size:13px"></div>
 
-      <!-- 2FA section -->
-      <div id="2fa-section" style="display:none">
-        <div class="mb-3">
-          <label class="form-label" id="lbl-2fa-code"></label>
-          <input id="totp-input" type="text" class="form-control" maxlength="12"
-                 autocomplete="one-time-code" style="letter-spacing:4px;font-size:20px;text-align:center" />
+      <div class="login-logo" id="login-brand-wrap">
+        <i class="ti ti-server-cog"></i>
+        <span id="login-brand">MADMIN Hub</span>
+      </div>
+      <p class="login-subtitle" id="login-subtitle">Fleet Management Panel</p>
+
+      <div class="card">
+        <div class="card-body p-4">
+
+          <div id="login-alert" class="alert alert-danger mb-3">
+            <span id="login-error"></span>
+          </div>
+
+          <!-- Login form -->
+          <form id="login-form">
+            <div class="mb-3">
+              <label class="form-label" id="lbl-username"></label>
+              <input name="username" type="text" class="form-control" tabindex="1"
+                     autocomplete="username" autofocus />
+            </div>
+            <div class="mb-3">
+              <label class="form-label" id="lbl-password"></label>
+              <input name="password" type="password" class="form-control" tabindex="2"
+                     autocomplete="current-password" />
+            </div>
+            <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn">
+              <span class="btn-text"></span>
+              <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+            </button>
+          </form>
+
+          <!-- 2FA section -->
+          <div id="2fa-section" class="d-none">
+            <div class="text-center mb-3">
+              <i class="ti ti-shield-lock" style="font-size:3rem;color:var(--hub-primary)"></i>
+            </div>
+            <p class="text-center text-muted mb-3" style="font-size:14px" id="lbl-2fa-hint"></p>
+            <div class="mb-3">
+              <label class="form-label" id="lbl-2fa-code"></label>
+              <input id="totp-input" type="text" class="form-control form-control-lg text-center"
+                     maxlength="12" autocomplete="one-time-code" inputmode="numeric"
+                     style="letter-spacing:4px;font-size:20px" />
+              <small class="form-hint text-center d-block mt-2" id="lbl-2fa-hint2"></small>
+            </div>
+            <button type="button" class="btn btn-primary w-100 mb-2" id="totp-submit">
+              <span class="btn-text"></span>
+              <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+            </button>
+            <button type="button" class="btn btn-link w-100" style="font-size:13px" id="totp-back"></button>
+          </div>
+
         </div>
-        <button id="totp-submit" class="btn btn-primary w-100 mb-2"></button>
-        <button id="totp-back" class="btn btn-link w-100" style="font-size:13px"></button>
       </div>
 
-      <!-- Login form -->
-      <form id="login-form">
-        <div class="mb-3">
-          <label class="form-label" id="lbl-username"></label>
-          <input name="username" type="text" class="form-control" tabindex="1"
-                 autocomplete="username" autofocus />
-        </div>
-        <div class="mb-3">
-          <label class="form-label" id="lbl-password"></label>
-          <input name="password" type="password" class="form-control" tabindex="2"
-                 autocomplete="current-password" />
-        </div>
-        <button type="submit" class="btn btn-primary w-100" tabindex="3" id="login-btn"></button>
-      </form>
+      <p class="copyright">&copy; <span id="year"></span> MADMIN Hub</p>
     </div>
   </div>
 
   <script type="module">
     import { t, getLang, setLang } from '/assets/js/i18n.js';
 
+    document.getElementById('year').textContent = new Date().getFullYear();
+    document.documentElement.lang = getLang();
+
     const TOKEN_KEY = 'hub_token';
     const API = '/api';
 
-    document.documentElement.lang = getLang();
-
+    // ── Branding ──────────────────────────────────────────────────────────────
     async function loadBranding() {
       try {
         const r = await fetch(`${API}/branding`);
@@ -71,51 +113,83 @@
         const b = await r.json();
         if (b.primary_color) {
           document.documentElement.style.setProperty('--hub-primary', b.primary_color);
-          const rgb = hexToRgb(b.primary_color);
-          if (rgb) document.documentElement.style.setProperty('--hub-primary-rgb', `${rgb.r},${rgb.g},${rgb.b}`);
+          const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(b.primary_color);
+          if (m) document.documentElement.style.setProperty('--hub-primary-rgb', `${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)}`);
         }
-        if (b.company_name) document.getElementById('login-brand').textContent = b.company_name;
+        const brand = document.getElementById('login-brand');
+        const wrap  = document.getElementById('login-brand-wrap');
+        if (b.company_name) brand.textContent = b.company_name;
         if (b.logo_url) {
-          const img = document.getElementById('login-logo-img');
-          img.src = b.logo_url; img.style.display = 'block';
+          const img = document.createElement('img');
+          img.src = b.logo_url;
+          wrap.innerHTML = '';
+          wrap.appendChild(img);
+          const span = document.createElement('span');
+          span.id = 'login-brand';
+          span.textContent = b.company_name || 'MADMIN Hub';
+          wrap.appendChild(span);
         }
         if (b.default_language) setLang(b.default_language, false);
         document.title = (b.company_name || 'MADMIN Hub') + ' — Login';
       } catch (_) {}
     }
 
-    function hexToRgb(hex) {
-      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      return m ? { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) } : null;
-    }
-
+    // ── Labels ────────────────────────────────────────────────────────────────
     function applyLabels() {
-      document.getElementById('login-heading').textContent   = t('login.title');
-      document.getElementById('lbl-username').textContent    = t('login.username');
-      document.getElementById('lbl-password').textContent    = t('login.password');
-      document.getElementById('login-btn').textContent       = t('login.submit');
-      document.getElementById('lbl-2fa-code').textContent    = t('login.2fa_label');
-      document.getElementById('totp-input').placeholder      = t('login.2fa_placeholder');
-      document.getElementById('totp-submit').textContent     = t('login.2fa_verify');
-      document.getElementById('totp-back').textContent       = t('login.2fa_back');
+      document.getElementById('lbl-username').textContent   = t('login.username');
+      document.getElementById('lbl-password').textContent   = t('login.password');
+      document.getElementById('login-btn').querySelector('.btn-text').textContent = t('login.submit');
+      document.getElementById('lbl-2fa-code').textContent   = t('login.2fa_label');
+      document.getElementById('lbl-2fa-hint').textContent   = t('login.2fa_hint') || t('login.2fa_label');
+      document.getElementById('lbl-2fa-hint2').textContent  = t('login.2fa_backup_hint') || '';
+      document.getElementById('totp-input').placeholder     = t('login.2fa_placeholder');
+      document.getElementById('totp-submit').querySelector('.btn-text').textContent = t('login.2fa_verify');
+      document.getElementById('totp-back').textContent      = t('login.2fa_back');
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
     function showError(msg) {
       const el = document.getElementById('login-error');
-      el.textContent = msg; el.style.display = '';
+      el.textContent = msg;
+      document.getElementById('login-alert').classList.add('show');
     }
-    function clearError() { document.getElementById('login-error').style.display = 'none'; }
+    function clearError() {
+      document.getElementById('login-alert').classList.remove('show');
+    }
 
+    function setLoading(btn, loading) {
+      btn.querySelector('.btn-text').style.opacity = loading ? '.6' : '';
+      const sp = btn.querySelector('.spinner-border');
+      if (loading) sp.classList.remove('d-none'); else sp.classList.add('d-none');
+      btn.disabled = loading;
+    }
+
+    function showLoginForm() {
+      document.getElementById('login-form').classList.remove('d-none');
+      document.getElementById('2fa-section').classList.add('d-none');
+      clearError();
+    }
+
+    function show2fa() {
+      document.getElementById('login-form').classList.add('d-none');
+      document.getElementById('2fa-section').classList.remove('d-none');
+      document.getElementById('totp-input').value = '';
+      document.getElementById('totp-input').focus();
+      clearError();
+    }
+
+    // ── Auth flow ─────────────────────────────────────────────────────────────
     let tempToken = null;
 
     document.getElementById('login-form').addEventListener('submit', async (e) => {
-      e.preventDefault(); clearError();
+      e.preventDefault();
+      clearError();
       const btn = document.getElementById('login-btn');
-      btn.disabled = true; btn.textContent = t('login.submitting');
+      setLoading(btn, true);
       const form = e.target;
       const body = new URLSearchParams({ username: form.username.value, password: form.password.value });
       try {
-        const res = await fetch(`${API}/auth/token`, {
+        const res  = await fetch(`${API}/auth/token`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Language': getLang() },
           body,
@@ -124,40 +198,52 @@
         if (!res.ok) { showError(data.detail || t('login.bad_creds')); return; }
         if (data.token_type === '2fa_required') {
           tempToken = data.access_token;
-          document.getElementById('login-form').style.display = 'none';
-          document.getElementById('2fa-section').style.display = '';
-          document.getElementById('totp-input').focus();
+          show2fa();
+          return;
+        }
+        if (data.token_type === '2fa_setup_required') {
+          localStorage.setItem(TOKEN_KEY, data.access_token);
+          window.location.href = '/';
           return;
         }
         localStorage.setItem(TOKEN_KEY, data.access_token);
         window.location.href = '/';
       } catch (_) { showError(t('login.net_error')); }
-      finally { btn.disabled = false; btn.textContent = t('login.submit'); }
+      finally { setLoading(btn, false); }
     });
 
     document.getElementById('totp-submit').addEventListener('click', async () => {
       clearError();
       const code = document.getElementById('totp-input').value.trim();
       if (!code) return;
-      const res = await fetch(`${API}/auth/token/2fa`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tempToken}`, 'X-Language': getLang() },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) { showError(data.detail || t('login.bad_code')); return; }
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      window.location.href = '/';
-    });
-
-    document.getElementById('totp-back').addEventListener('click', () => {
-      tempToken = null;
-      document.getElementById('2fa-section').style.display = 'none';
-      document.getElementById('login-form').style.display = '';
+      const btn = document.getElementById('totp-submit');
+      setLoading(btn, true);
+      try {
+        const res  = await fetch(`${API}/auth/token/2fa`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tempToken}`, 'X-Language': getLang() },
+          body: JSON.stringify({ code }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showError(data.detail || t('login.bad_code'));
+          document.getElementById('totp-input').value = '';
+          document.getElementById('totp-input').focus();
+          return;
+        }
+        localStorage.setItem(TOKEN_KEY, data.access_token);
+        window.location.href = '/';
+      } catch (_) { showError(t('login.net_error')); }
+      finally { setLoading(btn, false); }
     });
 
     document.getElementById('totp-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') document.getElementById('totp-submit').click();
+    });
+
+    document.getElementById('totp-back').addEventListener('click', () => {
+      tempToken = null;
+      showLoginForm();
     });
 
     if (localStorage.getItem(TOKEN_KEY)) window.location.href = '/';

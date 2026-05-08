@@ -18,6 +18,7 @@ from config import get_settings
 from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import async_session_maker, get_session
+from core.settings.models import SystemSettings
 from hub.instances.enrollment import verify_agent_token
 from hub.instances.models import ManagedInstance
 from hub.instances.service import get_instance
@@ -32,6 +33,7 @@ router = APIRouter(tags=["Backups"])
 # ── Agent auth dependency ─────────────────────────────────────────────────────
 
 async def get_agent_instance(
+    request: Request,
     instance_id: uuid.UUID,
     authorization: Optional[str] = Header(default=None),
     session: AsyncSession = Depends(get_session),
@@ -56,6 +58,7 @@ async def get_agent_instance(
     if not verify_agent_token(raw_token, instance.agent_token_hash):
         raise HTTPException(status_code=403, detail="Token agente non valido")
 
+    request.state.audit_username = f"agente:{instance.name}"
     return instance
 
 
@@ -381,7 +384,10 @@ async def restore_backup(
 
     if repo.type == "local":
         settings = get_settings()
-        download_url = f"{settings.hub_public_url}/api/instances/{instance_id}/backups/{backup_id}/download"
+        sys_result = await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+        sys_settings = sys_result.scalar_one_or_none()
+        base_url = (sys_settings.hub_url if sys_settings and sys_settings.hub_url else None) or settings.hub_public_url
+        download_url = f"{base_url.rstrip('/')}/api/instances/{instance_id}/backups/{backup_id}/download"
         params["remote_protocol"] = "http"
         params["remote_host"] = download_url
         # Agent uses its own token for the download request

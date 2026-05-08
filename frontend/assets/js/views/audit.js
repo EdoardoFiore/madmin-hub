@@ -1,6 +1,7 @@
 import { apiGet } from '../api.js';
 import { t } from '../i18n.js';
 import { debounce, escapeHtml, actionLabel, showToast } from '../utils.js';
+import { describeAuditPath } from '../formatters.js';
 
 const PAGE_SIZE = 50;
 
@@ -141,7 +142,7 @@ function renderTable() {
       <td style="white-space:nowrap;font-size:11px">${escapeHtml(r.timestamp ? new Date(r.timestamp + 'Z').toLocaleString() : '—')}</td>
       <td>${escapeHtml(r.username || r.user_id || '—')}</td>
       <td>${actionLabel(r.method)}</td>
-      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="text-mono">${escapeHtml(r.path || '—')}</span></td>
+      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis">${(() => { const d = describeAuditPath(r.path); return d ? `<span style="font-weight:500">${escapeHtml(d)}</span><br><span class="text-mono" style="font-size:10px;opacity:.55">${escapeHtml(r.path || '')}</span>` : `<span class="text-mono" style="white-space:nowrap">${escapeHtml(r.path || '—')}</span>`; })()}</td>
       <td><span class="hub-badge ${r.status_code < 400 ? 'online' : r.status_code < 500 ? 'warning' : 'offline'}" style="font-size:10px">${r.status_code}</span></td>
       <td style="font-size:12px">${r.duration_ms ?? '—'}</td>
     </tr>

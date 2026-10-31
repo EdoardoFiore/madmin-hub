@@ -1,0 +1,23 @@
+# Installed with -c requirements.lock (versions tested with MADMIN)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+# <0.0.45: 0.0.45 maps every datetime field to a timezone-aware type that rejects
+# naive values, and the hub stores naive UTC (datetime.utcnow()) everywhere.
+sqlmodel>=0.0.14,<0.0.45
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.25
+
+# Authentication, PKI
+bcrypt==4.0.1
+PyJWT>=2.8.0
+cryptography>=42.0.0
+python-multipart>=0.0.6
+pyotp>=2.9.0
+qrcode>=7.4
+Pillow>=10.0.0
+
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0

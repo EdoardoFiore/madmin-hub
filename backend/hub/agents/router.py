@@ -1,0 +1,365 @@
+"""
+Agent endpoints (/agent/*), served by nginx on the agent port (:8443) only.
+
+Without a client certificate: GET /agent/ca.pem, POST /agent/enroll,
+POST /agent/register, GET /agent/register/<id> (with X-Request-Secret).
+Everything else requires the instance certificate (auth.py).
+"""
+import asyncio
+import hashlib
+import hmac
+import json
+import logging
+import os
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+from starlette.websockets import WebSocketDisconnect
+
+from core.auth.rate_limiter import login_rate_limiter
+from core.database import async_session_maker, get_session
+from core.http import get_client_ip
+
+from hub import pki
+from hub.enrollment import service as enrollment_service
+from hub.models import AgentCertificate, Backup, Command, EnrollmentToken, Instance
+from hub.instances.service import apply_facts, record_addresses, revoke_instance
+from . import dispatcher, protocol
+from .auth import authenticate
+from .registry import AgentConnection, registry
+
+logger = logging.getLogger("madmin_hub.agents")
+
+router = APIRouter(prefix="/agent", include_in_schema=False)
+
+_HELLO_TIMEOUT = 15
+MAX_BACKUP_SIZE = 2 * 1024 ** 3
+
+
+async def require_agent(request: Request, session: AsyncSession = Depends(get_session)):
+    found = await authenticate(session, request)
+    if found is None:
+        raise HTTPException(403, "Certificato non valido o istanza revocata")
+    return found
+
+
+# --- Enrollment ---
+
+@router.get("/ca.pem")
+async def get_ca():
+    return Response(pki.ca_pem(), media_type="application/x-pem-file")
+
+
+class EnrollRequest(BaseModel):
+    token_id: str = Field(max_length=32)
+    secret: str = Field(max_length=128)
+    csr: str = Field(max_length=8192)
+    protocol: int
+    facts: dict = Field(default_factory=dict)
+
+
+@router.post("/enroll")
+async def enroll(body: EnrollRequest, request: Request, session: AsyncSession = Depends(get_session)):
+    client_ip = get_client_ip(request)
+    limit_key = f"enroll:{client_ip}"
+    login_rate_limiter.begin_attempt(limit_key)
+
+    async def reject(detail: str, code: int = 401):
+        await login_rate_limiter.record_failure(session, limit_key)
+        await session.commit()
+        raise HTTPException(code, detail)
+
+    if body.protocol != protocol.PROTOCOL_VERSION:
+        raise HTTPException(400, f"Versione di protocollo {body.protocol} non supportata")
+
+    token = (await session.execute(
+        select(EnrollmentToken).where(EnrollmentToken.id == body.token_id).with_for_update()
+    )).scalar_one_or_none()
+    digest = hashlib.sha256(body.secret.encode()).hexdigest()
+    if token is None or not hmac.compare_digest(digest, token.secret_hash):
+        await reject("Token di enrollment non valido")
+    if token.revoked or token.expires_at <= datetime.utcnow():
+        await reject("Token di enrollment scaduto o revocato")
+    if token.max_uses is not None and token.uses >= token.max_uses:
+        await reject("Token di enrollment già utilizzato")
+    if token.bind_ip and not _same_ip(client_ip, token.bind_ip):
+        await reject("Token non utilizzabile da questo indirizzo")
+
+    facts = body.facts if isinstance(body.facts, dict) else {}
+    fields = enrollment_service.token_fields(token)
+    instance = await enrollment_service.target_instance(session, facts, fields, token.reenroll_instance_id)
+    result = await enrollment_service.issue_identity(
+        session, instance, body.csr, facts, fields, client_ip, body.protocol)
+    token.uses += 1
+    token.last_used_at = datetime.utcnow()
+    session.add(token)
+    await login_rate_limiter.record_success(session, limit_key)
+    await session.commit()
+    logger.info("Instance %s (%s) enrolled from %s with token %s",
+                instance.name, instance.id, client_ip, token.id)
+    return result
+
+
+def _same_ip(a: str, b: str) -> bool:
+    from hub.netutil import ip_allowed
+    return ip_allowed(a, b)
+
+
+# --- Registration without a token (approved later) ---
+
+class RegisterRequest(BaseModel):
+    csr: str = Field(max_length=8192)
+    protocol: int
+    ca_pinned: bool = False
+    facts: dict = Field(default_factory=dict)
+
+
+@router.post("/register")
+async def register(body: RegisterRequest, request: Request, session: AsyncSession = Depends(get_session)):
+    from hub.enrollment.requests import create_request
+    client_ip = get_client_ip(request)
+    limit_key = f"register:{client_ip}"
+    # Counted per attempt, reset by every accepted call: many instances
+    # behind one NAT address keep working, a flood of bad requests does not
+    login_rate_limiter.begin_attempt(limit_key)
+    if body.protocol != protocol.PROTOCOL_VERSION:
+        raise HTTPException(400, f"Versione di protocollo {body.protocol} non supportata")
+    result = await create_request(session, body.csr, body.facts if isinstance(body.facts, dict) else {},
+                                  body.protocol, client_ip, body.ca_pinned)
+    await login_rate_limiter.record_success(session, limit_key)
+    await session.commit()
+    return result
+
+
+@router.get("/register/{request_id}")
+async def registration_status(request_id: str, request: Request, session: AsyncSession = Depends(get_session)):
+    from hub.enrollment.requests import poll_request
+    client_ip = get_client_ip(request)
+    limit_key = f"register:{client_ip}"
+    login_rate_limiter.begin_attempt(limit_key)
+    result = await poll_request(session, request_id[:36], request.headers.get("x-request-secret", ""))
+    if result is None:
+        await login_rate_limiter.record_failure(session, limit_key)
+        await session.commit()
+        raise HTTPException(404, "Richiesta non trovata")
+    await login_rate_limiter.record_success(session, limit_key)
+    await session.commit()
+    return result
+
+
+class RenewRequest(BaseModel):
+    csr: str = Field(max_length=8192)
+
+
+@router.post("/renew")
+async def renew(body: RenewRequest, agent=Depends(require_agent), session: AsyncSession = Depends(get_session)):
+    instance, _ = agent
+    try:
+        cert_pem, fp, serial, nb, na = pki.sign_agent_csr(body.csr, instance.id)
+    except pki.PKIError as e:
+        raise HTTPException(400, str(e))
+    # The previous certificate stays valid until it expires: the agent may
+    # not have saved the new one yet
+    session.add(AgentCertificate(instance_id=instance.id, fingerprint=fp, serial=serial,
+                                 not_before=nb.replace(tzinfo=None), not_after=na.replace(tzinfo=None)))
+    await session.commit()
+    return {"cert_pem": cert_pem.decode()}
+
+
+@router.post("/unenroll")
+async def unenroll(agent=Depends(require_agent), session: AsyncSession = Depends(get_session)):
+    instance, _ = agent
+    instance = await session.get(Instance, instance.id)
+    await revoke_instance(session, instance, by="instance", status="decommissioned")
+    return {}
+
+
+# --- Backups ---
+
+def backup_path(instance_id: str, backup_id: str) -> str:
+    from config import get_settings
+    return os.path.join(get_settings().data_dir, "backups", instance_id, f"{backup_id}.bin")
+
+
+@router.post("/backups")
+async def upload_backup(request: Request, agent=Depends(require_agent),
+                        session: AsyncSession = Depends(get_session)):
+    instance, _ = agent
+    expected = request.headers.get("x-content-sha256", "").lower()
+    backup_id = str(uuid.uuid4())
+    path = backup_path(instance.id, backup_id)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = path + ".part"
+    h = hashlib.sha256()
+    size = 0
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_BACKUP_SIZE:
+                    raise HTTPException(413, "Archivio troppo grande")
+                h.update(chunk)
+                await asyncio.to_thread(f.write, chunk)
+        if not expected or h.hexdigest() != expected:
+            raise HTTPException(400, "sha256 dell'archivio non corrispondente")
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+    cmd_id = request.headers.get("x-command-id", "")[:36] or None
+    trigger, created_by = "manual", ""
+    if cmd_id:
+        cmd = await session.get(Command, cmd_id)
+        if cmd is not None and cmd.instance_id == instance.id:
+            created_by = cmd.operator
+            trigger = "scheduled" if cmd.operator == "scheduler" else "manual"
+    session.add(Backup(
+        id=backup_id, instance_id=instance.id, size=size, sha256=h.hexdigest(),
+        archive_name=request.headers.get("x-archive-name", "")[:200],
+        madmin_version=instance.madmin_version, trigger=trigger, created_by=created_by,
+        command_id=cmd_id,
+    ))
+    await session.commit()
+    from hub.backups.service import apply_retention
+    await apply_retention(session, instance.id)
+    return {"backup_id": backup_id}
+
+
+@router.get("/backups/{backup_id}")
+async def download_backup(backup_id: str, agent=Depends(require_agent),
+                          session: AsyncSession = Depends(get_session)):
+    instance, _ = agent
+    backup = await session.get(Backup, backup_id)
+    # Only this instance's backups
+    if backup is None or backup.instance_id != instance.id:
+        raise HTTPException(404, "Backup non trovato")
+    path = backup_path(instance.id, backup.id)
+    if not os.path.exists(path):
+        raise HTTPException(404, "File del backup mancante")
+    return FileResponse(path, media_type="application/octet-stream",
+                        headers={"X-Content-SHA256": backup.sha256})
+
+
+# --- Control channel ---
+
+async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> AgentConnection:
+    raw = await asyncio.wait_for(ws.receive_text(), _HELLO_TIMEOUT)
+    msg = protocol.parse(raw)
+    if msg["type"] != protocol.HELLO:
+        raise protocol.ProtocolError("first frame must be hello")
+    p = msg["payload"]
+    if p.get("instance_id") != instance_id:
+        raise protocol.ProtocolError("instance_id does not match the certificate")
+    caps = p.get("capabilities") if isinstance(p.get("capabilities"), list) else []
+    caps = {str(c)[:50] for c in caps[:200]}
+    facts = p.get("facts") if isinstance(p.get("facts"), dict) else None
+    async with async_session_maker() as session:
+        instance = await session.get(Instance, instance_id)
+        instance.capabilities_json = json.dumps(sorted(caps))
+        instance.protocol = int(p.get("protocol") or 0)
+        instance.last_seen_at = datetime.utcnow()
+        if facts is not None:
+            apply_facts(instance, facts)
+        await record_addresses(session, instance, source_ip, facts)
+        session.add(instance)
+        await session.commit()
+    await ws.send_text(protocol.frame(protocol.HELLO_ACK, {
+        "instance_id": instance_id, "server_time": int(datetime.utcnow().timestamp()),
+    }))
+    return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
+                           capabilities=caps, protocol=int(p.get("protocol") or 0))
+
+
+async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
+    async with async_session_maker() as session:
+        instance = await session.get(Instance, conn.instance_id)
+        if instance is None:
+            return
+        instance.last_seen_at = datetime.utcnow()
+        stats = payload.get("stats")
+        if isinstance(stats, dict):
+            instance.stats_json = json.dumps(stats)[:4096]
+        facts = payload.get("facts")
+        if isinstance(facts, dict):
+            apply_facts(instance, facts)
+            await record_addresses(session, instance, None, facts)
+        session.add(instance)
+        await session.commit()
+
+
+async def _handle_event(conn: AgentConnection, payload: dict) -> None:
+    if payload.get("name") == protocol.EVENT_SUPPORT_EXPIRED:
+        from hub.support.service import on_instance_expired
+        await on_instance_expired(conn.instance_id, payload.get("data") or {})
+
+
+async def _writer(conn: AgentConnection) -> None:
+    while True:
+        await conn.ws.send_text(await conn.outbox.get())
+
+
+@router.websocket("/ws")
+async def control_channel(ws: WebSocket):
+    source_ip = get_client_ip(ws)
+    async with async_session_maker() as session:
+        found = await authenticate(session, ws)
+    await ws.accept()
+    if found is None:
+        # Accepted then closed, so the agent sees the code and stops retrying
+        await ws.close(code=protocol.CLOSE_REVOKED, reason="revoked")
+        return
+    instance, _ = found
+    try:
+        conn = await _handle_hello(ws, instance.id, source_ip)
+    except (protocol.ProtocolError, asyncio.TimeoutError, ValueError) as e:
+        logger.warning("Instance %s: bad hello (%s)", instance.id, e)
+        await ws.close(code=protocol.CLOSE_PROTOCOL, reason=str(e)[:100])
+        return
+    except WebSocketDisconnect:
+        return
+
+    await registry.register(conn)
+    writer = asyncio.create_task(_writer(conn))
+    logger.info("Instance %s (%s) connected from %s", instance.name, instance.id, source_ip)
+    try:
+        await dispatcher.resend_pending(instance.id)
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = protocol.parse(raw)
+            except protocol.ProtocolError as e:
+                logger.warning("Instance %s: bad frame (%s)", instance.id, e)
+                continue  # one bad frame does not drop the connection
+            try:
+                if msg["type"] == protocol.HEARTBEAT:
+                    await _handle_heartbeat(conn, msg["payload"])
+                elif msg["type"] == protocol.CMD_RESULT:
+                    await dispatcher.handle_result(instance.id, msg["id"], msg["payload"])
+                elif msg["type"] == protocol.EVENT:
+                    await _handle_event(conn, msg["payload"])
+            except Exception:
+                logger.exception("Instance %s: error handling %s", instance.id, msg["type"])
+    except WebSocketDisconnect:
+        pass
+    finally:
+        writer.cancel()
+        registry.unregister(conn)
+        logger.info("Instance %s disconnected", instance.id)
+
+
+@router.websocket("/tunnel/{conn_id}")
+async def tunnel_channel(ws: WebSocket, conn_id: str):
+    from hub.support.tunnels import attach_agent
+    async with async_session_maker() as session:
+        found = await authenticate(session, ws)
+    if found is None:
+        await ws.close(code=protocol.CLOSE_REVOKED)
+        return
+    await attach_agent(ws, conn_id, found[0].id)

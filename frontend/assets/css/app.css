@@ -1,0 +1,747 @@
+/*
+ * MADMIN - Custom Application Styles
+ * Extends and customizes Tabler UI
+ */
+
+/* Prevent layout shift when Bootstrap modals lock body scroll */
+html {
+    scrollbar-gutter: stable;
+}
+
+:root {
+    --madmin-primary: #206bc4;
+    --madmin-primary-dark: #1a5aad;
+    --madmin-bg-dark: #1a1f2c;
+    --madmin-sidebar-width: 250px;
+}
+
+/* == Sidebar Customization == */
+.navbar-vertical {
+    width: var(--madmin-sidebar-width);
+    background: var(--madmin-bg-dark);
+}
+
+.navbar-vertical .navbar-brand {
+    font-weight: 700;
+    font-size: 1.25rem;
+}
+
+.navbar-vertical .nav-link {
+    border-radius: 0.375rem;
+    margin: 0.125rem 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.navbar-vertical .nav-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.navbar-vertical .nav-link.active {
+    background: var(--madmin-primary);
+    color: white !important;
+}
+
+.navbar-vertical .nav-link-icon {
+    width: 1.5rem;
+}
+
+/* Module icon SVG - make it white in dark sidebar */
+.navbar-vertical .nav-link-icon img.module-icon-menu {
+    filter: brightness(0) invert(1);
+}
+
+/* == Page Layout == */
+@media (min-width: 992px) {
+    .page-wrapper {
+        margin-left: var(--madmin-sidebar-width);
+    }
+}
+
+/* == Sidebar User Section == */
+.sidebar-user-section {
+    margin-top: auto;
+    padding-bottom: 1rem;
+}
+
+.user-dropdown-trigger {
+    padding: 0.5rem 1rem !important;
+    margin: 0 0.5rem !important;
+    border-radius: 0.375rem;
+}
+
+.user-dropdown-trigger:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.dropdown-menu-user {
+    position: absolute !important;
+    bottom: 100% !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    margin: 0 0.5rem 0.5rem 0.5rem !important;
+    min-width: auto !important;
+    z-index: 1050 !important;
+    transform: translateY(-5px);
+    background: #252d3a !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+    display: none; /* Vanilla JS fallback */
+}
+
+.dropdown-menu-user.show {
+    display: block !important;
+}
+
+/* Ensure dropdown container has proper stacking */
+#user-dropdown {
+    position: relative;
+    z-index: 1040;
+}
+
+/* Fix navbar-collapse positioning for dropdown */
+.navbar-vertical .navbar-collapse {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* == Input icons ==
+ * Tabler 1.6 gives .input-icon-addon the fixed height of a default-size
+ * control, so next to a .form-control-sm / -lg the icon is centred on the
+ * wrong box and sits low (sm) or high (lg). Stretch it to the wrapper instead:
+ * top/bottom are already 0. */
+.input-icon:has(> .form-control-sm, > .form-select-sm, > .form-control-lg, > .form-select-lg) > .input-icon-addon {
+    height: auto;
+}
+
+/* == Cards == */
+.card {
+    border: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.card-header {
+    background: transparent;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    font-weight: 600;
+}
+
+/* == Firewall Table Styles == */
+.firewall-table {
+    width: 100%;
+}
+
+.firewall-table th {
+    background: #f8f9fa;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6c757d;
+}
+
+.firewall-table td {
+    vertical-align: middle;
+}
+
+.firewall-table .rule-order {
+    width: 50px;
+    text-align: center;
+}
+
+.firewall-table .rule-actions {
+    width: 100px;
+    text-align: right;
+}
+
+.firewall-table tr.disabled {
+    opacity: 0.5;
+    background: #f8f9fa;
+}
+
+.firewall-table .badge {
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Rule action badges handled by utility classes */
+/* Chain badges handled by utility classes */
+
+/* == Drag and Drop for Rule Ordering == */
+.sortable-ghost {
+    opacity: 0.4;
+    background: #e9ecef;
+}
+
+.sortable-chosen {
+    background: #e3f2fd;
+}
+
+.drag-handle {
+    cursor: grab;
+    color: #adb5bd;
+}
+
+.drag-handle:hover {
+    color: #495057;
+}
+
+.draggable-row {
+    transition: background-color 0.15s ease;
+}
+
+.draggable-row.dragging {
+    opacity: 0.5;
+    background: #e3f2fd !important;
+}
+
+.draggable-row.drag-over {
+    background: #d4edda !important;
+    border-top: 2px solid #28a745;
+}
+
+/* == Empty States == */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: #6c757d;
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    color: #dee2e6;
+    margin-bottom: 1rem;
+}
+
+.empty-state-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-subtitle {
+    color: #868e96;
+}
+
+/* == Toast Notifications == */
+.toast {
+    min-width: 300px;
+}
+
+.toast-success .toast-header {
+    background-color: #2fb344;
+    color: white;
+}
+
+.toast-error .toast-header {
+    background-color: #d63939;
+    color: white;
+}
+
+.toast-warning .toast-header {
+    background-color: #f76707;
+    color: white;
+}
+
+/* == Form Improvements == */
+.form-label {
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.form-select-sm,
+.form-control-sm {
+    font-size: 0.875rem;
+}
+
+/* == Segmented Nav Improvements == */
+.nav-segmented {
+    background: rgba(0, 0, 0, 0.04);
+    padding: 0.25rem;
+    border-radius: 4px;
+}
+
+.nav-segmented .nav-link {
+    color: #495057;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.nav-segmented .nav-link:hover {
+    color: #1d2b36;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.nav-segmented .nav-link.active {
+    background: #ffffff;
+    color: #1d2b36 !important;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+    border-radius: 3px;
+}
+
+/* == Modal Improvements == */
+.modal-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.modal-footer {
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* == Status Indicators == */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot-active {
+    background-color: #2fb344;
+}
+
+.status-dot-inactive {
+    background-color: #6c757d;
+}
+
+.status-dot-warning {
+    background-color: #f76707;
+}
+
+/* == Loading States == */
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+/* == Dark Theme Support == */
+[data-bs-theme="dark"] {
+    --madmin-bg-dark: #1a1f2c;
+    --tblr-body-bg: #1a1f2c;
+    --tblr-body-color: #edf2f7;
+    color: #edf2f7;
+}
+
+[data-bs-theme="dark"] .card {
+    background: #232a3b;
+    border-color: #2f3a4e;
+}
+
+[data-bs-theme="dark"] .card-header {
+    border-bottom-color: #2f3a4e;
+}
+
+/* Tables */
+[data-bs-theme="dark"] .firewall-table th {
+    background: #2a3347;
+    color: #b0bec5;
+}
+
+[data-bs-theme="dark"] .firewall-table tr.disabled {
+    background: #1e2535;
+}
+
+[data-bs-theme="dark"] .table {
+    --tblr-table-bg: transparent;
+}
+
+/* Empty states */
+[data-bs-theme="dark"] .empty-state-icon {
+    color: #4a5568;
+}
+
+/* Loading overlay */
+[data-bs-theme="dark"] .loading-overlay {
+    background: rgba(26, 31, 44, 0.85);
+}
+
+/* Drag & drop */
+[data-bs-theme="dark"] .sortable-ghost {
+    background: #2a3347;
+}
+
+[data-bs-theme="dark"] .sortable-chosen {
+    background: #1e3a5f;
+}
+
+/* Modals */
+[data-bs-theme="dark"] .modal-content {
+    background: #232a3b;
+    border-color: #2f3a4e;
+}
+
+[data-bs-theme="dark"] .modal-header,
+[data-bs-theme="dark"] .modal-footer {
+    border-color: #2f3a4e;
+}
+
+/* Toast notifications */
+[data-bs-theme="dark"] .toast {
+    background: #232a3b;
+    border-color: #2f3a4e;
+    color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .toast-body {
+    color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .toast .btn-close {
+    filter: invert(1);
+}
+
+/* Nav tabs */
+[data-bs-theme="dark"] .nav-tabs {
+    border-bottom-color: #2f3a4e;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link {
+    color: #a0aec0;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link.active {
+    background: #232a3b;
+    border-color: #2f3a4e #2f3a4e #232a3b;
+    color: #e2e8f0;
+}
+
+/* Nav Segmented */
+[data-bs-theme="dark"] .nav-segmented {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+[data-bs-theme="dark"] .nav-segmented .nav-link {
+    color: #a0aec0;
+}
+
+[data-bs-theme="dark"] .nav-segmented .nav-link:hover {
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-bs-theme="dark"] .nav-segmented .nav-link.active {
+    background: #2a3347;
+    color: #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Form controls */
+[data-bs-theme="dark"] .form-control,
+[data-bs-theme="dark"] .form-select {
+    background-color: #1a2033;
+    border-color: #2f3a4e;
+    color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .form-control:focus,
+[data-bs-theme="dark"] .form-select:focus {
+    border-color: var(--madmin-primary);
+}
+
+[data-bs-theme="dark"] .form-control::placeholder {
+    color: #6c7a8d;
+}
+
+/* Input groups */
+[data-bs-theme="dark"] .input-group-text {
+    background: #1e2535;
+    border-color: #2f3a4e;
+    color: #a0aec0;
+}
+
+/* Dropdown menus */
+[data-bs-theme="dark"] .dropdown-menu {
+    background: #232a3b;
+    border-color: #2f3a4e;
+}
+
+[data-bs-theme="dark"] .dropdown-item {
+    color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .dropdown-item:hover {
+    background: #2a3347;
+}
+
+[data-bs-theme="dark"] .dropdown-divider {
+    border-color: #2f3a4e;
+}
+
+/* List groups */
+[data-bs-theme="dark"] .list-group-item {
+    background: #232a3b;
+    border-color: #2f3a4e;
+    color: #e2e8f0;
+}
+
+/* Alerts inside dark theme */
+[data-bs-theme="dark"] .alert {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Code / log containers with hardcoded bg */
+[data-bs-theme="dark"] [style*="background: #f8f9fa"],
+[data-bs-theme="dark"] [style*="background:#f8f9fa"] {
+    background: #1a2033 !important;
+    color: #a0aec0 !important;
+}
+
+/* Bootstrap bg-light / bg-white overrides */
+[data-bs-theme="dark"] .bg-light {
+    background-color: #1e2535 !important;
+}
+
+[data-bs-theme="dark"] .bg-white {
+    background-color: #232a3b !important;
+}
+
+/* Page header */
+[data-bs-theme="dark"] .page-header {
+    background: transparent;
+}
+
+/* Text helpers */
+[data-bs-theme="dark"] .text-muted {
+    color: #9dafc2 !important;
+}
+
+[data-bs-theme="dark"] .form-hint {
+    color: #8a9bb0;
+}
+
+[data-bs-theme="dark"] hr {
+    border-color: #2f3a4e;
+}
+
+/* ApexCharts in dark mode */
+[data-bs-theme="dark"] .apexcharts-text,
+[data-bs-theme="dark"] .apexcharts-xaxis-label,
+[data-bs-theme="dark"] .apexcharts-yaxis-label {
+    fill: #9dafc2 !important;
+}
+
+[data-bs-theme="dark"] .apexcharts-legend-text {
+    color: #c8d6e5 !important;
+}
+
+[data-bs-theme="dark"] .apexcharts-tooltip {
+    background: #232a3b !important;
+    border-color: #2f3a4e !important;
+    color: #edf2f7 !important;
+}
+
+[data-bs-theme="dark"] .apexcharts-tooltip-title {
+    background: #1e2535 !important;
+    border-color: #2f3a4e !important;
+    color: #edf2f7 !important;
+}
+
+[data-bs-theme="dark"] .apexcharts-gridline {
+    stroke: #2f3a4e;
+}
+
+/* == Responsive Adjustments == */
+@media (max-width: 991.98px) {
+
+    /* Mobile header bar */
+    .mobile-header {
+        display: flex !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 56px;
+        background: var(--madmin-bg-dark);
+        z-index: 1025;
+        align-items: center;
+        padding: 0 1rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    .mobile-header .navbar-brand {
+        color: white;
+        margin: 0;
+    }
+
+    .mobile-menu-toggle {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 1.5rem;
+        padding: 0.5rem;
+        cursor: pointer;
+    }
+
+    /* Sidebar as slide-in drawer */
+    .navbar-vertical {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: var(--madmin-sidebar-width);
+        height: 100vh;
+        z-index: 1040;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        overflow-y: auto;
+    }
+
+    .navbar-vertical.mobile-open {
+        transform: translateX(0);
+    }
+
+    /* Overlay backdrop */
+    .mobile-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1035;
+    }
+
+    .mobile-overlay.show {
+        display: block;
+    }
+
+    /* Adjust page wrapper for mobile header */
+    .page-wrapper {
+        margin-left: 0;
+        padding-top: 56px;
+    }
+
+    /* Hide desktop navbar toggler */
+    .navbar-vertical .navbar-toggler {
+        display: none;
+    }
+
+    /* Make navbar collapse always visible in sidebar */
+    .navbar-vertical .navbar-collapse {
+        display: flex !important;
+    }
+}
+
+/* Desktop: hide mobile elements */
+@media (min-width: 992px) {
+
+    .mobile-header,
+    .mobile-overlay {
+        display: none !important;
+    }
+}
+
+/* == Utility Classes == */
+.text-truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.hover-shadow:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.transition-all {
+    transition: all 0.2s ease;
+}
+
+/* Inline spinner for icon buttons (e.g. address-object refresh) */
+@keyframes madmin-spin {
+    to { transform: rotate(360deg); }
+}
+.spin {
+    animation: madmin-spin 0.8s linear infinite;
+}
+/* == Firewall Standard view: drag & drop ==
+   Same palette as the Advanced view (.draggable-row.dragging / .drag-over),
+   plus a directional edge marking the exact insert position. */
+.fw-drag {
+    transition: background-color 0.15s ease;
+}
+.fw-drag.dragging,
+.fw-pair-group.dragging {
+    opacity: 0.5;
+    background: #e3f2fd !important;
+}
+tr.fw-drop-above,
+tr.fw-drop-below {
+    background: #d4edda !important;
+}
+tr.fw-drop-above > td {
+    box-shadow: inset 0 2px 0 0 #28a745;
+}
+tr.fw-drop-below > td {
+    box-shadow: inset 0 -2px 0 0 #28a745;
+}
+.fw-pair-group.fw-drop-above {
+    box-shadow: inset 0 3px 0 0 #28a745;
+}
+.fw-pair-group.fw-drop-below {
+    box-shadow: inset 0 -3px 0 0 #28a745;
+}
+.fw-pair-header[draggable="true"] {
+    cursor: grab;
+}
+.fw-pair-header[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+/* Firewall rule editor: wide side panel, form + "Select Entries" side by side */
+.fw-editor-oc.offcanvas-end {
+    width: min(1100px, 96vw);
+}
+@media (min-width: 992px) {
+    .fw-editor-oc .fw-editor-entries {
+        border-left: 1px solid var(--tblr-border-color);
+    }
+}
+.fw-editor-oc #ed-preview-lines {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Packet tracer: the rule it points to, highlighted in the list */
+@keyframes fw-row-flash {
+    0%, 60% { background-color: color-mix(in oklab, var(--tblr-primary) 18%, transparent); }
+    100% { background-color: transparent; }
+}
+tr.fw-row-flash > td {
+    animation: fw-row-flash 2.5s ease-out;
+}
+
+/* Traffic capture (tcpdump) */
+.fw-capture-oc.offcanvas-end {
+    width: min(1200px, 96vw);
+}
+.fw-capture-out {
+    min-height: 240px;
+    overflow: auto;
+    padding: .5rem .75rem;
+    font-family: var(--tblr-font-monospace);
+    font-size: .78rem;
+    line-height: 1.45;
+    white-space: pre;
+    background: var(--tblr-bg-surface-secondary);
+    border: 1px solid var(--tblr-border-color);
+    border-radius: var(--tblr-border-radius);
+}
+.fw-capture-search {
+    max-width: 320px;
+}

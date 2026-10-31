@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light" data-bs-theme-base="gray">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>MADMIN Hub - Login</title>
+
+    <!-- Tabler CSS (vendored: scripts/update-frontend-vendor.sh) -->
+    <link rel="stylesheet" href="/static/vendor/tabler-1.6.1/tabler.min.css">
+    <link rel="stylesheet" href="/static/vendor/tabler-1.6.1/tabler-themes.min.css">
+    <link rel="stylesheet" href="/static/vendor/tabler-icons-3.48.0/tabler-icons.min.css">
+
+    <style>
+        :root {
+            --tblr-primary: #206bc4;
+        }
+
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            background: linear-gradient(135deg, #1a1f2c 0%, #2d3748 100%);
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .login-logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--tblr-primary);
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .login-subtitle {
+            text-align: center;
+            color: #6c757d;
+            margin-bottom: 2rem;
+        }
+
+        .form-control:focus {
+            border-color: var(--tblr-primary);
+            box-shadow: 0 0 0 0.25rem rgba(32, 107, 196, 0.25);
+        }
+
+        .btn-primary {
+            background: var(--tblr-primary);
+            border-color: var(--tblr-primary);
+        }
+
+        .btn-primary:hover {
+            background: #1a5aad;
+            border-color: #1a5aad;
+        }
+
+        .alert {
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+    </style>
+</head>
+
+<body class="login-page">
+    <div class="container">
+        <div class="login-card card">
+            <div class="card-body p-4">
+                <div class="login-logo">
+                    <i class="ti ti-server-cog"></i> MADMIN Hub
+                </div>
+                <p class="login-subtitle">Modular Admin System</p>
+
+                <div id="login-alert" class="alert alert-danger">
+                    <span id="login-error"></span>
+                </div>
+
+                <!-- Login Form -->
+                <form id="login-form">
+                    <div class="mb-3">
+                        <label class="form-label" for="username">
+                            <i class="ti ti-user"></i> <span data-i18n="auth.username">Username</span>
+                        </label>
+                        <input type="text" class="form-control" id="username" name="username"
+                            data-i18n-placeholder="auth.usernamePlaceholder" placeholder="Enter username" required autofocus>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="password">
+                            <i class="ti ti-lock"></i> <span data-i18n="auth.password">Password</span>
+                        </label>
+                        <input type="password" class="form-control" id="password" name="password"
+                            data-i18n-placeholder="auth.passwordPlaceholder" placeholder="Enter password" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-check">
+                            <input type="checkbox" class="form-check-input" id="remember">
+                            <span class="form-check-label" data-i18n="auth.rememberMe">Remember me</span>
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100" id="login-btn">
+                        <span class="btn-text" data-i18n="auth.login">Sign in</span>
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                </form>
+
+                <!-- 2FA Verification Section (hidden by default) -->
+                <div id="2fa-section" class="d-none">
+                    <div class="text-center mb-3">
+                        <i class="ti ti-shield-lock" style="font-size: 3rem; color: var(--tblr-primary);"></i>
+                    </div>
+                    <p class="text-center mb-3" data-i18n="auth.enterOtp">
+                        Enter the 6-digit code from your authenticator app
+                    </p>
+                    <div class="mb-3">
+                        <input type="text" class="form-control form-control-lg text-center" id="otp-code"
+                            placeholder="000000" maxlength="12" autocomplete="one-time-code" pattern="[0-9A-Za-z]{6,12}"
+                            inputmode="numeric">
+                        <small class="form-hint text-center d-block mt-2" data-i18n="auth.backupCodeHint">
+                            You can also use a backup code
+                        </small>
+                    </div>
+                    <button type="button" class="btn btn-primary w-100 mb-2" id="verify-2fa-btn">
+                        <span class="btn-text" data-i18n="auth.verify">Verify</span>
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                    <button type="button" class="btn btn-link w-100" id="back-to-login">
+                        <i class="ti ti-arrow-left"></i> <span data-i18n="auth.backToLogin">Back to login</span>
+                    </button>
+                </div>
+
+                <!-- Forced Password Change Section (hidden by default) -->
+                <div id="pwd-change-section" class="d-none">
+                    <div class="text-center mb-3">
+                        <i class="ti ti-key" style="font-size: 3rem; color: var(--tblr-primary);"></i>
+                    </div>
+                    <p class="text-center mb-3" data-i18n="auth.passwordChangeRequired">
+                        You must set a new password before continuing
+                    </p>
+                    <div class="mb-3">
+                        <input type="password" class="form-control" id="new-password"
+                            data-i18n-placeholder="auth.newPassword" placeholder="New password" autocomplete="new-password">
+                        <!-- Tabler Strength, created once the translations are loaded (see initStrengthMeter) -->
+                        <div class="strength" id="new-password-strength">
+                            <div class="strength-segment"></div><div class="strength-segment"></div>
+                            <div class="strength-segment"></div><div class="strength-segment"></div>
+                        </div>
+                        <div class="strength-text"></div>
+                    </div>
+                    <div class="mb-2">
+                        <input type="password" class="form-control" id="new-password-confirm"
+                            data-i18n-placeholder="auth.confirmPassword" placeholder="Confirm new password" autocomplete="new-password">
+                    </div>
+                    <small class="form-hint d-block mb-3" data-i18n="auth.passwordHint">
+                        Min 8 chars, with an uppercase letter, a digit and a special character.
+                    </small>
+                    <button type="button" class="btn btn-primary w-100" id="set-password-btn">
+                        <span class="btn-text" data-i18n="auth.setPassword">Set password</span>
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                </div>
+
+                <!-- Enforced 2FA Enrollment Section (hidden by default) -->
+                <div id="2fa-setup-section" class="d-none">
+                    <div class="text-center mb-3">
+                        <i class="ti ti-shield-plus" style="font-size: 3rem; color: var(--tblr-primary);"></i>
+                    </div>
+                    <p class="text-center mb-3" data-i18n="auth.setup2faRequired">
+                        Your administrator requires two-factor authentication on this account
+                    </p>
+                    <p class="text-center text-muted small mb-3" data-i18n="auth.setup2faScan">
+                        Scan the QR code with your authenticator app, then enter the code it shows.
+                    </p>
+                    <div class="text-center mb-3">
+                        <img id="setup-qr-code" alt="QR" class="img-fluid border rounded"
+                            style="max-width: 200px; background: #fff; padding: 8px;">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small" data-i18n="auth.setup2faSecret">Or enter this key manually</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control font-monospace" id="setup-secret" readonly>
+                            <button type="button" class="btn btn-icon" data-bs-toggle="clipboard" data-bs-target="#setup-secret"
+                                data-i18n-title="common.copy" title="Copy">
+                                <span class="clipboard-label"><i class="ti ti-copy"></i></span>
+                                <span class="clipboard-feedback"><i class="ti ti-check text-success"></i></span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label small mb-0" data-i18n="auth.setup2faBackupCodes">Backup codes — save them now, they are shown only once</label>
+                            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-bs-toggle="clipboard"
+                                data-bs-target="#setup-backup-codes" data-i18n-title="common.copy" title="Copy">
+                                <span class="clipboard-label"><i class="ti ti-copy"></i></span>
+                                <span class="clipboard-feedback"><i class="ti ti-check text-success"></i></span>
+                            </button>
+                        </div>
+                        <div class="row g-1 border rounded p-2" id="setup-backup-codes"></div>
+                    </div>
+                    <div class="text-center mb-3">
+                        <div class="otp" data-bs-toggle="otp">
+                            <input type="text" id="setup-otp-code" maxlength="6" autocomplete="one-time-code">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary w-100 mb-2" id="complete-2fa-setup-btn">
+                        <span class="btn-text" data-i18n="auth.activate2fa">Activate 2FA</span>
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                    <button type="button" class="btn btn-link w-100" id="back-to-login-setup">
+                        <i class="ti ti-arrow-left"></i> <span data-i18n="auth.backToLogin">Back to login</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-center text-white-50 mt-4">
+            &copy;
+            <span id="copyright-year"></span> MADMIN Hub
+        </p>
+    </div>
+
+    <!-- Tabler JS (bundles Bootstrap) -->
+    <script src="/static/vendor/tabler-1.6.1/tabler.min.js"></script>
+    <script src="/static/js/login.js"></script>
+</body>
+
+</html>

@@ -182,10 +182,23 @@ def init(hosts: List[str], ips: List[str], force: bool = False) -> None:
 def issue_server_cert(hosts: List[str], ips: List[str]) -> None:
     if not hosts and not ips:
         raise PKIError("Serve almeno un hostname o un IP per il certificato del server")
+    # An address passed as --host must still be an IP SAN: TLS clients match an
+    # IP only against IP SANs, so a DNS SAN "10.0.0.5" fails verification.
+    names, addrs = [], []
+    for value in list(hosts) + list(ips):
+        try:
+            addr = ipaddress.ip_address(value)
+        except ValueError:
+            if value in ips:
+                raise PKIError(f"IP non valido: {value}")
+            names.append(value)
+        else:
+            if addr not in addrs:
+                addrs.append(addr)
     ca_cert, ca_key = _ca()
     now = datetime.now(timezone.utc)
     key = ec.generate_private_key(ec.SECP256R1())
-    sans = [x509.DNSName(h) for h in hosts] + [x509.IPAddress(ipaddress.ip_address(i)) for i in ips]
+    sans = [x509.DNSName(h) for h in names] + [x509.IPAddress(a) for a in addrs]
     cert = (
         x509.CertificateBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, (hosts or ips)[0])]))

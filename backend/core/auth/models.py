@@ -29,13 +29,14 @@ class Permission(SQLModel, table=True):
     Permission definition.
 
     Permissions are identified by a slug (e.g., "users.manage", "firewall.edit").
-    Core permissions have module_id=None. Module permissions reference their module.
+    The hub has no modules: module_id is always None (kept for parity with MADMIN,
+    without the foreign key to installed_module, a table that does not exist here).
     """
     __tablename__ = "permission"
 
     slug: str = Field(primary_key=True, max_length=100)
     description: str = Field(max_length=255)
-    module_id: Optional[str] = Field(default=None, foreign_key="installed_module.id", index=True)
+    module_id: Optional[str] = Field(default=None, max_length=100, index=True)
 
     # Relationships
     users: List["User"] = Relationship(back_populates="permissions", link_model=UserPermission)

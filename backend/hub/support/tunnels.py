@@ -100,8 +100,16 @@ async def _pump(ws: WebSocket, reader: asyncio.StreamReader, writer: asyncio.Str
 async def _serve_connection(listener: Listener, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter) -> None:
     peer = (writer.get_extra_info("peername") or ("",))[0]
-    if not _same_ip(peer, listener.allowed_ip) or len(listener.writers) >= MAX_CONNECTIONS_PER_SESSION \
-            or _listeners.get(listener.session_id) is not listener:
+    refused = None
+    if _listeners.get(listener.session_id) is not listener:
+        refused = "session closed"
+    elif not _same_ip(peer, listener.allowed_ip):
+        refused = f"source {peer} is not the allowed IP {listener.allowed_ip}"
+    elif len(listener.writers) >= MAX_CONNECTIONS_PER_SESSION:
+        refused = "too many connections"
+    if refused:
+        logger.warning("Support port %d (%s, instance %s): connection refused, %s",
+                       listener.port, listener.target, listener.instance_id, refused)
         writer.close()
         return
     listener.writers.add(writer)
@@ -109,18 +117,32 @@ async def _serve_connection(listener: Listener, reader: asyncio.StreamReader,
     pending = _Pending(listener.instance_id, asyncio.get_running_loop().create_future())
     _pending[conn_id] = pending
     ws = None
+    where = f"Tunnel {listener.target} on port {listener.port} (instance {listener.instance_id})"
     try:
-        fut = await send_ephemeral(listener.instance_id, protocol.CMD_TUNNEL_OPEN,
-                                   {"conn_id": conn_id, "target": listener.target},
-                                   operator=listener.operator, ttl=ATTACH_TIMEOUT)
-        result = await asyncio.wait_for(fut, ATTACH_TIMEOUT)
-        if not result.get("ok"):
-            logger.info("Tunnel %s refused by the instance: %s", listener.target, result.get("error"))
+        try:
+            fut = await send_ephemeral(listener.instance_id, protocol.CMD_TUNNEL_OPEN,
+                                       {"conn_id": conn_id, "target": listener.target},
+                                       operator=listener.operator, ttl=ATTACH_TIMEOUT)
+        except ConnectionError as e:
+            # Instance offline, or connected without the tunnel capability
+            logger.warning("%s not opened: %s", where, e)
             return
-        ws = await asyncio.wait_for(pending.attached, ATTACH_TIMEOUT)
+        try:
+            result = await asyncio.wait_for(fut, ATTACH_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning("%s: no answer to tunnel.open within %ds", where, ATTACH_TIMEOUT)
+            return
+        if not result.get("ok"):
+            logger.warning("%s refused by the instance: %s", where, result.get("error"))
+            return
+        try:
+            ws = await asyncio.wait_for(pending.attached, ATTACH_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning("%s: the instance did not open /agent/tunnel within %ds", where, ATTACH_TIMEOUT)
+            return
         await _pump(ws, reader, writer)
     except (ConnectionError, asyncio.TimeoutError, WebSocketDisconnect, OSError) as e:
-        logger.debug("Tunnel %s on port %d ended: %s", listener.target, listener.port, e)
+        logger.debug("%s ended: %s", where, e)
     finally:
         _pending.pop(conn_id, None)
         pending.finished.set()
@@ -132,6 +154,7 @@ async def attach_agent(ws: WebSocket, conn_id: str, instance_id: str) -> None:
     """The agent side of a tunnel (WSS /agent/tunnel/<conn_id>)."""
     pending = _pending.get(conn_id)
     if pending is None or pending.instance_id != instance_id or pending.attached.done():
+        logger.warning("Tunnel attach from instance %s refused: unknown, expired or used conn_id", instance_id)
         await ws.close(code=protocol.CLOSE_PROTOCOL)
         return
     await ws.accept()

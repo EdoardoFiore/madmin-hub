@@ -3,8 +3,11 @@ MADMIN <-> MADMIN Hub wire protocol.
 
 This file is kept IDENTICAL in both repositories (madmin: backend/core/hub/
 protocol.py, madmin-hub: backend/hub/agents/protocol.py); the specification
-is madmin-hub/docs/PROTOCOL.md. A change here bumps PROTOCOL_VERSION and is
-copied to the other side in the same change.
+is madmin-hub/docs/PROTOCOL.md. Any change is copied to the other side in
+the same change. PROTOCOL_VERSION is bumped only for incompatible changes
+(frame shape, existing commands): every frame carries it and a mismatch drops
+the connection. A new command is additive and needs no bump, since only agents
+that advertise it in hello.capabilities are ever sent it.
 
 Frames are JSON text messages on the control WebSocket:
 
@@ -51,6 +54,7 @@ CMD_SUPPORT_SSH_REVOKE = "support.ssh.revoke"
 CMD_TUNNEL_OPEN = "tunnel.open"
 CMD_LICENSE_INSTALL = "license.install"
 CMD_LICENSE_REVOKE = "license.revoke"
+CMD_STATS_HISTORY = "stats.history"   # read only: resource and traffic history
 
 # Symbolic tunnel targets: the agent maps them to local endpoints, the hub can
 # never name a host or port

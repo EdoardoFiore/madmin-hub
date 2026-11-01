@@ -82,7 +82,14 @@ class Registry:
         if fut is None or fut.done():
             fut = asyncio.get_running_loop().create_future()
             self._waiters[cmd_id] = fut
+            # A caller that gives up (wait_for timeout cancels the future) must
+            # not leave the entry behind until a result that may never come
+            fut.add_done_callback(lambda f, k=cmd_id: self._forget(k, f))
         return fut
+
+    def _forget(self, cmd_id: str, fut: asyncio.Future) -> None:
+        if self._waiters.get(cmd_id) is fut:
+            del self._waiters[cmd_id]
 
     def resolve(self, cmd_id: str, payload: dict) -> None:
         fut = self._waiters.pop(cmd_id, None)

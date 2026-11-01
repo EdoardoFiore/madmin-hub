@@ -2,7 +2,7 @@
 
 `protocol.py` is identical in both repositories:
 `madmin/backend/core/hub/protocol.py` and `madmin-hub/backend/hub/agents/protocol.py`.
-Any change bumps `PROTOCOL_VERSION`, updates this document and is copied to the other side in the same change.
+Any change updates this document and is copied to the other side in the same change. `PROTOCOL_VERSION` is bumped only for incompatible changes (frame shape, existing commands): every frame carries it and a mismatch drops the connection. A new command is additive and needs no bump: the hub sends it only to agents that list it in `hello.capabilities`.
 
 ## Transport and identity
 
@@ -109,6 +109,7 @@ The hub persists commands with these states: queued → sent → done | failed |
 | `tunnel.open` | `conn_id`, `target` `ui`\|`ssh` | – (not persisted, not audited) |
 | `license.install` | `token` | `license_id`, `feature`, `exp` |
 | `license.revoke` | `license_id` | `removed` |
+| `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
 
 Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}.
 

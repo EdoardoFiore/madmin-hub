@@ -145,6 +145,7 @@ function groupsModal() {
 // ============== DETAIL ==============
 
 async function renderDetail(container, id, tab) {
+    destroyCharts();
     current = await apiGet(`/instances/${encodeURIComponent(id)}`);
     const i = current;
     const tabs = TABS.filter(([, , perm]) => checkPermission(perm));
@@ -201,6 +202,19 @@ async function overview(el, i) {
         <td>${(n.ipv4 || []).map(escapeHtml).join('<br>') || '-'}</td><td>${escapeHtml(n.mac || '-')}</td>
         <td>${n.is_up ? 'up' : 'down'}</td></tr>`).join('');
     el.innerHTML = `
+        <div class="card-body border-bottom">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <h4 class="mb-0 flex-fill"><i class="ti ti-chart-line me-2"></i>Risorse e traffico</h4>
+                <select class="form-select form-select-sm d-none" id="ov-iface" style="width: auto; min-width: 120px;"
+                        aria-label="Interfaccia"></select>
+                <div class="btn-group" role="group" aria-label="Periodo">
+                    ${[1, 6, 24].map(h => `
+                        <input type="radio" class="btn-check" name="ov-range" id="ov-range-${h}" value="${h}" ${h === statsHours ? 'checked' : ''}>
+                        <label class="btn btn-sm" for="ov-range-${h}">${h}h</label>`).join('')}
+                </div>
+            </div>
+            <div id="ov-charts">${loadingSpinner()}</div>
+        </div>
         <div class="card-body">
             <div class="row g-4">
                 <div class="col-lg-6">${kv([
@@ -217,7 +231,7 @@ async function overview(el, i) {
                     ['Ultimo contatto', `${fmtDate(i.last_seen_at)} (${relTime(i.last_seen_at)})`],
                     ['Registrata', fmtDate(i.enrolled_at)],
                     ['Certificato fino al', fmtDate(i.certificate_expires_at)],
-                    ['CPU / RAM / disco', st.cpu_percent !== undefined ? `${st.cpu_percent}% / ${st.mem_percent}% / ${st.disk_percent}%` : '-'],
+                    ['Ultimi CPU / RAM / disco', st.cpu_percent !== undefined ? `${st.cpu_percent}% / ${st.mem_percent}% / ${st.disk_percent}%` : '-'],
                     ['Gruppo', escapeHtml(groupPath(groups, i.group_id) || 'sito principale')],
                     ['Riferimento esterno', `<span class="font-monospace">${escapeHtml(i.external_ref || '-')}</span>`],
                     ['Backup pianificati', i.backup_enabled ? 'sì' : 'no'],
@@ -235,6 +249,170 @@ async function overview(el, i) {
                 <div class="table-responsive"><table class="table card-table"><thead><tr><th>Nome</th><th>IPv4</th><th>MAC</th><th></th></tr></thead><tbody>${ifaces}</tbody></table></div>
             </div>
         </div>`;
+
+    el.querySelectorAll('input[name="ov-range"]').forEach(r => r.addEventListener('change', () => {
+        statsHours = Number(r.value);
+        loadStats(i);
+    }));
+    el.querySelector('#ov-iface').addEventListener('change', (e) => {
+        statsIface = e.target.value;
+        renderNetChart();
+    });
+    loadStats(i);  // not awaited: the rest of the page is already usable
+}
+
+// ============== RESOURCE AND TRAFFIC GRAPHS (overview) ==============
+// The instance keeps 24 h of samples (one a minute); the hub asks for them
+// when the page opens (GET /instances/<id>/stats) and stores nothing.
+
+let statsHours = 1;
+let statsIface = '';
+let statsData = null;
+let statsRequest = 0;
+let charts = [];
+let netChart = null;
+
+const STATS_UNAVAILABLE = {
+    offline: ['ti-plug-connected-x', 'Istanza offline: lo storico è disponibile quando l\'istanza è connessa.'],
+    unsupported: ['ti-alert-triangle', 'La versione di MADMIN dell\'istanza non fornisce lo storico delle risorse: aggiornarla.'],
+    timeout: ['ti-clock', 'L\'istanza non ha risposto in tempo.'],
+    error: ['ti-alert-circle', 'L\'istanza non ha potuto fornire lo storico.'],
+};
+
+function destroyCharts() {
+    charts.forEach(c => c.destroy());
+    charts = [];
+    if (netChart) { netChart.destroy(); netChart = null; }
+}
+
+function hhmm(iso) {
+    const d = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z');  // naive UTC from the instance
+    return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+}
+
+function areaOptions(series, colors, categories, height, yaxis, tooltip) {
+    return {
+        series,
+        chart: { type: 'area', height, animations: { enabled: false }, toolbar: { show: false }, zoom: { enabled: false } },
+        dataLabels: { enabled: false },
+        stroke: { curve: 'smooth', width: 2 },
+        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.1 } },
+        colors,
+        legend: { show: series.length > 1, position: 'top', horizontalAlign: 'right' },
+        xaxis: { categories, labels: { show: false }, axisBorder: { show: false }, axisTicks: { show: false },
+                 tooltip: { enabled: false } },
+        yaxis,
+        tooltip,
+        grid: { show: true, borderColor: '#e0e0e0', strokeDashArray: 3, padding: { left: 5, right: 5 } },
+    };
+}
+
+async function loadStats(i) {
+    const box = document.getElementById('ov-charts');
+    if (!box) return;
+    const request = ++statsRequest;
+    box.innerHTML = loadingSpinner();
+    let data;
+    try {
+        data = await apiGet(`/instances/${i.id}/stats?hours=${statsHours}`);
+    } catch (e) {
+        data = { available: false, reason: 'error', error: e.message };
+    }
+    // Another range was chosen meanwhile, or the page was left
+    if (request !== statsRequest || !document.body.contains(box)) return;
+    destroyCharts();
+    statsData = data;
+    const ifaceSelect = document.getElementById('ov-iface');
+
+    if (!data.available) {
+        const [icon, text] = STATS_UNAVAILABLE[data.reason] || STATS_UNAVAILABLE.error;
+        ifaceSelect.classList.add('d-none');
+        box.innerHTML = `
+            <div class="text-muted text-center py-4">
+                <i class="ti ${icon} me-1"></i>${escapeHtml(text)}
+                ${data.error ? `<div class="small mt-1">${escapeHtml(data.error)}</div>` : ''}
+                ${data.reason === 'timeout' || data.reason === 'error'
+                    ? `<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-primary" id="ov-retry">
+                        <i class="ti ti-refresh me-1"></i>Riprova</button></div>` : ''}
+            </div>`;
+        box.querySelector('#ov-retry')?.addEventListener('click', () => loadStats(i));
+        return;
+    }
+
+    const sys = data.system || { t: [] };
+    const ifaces = Object.keys(data.network || {});
+    if (!ifaces.includes(statsIface)) statsIface = ifaces[0] || '';
+    ifaceSelect.innerHTML = ifaces.map(n =>
+        `<option value="${escapeHtml(n)}" ${n === statsIface ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+    ifaceSelect.classList.toggle('d-none', ifaces.length === 0);
+
+    if (!sys.t.length) {
+        box.innerHTML = `<div class="text-muted text-center py-4"><i class="ti ti-clock me-1"></i>
+            Dati non ancora disponibili: l'istanza raccoglie un campione al minuto.</div>`;
+        return;
+    }
+
+    const last = (arr) => arr.length ? arr[arr.length - 1] : 0;
+    const total = (bytes) => bytes ? ` · ${formatBytes(bytes)}` : '';
+    box.innerHTML = `
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="subheader d-flex">CPU<span class="ms-auto text-body">${last(sys.cpu)}%</span></div>
+                <div id="ov-chart-cpu"></div>
+            </div>
+            <div class="col-md-4">
+                <div class="subheader d-flex">RAM${total(sys.ram_total)}<span class="ms-auto text-body">${last(sys.ram)}%</span></div>
+                <div id="ov-chart-ram"></div>
+            </div>
+            <div class="col-md-4">
+                <div class="subheader d-flex">Disco${total(sys.disk_total)}<span class="ms-auto text-body">${last(sys.disk)}%</span></div>
+                <div id="ov-chart-disk"></div>
+            </div>
+            <div class="col-12">
+                <div class="subheader d-flex">Traffico di rete<span class="ms-auto text-body" id="ov-net-last"></span></div>
+                <div id="ov-chart-net"></div>
+            </div>
+        </div>`;
+
+    const cats = sys.t.map(hhmm);
+    const pct = { min: 0, max: 100, tickAmount: 4, labels: { formatter: v => `${Math.round(v)}%` } };
+    const pctTip = { y: { formatter: v => `${Number(v).toFixed(1)}%` } };
+    for (const [id, key, name, color] of [['ov-chart-cpu', 'cpu', 'CPU', '#206bc4'],
+                                          ['ov-chart-ram', 'ram', 'RAM', '#2fb344'],
+                                          ['ov-chart-disk', 'disk', 'Disco', '#f76707']]) {
+        const chart = new ApexCharts(document.getElementById(id),
+            areaOptions([{ name, data: sys[key] }], [color], cats, 140, pct, pctTip));
+        chart.render();
+        charts.push(chart);
+    }
+    renderNetChart();
+}
+
+/** Traffic of the selected interface, bytes/s shown as Mb/s (Kb/s when small), as in MADMIN. */
+function renderNetChart() {
+    const box = document.getElementById('ov-chart-net');
+    if (!box || !statsData?.available) return;
+    if (netChart) { netChart.destroy(); netChart = null; }
+    const series = (statsData.network || {})[statsIface];
+    const lastEl = document.getElementById('ov-net-last');
+    if (!series || !series.t.length) {
+        box.innerHTML = '<div class="text-muted text-center py-4">Nessun dato di traffico per questa interfaccia.</div>';
+        if (lastEl) lastEl.textContent = '';
+        return;
+    }
+    box.innerHTML = '';
+    const mbit = v => (v * 8) / 1_000_000;
+    const max = Math.max(...series.tx.map(mbit), ...series.rx.map(mbit));
+    const [unit, scale] = max < 0.01 ? ['Kb/s', 1000] : ['Mb/s', 1];
+    const conv = arr => arr.map(v => Number((mbit(v) * scale).toFixed(3)));
+    const tx = conv(series.tx), rx = conv(series.rx);
+    netChart = new ApexCharts(box, areaOptions(
+        [{ name: 'TX', data: tx }, { name: 'RX', data: rx }], ['#f76707', '#206bc4'],
+        series.t.map(hhmm), 200,
+        { min: 0, tickAmount: 4, labels: { formatter: v => `${Number(v).toFixed(v < 10 ? 1 : 0)} ${unit}` } },
+        { y: { formatter: v => `${Number(v).toFixed(2)} ${unit}` } }));
+    netChart.render();
+    if (lastEl) lastEl.textContent = `TX ${tx[tx.length - 1]} · RX ${rx[rx.length - 1]} ${unit}`;
 }
 
 async function addresses(el, i) {

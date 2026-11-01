@@ -5,6 +5,7 @@ Everything is limited to the caller's scope (hub.scope): an instance out of
 it answers 404. Revoking and deleting instances, and the groups themselves,
 are hub operations (superuser, rw).
 """
+import asyncio
 import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -20,7 +21,7 @@ from core.auth.models import User
 from core.database import get_session
 
 from hub.agents import protocol
-from hub.agents.dispatcher import run_command
+from hub.agents.dispatcher import run_command, send_ephemeral
 from hub.agents.registry import registry
 from hub.models import (AgentCertificate, Backup, Command, EnrollmentToken, Instance,
                         InstanceAddress, InstanceGroup, License, SupportSession)
@@ -208,6 +209,39 @@ async def refresh_instance(instance_id: str, session: AsyncSession = Depends(get
         session.add(instance)
         await session.commit()
     return instance_out(instance, detail=True)
+
+
+STATS_TIMEOUT = 20
+
+
+@router.get("/instances/{instance_id}/stats")
+async def stats_history(instance_id: str, hours: int = Query(default=1, ge=1, le=24),
+                        session: AsyncSession = Depends(get_session),
+                        user: User = Depends(require_permission("scope.view"))):
+    """
+    CPU, RAM, disk and per-interface traffic of the last `hours`, asked to the
+    instance (it keeps 24 hours, one sample a minute). Read only and not stored:
+    an ephemeral command, so opening the page does not fill the command log.
+    When the history cannot be had, `available` is false and `reason` says why
+    (offline | unsupported | timeout | error) for the page to explain.
+    """
+    instance = await get_instance_or_404(session, instance_id, user)
+    conn = registry.get(instance.id)
+    if conn is None:
+        return {"available": False, "reason": "offline"}
+    if protocol.CMD_STATS_HISTORY not in conn.capabilities:
+        return {"available": False, "reason": "unsupported"}
+    try:
+        fut = await send_ephemeral(instance.id, protocol.CMD_STATS_HISTORY, {"hours": hours},
+                                   operator=user.username, ttl=STATS_TIMEOUT)
+        result = await asyncio.wait_for(fut, STATS_TIMEOUT)
+    except ConnectionError:
+        return {"available": False, "reason": "offline"}
+    except asyncio.TimeoutError:
+        return {"available": False, "reason": "timeout"}
+    if not result.get("ok"):
+        return {"available": False, "reason": "error", "error": str(result.get("error", ""))[:300]}
+    return {"available": True, **(result.get("data") or {})}
 
 
 @router.post("/instances/{instance_id}/revoke")

@@ -63,7 +63,7 @@ async def init_db() -> None:
     """
     async with engine.begin() as conn:
         # Import all models to ensure they're registered
-        from core.auth.models import User, Permission, UserPermission, LoginAttempt  # noqa: F401
+        from core.auth.models import User, LoginAttempt  # noqa: F401
         from core.settings.models import SystemSettings  # noqa: F401
         from core.audit.models import AuditLog  # noqa: F401
         import hub.models  # noqa: F401

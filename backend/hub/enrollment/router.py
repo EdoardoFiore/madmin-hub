@@ -39,7 +39,7 @@ def token_out(t: EnrollmentToken) -> dict:
 
 @router.get("/info")
 async def info(session: AsyncSession = Depends(get_session),
-               user: User = Depends(require_permission("enrollment.manage"))):
+               user: User = Depends(require_permission("hub.view"))):
     initialized = pki.is_initialized()
     s = await get_system_settings(session)
     return {
@@ -52,7 +52,7 @@ async def info(session: AsyncSession = Depends(get_session),
 
 @router.get("/tokens")
 async def list_tokens(session: AsyncSession = Depends(get_session),
-                      user: User = Depends(require_permission("enrollment.manage"))):
+                      user: User = Depends(require_permission("hub.view"))):
     rows = (await session.execute(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()))).scalars().all()
     return [token_out(t) for t in rows]
 
@@ -73,7 +73,7 @@ class TokenCreate(RegistrationFields):
 
 @router.post("/tokens", status_code=201)
 async def new_token(body: TokenCreate, session: AsyncSession = Depends(get_session),
-                    user: User = Depends(require_permission("enrollment.manage"))):
+                    user: User = Depends(require_permission("hub.manage"))):
     await check_group(session, body.group_id)
     fields = RegistrationFields(**body.model_dump(include={"name", "group_id", "labels", "external_ref"}))
     return await create_token(session, user.username, body.description, body.hours, body.max_uses,
@@ -82,7 +82,7 @@ async def new_token(body: TokenCreate, session: AsyncSession = Depends(get_sessi
 
 @router.post("/tokens/{token_id}/revoke")
 async def revoke_token(token_id: str, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("enrollment.manage"))):
+                       user: User = Depends(require_permission("hub.manage"))):
     t = await session.get(EnrollmentToken, token_id)
     if t is None:
         raise HTTPException(404, "Token non trovato")
@@ -94,7 +94,7 @@ async def revoke_token(token_id: str, session: AsyncSession = Depends(get_sessio
 
 @router.post("/instances/{instance_id}/reenroll")
 async def reenroll_token(instance_id: str, session: AsyncSession = Depends(get_session),
-                         user: User = Depends(require_permission("enrollment.manage"))):
+                         user: User = Depends(require_permission("hub.manage"))):
     """Single-use token that keeps the instance identity (reinstall / upgrade)."""
     instance = await session.get(Instance, instance_id)
     if instance is None:
@@ -126,7 +126,7 @@ def request_out(r: EnrollmentRequest, matches: list) -> dict:
 @router.get("/requests")
 async def list_requests(status: Optional[str] = Query(default="pending", max_length=10),
                         session: AsyncSession = Depends(get_session),
-                        user: User = Depends(require_permission("enrollment.manage"))):
+                        user: User = Depends(require_permission("hub.view"))):
     await reg_requests.expire_old(session)
     query = select(EnrollmentRequest).order_by(EnrollmentRequest.created_at.desc()).limit(200)
     if status:
@@ -150,7 +150,7 @@ class Approval(RegistrationFields):
 
 @router.post("/requests/{request_id}/approve")
 async def approve_request(request_id: str, body: Approval, session: AsyncSession = Depends(get_session),
-                          user: User = Depends(require_permission("enrollment.manage"))):
+                          user: User = Depends(require_permission("hub.manage"))):
     await check_group(session, body.group_id)
     fields = RegistrationFields(**body.model_dump(include={"name", "group_id", "labels", "external_ref"}))
     instance = await reg_requests.approve(session, request_id, fields, body.reenroll_instance_id, user.username)
@@ -159,6 +159,6 @@ async def approve_request(request_id: str, body: Approval, session: AsyncSession
 
 @router.post("/requests/{request_id}/reject")
 async def reject_request(request_id: str, session: AsyncSession = Depends(get_session),
-                         user: User = Depends(require_permission("enrollment.manage"))):
+                         user: User = Depends(require_permission("hub.manage"))):
     await reg_requests.reject(session, request_id, user.username)
     return {}

@@ -1,5 +1,6 @@
 """
-Instance backups (UI).
+Instance backups (UI). Limited to the caller's scope: listing them needs
+scope.view; running, downloading, deleting and restoring need scope.manage.
 """
 import os
 from datetime import timedelta
@@ -23,9 +24,22 @@ from .service import apply_retention, backup_file, delete_backup
 router = APIRouter(prefix="/api", tags=["Backups"])
 
 
+async def _backup_or_404(session, backup_id: str, user: User):
+    """The backup and its instance, or 404 when either is missing or out of scope."""
+    backup = await session.get(Backup, backup_id)
+    if backup is None:
+        raise HTTPException(404, "Backup non trovato")
+    try:
+        instance = await get_instance_or_404(session, backup.instance_id, user)
+    except HTTPException:
+        raise HTTPException(404, "Backup non trovato")
+    return backup, instance
+
+
 @router.get("/instances/{instance_id}/backups")
 async def list_backups(instance_id: str, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("backups.view"))):
+                       user: User = Depends(require_permission("scope.view"))):
+    await get_instance_or_404(session, instance_id, user)
     rows = (await session.execute(
         select(Backup).where(Backup.instance_id == instance_id).order_by(Backup.created_at.desc())
     )).scalars().all()
@@ -34,8 +48,8 @@ async def list_backups(instance_id: str, session: AsyncSession = Depends(get_ses
 
 @router.post("/instances/{instance_id}/backups", status_code=202)
 async def run_backup(instance_id: str, session: AsyncSession = Depends(get_session),
-                     user: User = Depends(require_permission("backups.manage"))):
-    instance = await get_instance_or_404(session, instance_id)
+                     user: User = Depends(require_permission("scope.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
     if instance.status != "active":
         raise HTTPException(409, "Istanza non attiva")
     check_capability(instance.id, protocol.CMD_BACKUP_RUN)
@@ -46,9 +60,9 @@ async def run_backup(instance_id: str, session: AsyncSession = Depends(get_sessi
 
 @router.get("/backups/{backup_id}/download")
 async def download(backup_id: str, session: AsyncSession = Depends(get_session),
-                   user: User = Depends(require_permission("backups.manage"))):
-    backup = await session.get(Backup, backup_id)
-    if backup is None or not os.path.exists(backup_file(backup)):
+                   user: User = Depends(require_permission("scope.manage"))):
+    backup, _ = await _backup_or_404(session, backup_id, user)
+    if not os.path.exists(backup_file(backup)):
         raise HTTPException(404, "Backup non trovato")
     # Encrypted with the instance passphrase: usable only by a restore
     name = backup.archive_name or f"{backup.id}.tar.gz.enc"
@@ -57,10 +71,8 @@ async def download(backup_id: str, session: AsyncSession = Depends(get_session),
 
 @router.delete("/backups/{backup_id}", status_code=204)
 async def remove(backup_id: str, session: AsyncSession = Depends(get_session),
-                 user: User = Depends(require_permission("backups.manage"))):
-    backup = await session.get(Backup, backup_id)
-    if backup is None:
-        raise HTTPException(404, "Backup non trovato")
+                 user: User = Depends(require_permission("scope.manage"))):
+    backup, _ = await _backup_or_404(session, backup_id, user)
     await delete_backup(session, backup)
     await session.commit()
 
@@ -72,11 +84,8 @@ class RestoreRequest(BaseModel):
 
 @router.post("/backups/{backup_id}/restore", status_code=202)
 async def restore(backup_id: str, body: RestoreRequest, session: AsyncSession = Depends(get_session),
-                  user: User = Depends(require_permission("backups.restore"))):
-    backup = await session.get(Backup, backup_id)
-    if backup is None:
-        raise HTTPException(404, "Backup non trovato")
-    instance = await get_instance_or_404(session, backup.instance_id)
+                  user: User = Depends(require_permission("scope.manage"))):
+    backup, instance = await _backup_or_404(session, backup_id, user)
     if body.confirm_name != instance.name:
         raise HTTPException(400, "Il nome di conferma non corrisponde al nome dell'istanza")
     if instance.status != "active":

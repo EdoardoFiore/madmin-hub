@@ -4,11 +4,12 @@
  */
 import { apiGet, apiPost } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions, loadingSpinner } from '../utils.js';
-import { setPageActions, getUser } from '../app.js';
+import { setPageActions, checkPermission } from '../app.js';
 import { fmtDate, formModal, secretModal, copyBlock, enrollTokenHelp, formData, groupPath, labelBadges,
          registrationFieldsHtml, registrationFieldsValue } from './hub-common.js';
 
 let containerEl = null;
+let manage = false;
 let groups = [];
 let tab = 'tokens';
 let requests = [];
@@ -18,13 +19,13 @@ const TABS = [['tokens', 'Token'], ['requests', 'In attesa'], ['apikeys', 'Chiav
 export async function render(container, params = []) {
     containerEl = container;
     tab = TABS.some(([t]) => t === params[0]) ? params[0] : 'tokens';
-    const superuser = !!getUser()?.is_superuser;
-    const tabs = TABS.filter(([t]) => t !== 'apikeys' || superuser);
-    if (!tabs.some(([t]) => t === tab)) tab = 'tokens';
+    // The page needs hub.view; changing anything needs hub.manage (superuser rw)
+    manage = checkPermission('hub.manage');
+    const tabs = TABS;
 
     const actions = { tokens: `<button class="btn btn-primary" ${actionAttrs('hubTokenNew')}><i class="ti ti-plus me-1"></i>Nuovo token</button>`,
                       apikeys: `<button class="btn btn-primary" ${actionAttrs('hubKeyNew')}><i class="ti ti-plus me-1"></i>Nuova chiave API</button>` };
-    setPageActions(actions[tab] || '');
+    setPageActions(manage ? (actions[tab] || '') : '');
 
     const [info, g] = await Promise.all([apiGet('/enrollment/info'), apiGet('/groups').catch(() => [])]);
     groups = g;
@@ -70,7 +71,7 @@ async function renderTokens(el) {
                 ${labelBadges(t.labels)}</td>
             <td>${t.reenroll_instance_id ? `<a href="#instances/${escapeHtml(t.reenroll_instance_id)}">re-enroll</a>` : 'nuova istanza'}</td>
             <td>${t.valid ? '<span class="badge bg-success-lt">valido</span>' : '<span class="badge bg-secondary-lt">non valido</span>'}</td>
-            <td class="text-end">${t.valid ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubTokenRevoke', t.id)}>Revoca</button>` : ''}</td>
+            <td class="text-end">${t.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubTokenRevoke', t.id)}>Revoca</button>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="text-muted">Nessun token</td></tr>'}
         </tbody></table></div>`;
 }
@@ -118,10 +119,10 @@ async function renderRequests(el) {
             <td class="font-monospace small">${escapeHtml(r.key_fingerprint.slice(0, 32))}…</td>
             <td>${r.ca_pinned ? '<span class="badge bg-success-lt">sì</span>' : '<span class="badge bg-warning-lt">primo contatto</span>'}</td>
             <td>${fmtDate(r.created_at)}<div class="small text-muted">scade ${fmtDate(r.expires_at)}</div></td>
-            <td class="text-end"><div class="btn-list justify-content-end">
+            <td class="text-end">${manage ? `<div class="btn-list justify-content-end">
                 <button class="btn btn-sm btn-primary" ${actionAttrs('hubRequestApprove', r.id)}>Approva</button>
                 <button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubRequestReject', r.id)}>Rifiuta</button>
-            </div></td>
+            </div>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Nessuna richiesta in attesa</td></tr>'}
         </tbody></table></div>`;
 }
@@ -171,7 +172,7 @@ async function renderKeys(el) {
             <td>${k.expires_at ? fmtDate(k.expires_at) : 'mai'}</td>
             <td>${fmtDate(k.last_used_at)}<div class="small text-muted">${escapeHtml(k.last_used_ip || '')}</div></td>
             <td>${k.valid ? '<span class="badge bg-success-lt">attiva</span>' : '<span class="badge bg-secondary-lt">non valida</span>'}</td>
-            <td class="text-end">${k.valid ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubKeyRevoke', k.id)}>Revoca</button>` : ''}</td>
+            <td class="text-end">${k.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubKeyRevoke', k.id)}>Revoca</button>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="text-muted">Nessuna chiave</td></tr>'}
         </tbody></table></div>`;
 }

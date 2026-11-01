@@ -4,7 +4,7 @@ MADMIN Authentication Dependencies
 FastAPI dependencies for authentication and authorization.
 Use these in route handlers to protect endpoints.
 """
-from typing import Optional, List, Callable
+from typing import Callable
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,11 +131,15 @@ async def get_current_active_user(
 
 def require_permission(permission_slug: str) -> Callable:
     """
-    Dependency factory that requires a specific permission.
-    
+    Dependency factory that requires a capability (core.auth.models.CAPABILITIES),
+    derived from the user's role and access level.
+
+    It says nothing about *which* instances or users: routes in the scope
+    (scope.*, users.*) must also filter with hub.scope.
+
     Usage:
         @router.get("/protected")
-        async def protected_route(user: User = Depends(require_permission("users.manage"))):
+        async def protected_route(user: User = Depends(require_permission("hub.manage"))):
             ...
     """
     async def permission_checker(
@@ -147,79 +151,5 @@ def require_permission(permission_slug: str) -> Callable:
                 detail=f"Permission denied. Required: {permission_slug}"
             )
         return current_user
-    
-    return permission_checker
-
-
-def require_any_permission(permission_slugs: List[str]) -> Callable:
-    """
-    Dependency factory that requires any of the specified permissions.
-    
-    Usage:
-        @router.get("/protected")
-        async def protected_route(
-            user: User = Depends(require_any_permission(["users.view", "users.manage"]))
-        ):
-            ...
-    """
-    async def permission_checker(
-        current_user: User = Depends(get_current_user)
-    ) -> User:
-        if not current_user.has_any_permission(permission_slugs):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied. Required one of: {', '.join(permission_slugs)}"
-            )
-        return current_user
-    
-    return permission_checker
-
-
-def require_all_permissions(permission_slugs: List[str]) -> Callable:
-    """
-    Dependency factory that requires ALL of the specified permissions.
-
-    Used where a capability is a modifier of another one rather than a standalone
-    grant — e.g. editing a user's permissions requires both managing users and
-    managing permissions.
-
-    Usage:
-        @router.put("/protected")
-        async def protected_route(
-            user: User = Depends(require_all_permissions(["users.manage", "permissions.manage"]))
-        ):
-            ...
-    """
-    async def permission_checker(
-        current_user: User = Depends(get_current_user)
-    ) -> User:
-        if not current_user.has_all_permissions(permission_slugs):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied. Required all of: {', '.join(permission_slugs)}"
-            )
-        return current_user
 
     return permission_checker
-
-
-def require_superuser() -> Callable:
-    """
-    Dependency factory that requires superuser status.
-    
-    Usage:
-        @router.delete("/dangerous")
-        async def dangerous_route(user: User = Depends(require_superuser())):
-            ...
-    """
-    async def superuser_checker(
-        current_user: User = Depends(get_current_user)
-    ) -> User:
-        if not current_user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Superuser access required"
-            )
-        return current_user
-    
-    return superuser_checker

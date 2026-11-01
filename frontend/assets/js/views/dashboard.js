@@ -35,7 +35,9 @@ async function load(container) {
             ${card('Istanze attive', d.active)}
             ${card('Online', d.online, 'text-success')}
             ${card('Offline', d.active - d.online, d.active - d.online ? 'text-danger' : '')}
-            ${card('Sessioni di supporto aperte', d.open_support_sessions, d.open_support_sessions ? 'text-warning' : '')}
+            ${d.open_support_sessions !== undefined   // superusers only
+                ? card('Sessioni di supporto aperte', d.open_support_sessions, d.open_support_sessions ? 'text-warning' : '')
+                : card('Revocate / dismesse', d.revoked)}
             <div class="col-lg-4">
                 <div class="card">
                     <div class="card-header"><h3 class="card-title">Versioni MADMIN</h3></div>

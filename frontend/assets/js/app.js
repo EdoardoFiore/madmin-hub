@@ -558,35 +558,17 @@ function createMenuItem(item) {
 }
 
 /**
- * Slugs the user holds, plus the ones they imply.
- *
- * Mirrors User.effective_permission_slugs on the backend: managing an area
- * necessarily means seeing it, so `<area>.manage` implies `<area>.view`.
- * The permission editor deliberately reads the raw list instead, so saving
- * never persists an implied slug.
- */
-function effectivePermissions() {
-    const granted = currentUser?.permissions || [];
-    const implied = granted
-        .filter(p => p.endsWith('.manage'))
-        .map(p => p.replace(/\.manage$/, '.view'));
-    return new Set([...granted, ...implied]);
-}
-
-/**
- * Check if current user has a permission.
+ * Check if the current user has a capability (scope.view, scope.manage,
+ * users.view, users.manage, hub.view, hub.manage). The server derives them
+ * from role and access level and sends them in /me as `permissions`.
  * Accepts a slug, or an array of slugs meaning "any of these".
  */
 function hasPermission(permission) {
-    if (!currentUser) return false;
-    if (currentUser.is_superuser) return true;
-    if (currentUser.permissions.includes('*')) return true;
-
-    const held = effectivePermissions();
+    const held = currentUser?.permissions || [];
     if (Array.isArray(permission)) {
-        return permission.some(p => held.has(p));
+        return permission.some(p => held.includes(p));
     }
-    return held.has(permission);
+    return held.includes(permission);
 }
 
 // route name -> permission, built from the menu the server sends. Lets handleRoute

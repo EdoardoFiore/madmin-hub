@@ -1,5 +1,9 @@
 """
 Instances API (UI): inventory, address history, commands, groups, dashboard.
+
+Everything is limited to the caller's scope (hub.scope): an instance out of
+it answers 404. Revoking and deleting instances, and the groups themselves,
+are hub operations (superuser, rw).
 """
 import json
 from datetime import datetime, timedelta
@@ -11,7 +15,7 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from core.auth.dependencies import get_current_user, require_permission
+from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import get_session
 
@@ -20,7 +24,7 @@ from hub.agents.dispatcher import run_command
 from hub.agents.registry import registry
 from hub.models import (AgentCertificate, Backup, Command, EnrollmentToken, Instance,
                         InstanceAddress, InstanceGroup, License, SupportSession)
-from hub import groups as hub_groups
+from hub import groups as hub_groups, scope
 from hub.registration import check_external_ref, check_labels, instance_by_ref
 from .service import apply_facts, clone_suspects, revoke_instance
 
@@ -53,41 +57,46 @@ def instance_out(i: Instance, detail: bool = False) -> dict:
     return out
 
 
-async def get_instance_or_404(session, instance_id: str) -> Instance:
-    instance = await session.get(Instance, instance_id)
-    if instance is None:
-        raise HTTPException(404, "Istanza non trovata")
-    return instance
+async def get_instance_or_404(session, instance_id: str, user: User) -> Instance:
+    """The instance if it is in the user's scope, else 404."""
+    return await scope.get_instance(session, user, instance_id)
 
 
 @router.get("/dashboard")
 async def dashboard(session: AsyncSession = Depends(get_session),
-                    user: User = Depends(require_permission("instances.view"))):
-    rows = (await session.execute(select(Instance))).scalars().all()
+                    user: User = Depends(require_permission("scope.view"))):
+    ids = await scope.group_ids(session, user)
+    rows = (await session.execute(scope.filter_instances(select(Instance), ids))).scalars().all()
     online = registry.online_ids()
     versions: dict = {}
     for i in rows:
         if i.status == "active":
             versions[i.madmin_version or "?"] = versions.get(i.madmin_version or "?", 0) + 1
-    open_sessions = (await session.execute(
-        select(func.count()).select_from(SupportSession).where(SupportSession.status == "open")
-    )).scalar_one()
-    failed = (await session.execute(
-        select(func.count()).select_from(Command).where(
-            Command.status.in_(("failed", "expired")),
-            Command.created_at > datetime.utcnow() - timedelta(days=1),
-        )
-    )).scalar_one()
-    return {
+    in_scope = [i.id for i in rows]
+    failed = 0
+    if in_scope:
+        failed = (await session.execute(
+            select(func.count()).select_from(Command).where(
+                Command.instance_id.in_(in_scope),
+                Command.status.in_(("failed", "expired")),
+                Command.created_at > datetime.utcnow() - timedelta(days=1),
+            )
+        )).scalar_one()
+    out = {
         "total": len(rows),
         "active": sum(1 for i in rows if i.status == "active"),
         "online": sum(1 for i in rows if i.id in online),
         "revoked": sum(1 for i in rows if i.status != "active"),
         "versions": versions,
-        "open_support_sessions": open_sessions,
         "failed_commands_24h": failed,
         "offline": [instance_out(i) for i in rows if i.status == "active" and i.id not in online][:20],
     }
+    if user.has_permission("hub.view"):
+        # Support is a hub operation: partners and customers do not see it
+        out["open_support_sessions"] = (await session.execute(
+            select(func.count()).select_from(SupportSession).where(SupportSession.status == "open")
+        )).scalar_one()
+    return out
 
 
 @router.get("/instances")
@@ -97,9 +106,10 @@ async def list_instances(
     q: Optional[str] = Query(default=None, max_length=100),
     label: Optional[str] = Query(default=None, max_length=250, description="chiave=valore"),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_permission("instances.view")),
+    user: User = Depends(require_permission("scope.view")),
 ):
-    query = select(Instance).order_by(Instance.name)
+    query = scope.filter_instances(select(Instance).order_by(Instance.name),
+                                   await scope.group_ids(session, user))
     if status:
         query = query.where(Instance.status == status)
     if group_id == "none":
@@ -122,10 +132,11 @@ async def list_instances(
 
 @router.get("/instances/{instance_id}")
 async def get_instance(instance_id: str, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("instances.view"))):
-    instance = await get_instance_or_404(session, instance_id)
+                       user: User = Depends(require_permission("scope.view"))):
+    instance = await get_instance_or_404(session, instance_id, user)
     out = instance_out(instance, detail=True)
-    out["clone_suspects"] = await clone_suspects(session, instance)
+    # Other instances with the same machine-id may belong to anyone: hub only
+    out["clone_suspects"] = await clone_suspects(session, instance) if user.has_permission("hub.view") else []
     cert = (await session.execute(
         select(AgentCertificate).where(AgentCertificate.instance_id == instance.id,
                                        AgentCertificate.revoked == False)  # noqa: E712
@@ -152,26 +163,31 @@ class InstanceUpdate(BaseModel):
 @router.patch("/instances/{instance_id}")
 async def update_instance(instance_id: str, body: InstanceUpdate,
                           session: AsyncSession = Depends(get_session),
-                          user: User = Depends(require_permission("instances.manage"))):
-    instance = await get_instance_or_404(session, instance_id)
+                          user: User = Depends(require_permission("scope.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
     data = body.model_dump(exclude_unset=True)
-    if "group_id" in data and data["group_id"]:
-        if await session.get(InstanceGroup, data["group_id"]) is None:
-            raise HTTPException(400, "Gruppo inesistente")
-    if data.get("group_id") == "":
-        data["group_id"] = None  # "" = no group
+    if "group_id" in data:
+        data["group_id"] = data["group_id"] or None  # "" = no group
+        if data["group_id"] != instance.group_id:
+            # Only inside the caller's scope; "no group" only for superusers
+            await scope.check_group(session, user, data["group_id"])
     if "labels" in data:
         instance.labels_json = json.dumps(data.pop("labels") or {})
     if "external_ref" in data:
+        # The provisioning system's reference: set by the hub operator only
+        ref_in = data.pop("external_ref")
         try:
-            ref = check_external_ref(data.pop("external_ref"))
+            ref = check_external_ref(ref_in)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        if ref and ref != instance.external_ref:
-            other = await instance_by_ref(session, ref)
-            if other is not None and other.id != instance.id:
-                raise HTTPException(409, f"Riferimento esterno già usato dall'istanza {other.name}")
-        instance.external_ref = ref
+        if ref != instance.external_ref:
+            if not user.has_permission("hub.manage"):
+                raise HTTPException(403, "Solo un superuser può cambiare il riferimento esterno")
+            if ref:
+                other = await instance_by_ref(session, ref)
+                if other is not None and other.id != instance.id:
+                    raise HTTPException(409, f"Riferimento esterno già usato dall'istanza {other.name}")
+            instance.external_ref = ref
     for k, v in data.items():
         setattr(instance, k, v)
     session.add(instance)
@@ -181,8 +197,9 @@ async def update_instance(instance_id: str, body: InstanceUpdate,
 
 @router.post("/instances/{instance_id}/refresh")
 async def refresh_instance(instance_id: str, session: AsyncSession = Depends(get_session),
-                           user: User = Depends(require_permission("instances.view"))):
-    instance = await get_instance_or_404(session, instance_id)
+                           user: User = Depends(require_permission("scope.manage"))):
+    # Sends a command to the instance: not for read-only users
+    instance = await get_instance_or_404(session, instance_id, user)
     data = await run_command(session, instance.id, protocol.CMD_INVENTORY, {}, operator=user.username)
     if isinstance(data.get("facts"), dict):
         apply_facts(instance, data["facts"])
@@ -195,8 +212,8 @@ async def refresh_instance(instance_id: str, session: AsyncSession = Depends(get
 
 @router.post("/instances/{instance_id}/revoke")
 async def revoke(instance_id: str, session: AsyncSession = Depends(get_session),
-                 user: User = Depends(require_permission("instances.manage"))):
-    instance = await get_instance_or_404(session, instance_id)
+                 user: User = Depends(require_permission("hub.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
     if instance.status == "active":
         await revoke_instance(session, instance, by=user.username)
     return instance_out(instance)
@@ -204,8 +221,8 @@ async def revoke(instance_id: str, session: AsyncSession = Depends(get_session),
 
 @router.delete("/instances/{instance_id}", status_code=204)
 async def delete_instance(instance_id: str, session: AsyncSession = Depends(get_session),
-                          user: User = Depends(require_permission("instances.manage"))):
-    instance = await get_instance_or_404(session, instance_id)
+                          user: User = Depends(require_permission("hub.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
     if instance.status == "active":
         raise HTTPException(409, "Revocare l'istanza prima di eliminarla")
     from hub.backups.service import delete_instance_backups
@@ -219,7 +236,8 @@ async def delete_instance(instance_id: str, session: AsyncSession = Depends(get_
 
 @router.get("/instances/{instance_id}/addresses")
 async def addresses(instance_id: str, session: AsyncSession = Depends(get_session),
-                    user: User = Depends(require_permission("instances.view"))):
+                    user: User = Depends(require_permission("scope.view"))):
+    await get_instance_or_404(session, instance_id, user)
     rows = (await session.execute(
         select(InstanceAddress).where(InstanceAddress.instance_id == instance_id)
         .order_by(InstanceAddress.current.desc(), InstanceAddress.last_seen.desc())
@@ -230,7 +248,8 @@ async def addresses(instance_id: str, session: AsyncSession = Depends(get_sessio
 @router.get("/instances/{instance_id}/commands")
 async def commands(instance_id: str, limit: int = Query(default=50, ge=1, le=500),
                    session: AsyncSession = Depends(get_session),
-                   user: User = Depends(require_permission("instances.view"))):
+                   user: User = Depends(require_permission("scope.view"))):
+    await get_instance_or_404(session, instance_id, user)
     rows = (await session.execute(
         select(Command).where(Command.instance_id == instance_id)
         .order_by(Command.created_at.desc()).limit(limit)
@@ -267,9 +286,13 @@ def group_out(g: InstanceGroup, paths: dict, counts: dict) -> dict:
 
 @router.get("/groups")
 async def list_groups(session: AsyncSession = Depends(get_session),
-                      user: User = Depends(get_current_user)):
+                      user: User = Depends(require_permission("scope.view"))):
+    """The groups in the caller's scope (a partner: itself and its customers)."""
     groups = await hub_groups.all_groups(session)
-    paths = hub_groups.paths(groups)
+    paths = hub_groups.paths(groups)  # from every group: a customer's path names its partner
+    ids = await scope.group_ids(session, user)
+    if ids is not None:
+        groups = [g for g in groups if g.id in ids]
     counts = dict((await session.execute(
         select(Instance.group_id, func.count()).where(Instance.status == "active").group_by(Instance.group_id)
     )).all())
@@ -279,7 +302,7 @@ async def list_groups(session: AsyncSession = Depends(get_session),
 
 @router.post("/groups", status_code=201)
 async def create_group(body: GroupIn, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("instances.manage"))):
+                       user: User = Depends(require_permission("hub.manage"))):
     group = await hub_groups.create_group(session, body.name.strip(), body.kind, body.parent_id or None,
                                           body.description)
     await session.commit()
@@ -289,7 +312,7 @@ async def create_group(body: GroupIn, session: AsyncSession = Depends(get_sessio
 
 @router.patch("/groups/{group_id}")
 async def update_group(group_id: str, body: GroupUpdate, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("instances.manage"))):
+                       user: User = Depends(require_permission("hub.manage"))):
     group = await session.get(InstanceGroup, group_id)
     if group is None:
         raise HTTPException(404, "Gruppo non trovato")
@@ -306,7 +329,7 @@ async def update_group(group_id: str, body: GroupUpdate, session: AsyncSession =
 
 @router.delete("/groups/{group_id}", status_code=204)
 async def delete_group(group_id: str, session: AsyncSession = Depends(get_session),
-                       user: User = Depends(require_permission("instances.manage"))):
+                       user: User = Depends(require_permission("hub.manage"))):
     group = await session.get(InstanceGroup, group_id)
     if group is None:
         raise HTTPException(404, "Gruppo non trovato")
@@ -316,6 +339,9 @@ async def delete_group(group_id: str, session: AsyncSession = Depends(get_sessio
     child = (await session.execute(select(InstanceGroup.id).where(InstanceGroup.parent_id == group_id).limit(1))).first()
     if child:
         raise HTTPException(409, "Il partner ha ancora dei clienti")
+    members = (await session.execute(select(User.id).where(User.group_id == group_id).limit(1))).first()
+    if members:
+        raise HTTPException(409, "Gruppo assegnato ad almeno un utente: spostarlo o eliminarlo prima")
     await session.execute(update(EnrollmentToken).where(EnrollmentToken.group_id == group_id)
                           .values(group_id=None))
     await session.delete(group)

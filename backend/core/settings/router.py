@@ -35,7 +35,7 @@ async def read_settings(
 ):
     row = await get_system_settings(session)
     data = row.model_dump()
-    if not current_user.has_permission("settings.view"):
+    if not current_user.has_permission("hub.view"):
         data = {k: data[k] for k in _PUBLIC}
     return data
 
@@ -44,7 +44,7 @@ async def read_settings(
 async def update_settings(
     body: SystemSettingsUpdate,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_permission("settings.manage")),
+    current_user: User = Depends(require_permission("hub.manage")),
 ):
     row = await get_system_settings(session)
     changes = body.model_dump(exclude_unset=True)

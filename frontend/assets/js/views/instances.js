@@ -9,12 +9,12 @@ import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretMod
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels } from './hub-common.js';
 
 const TABS = [
-    ['overview', 'Panoramica', 'instances.view'],
-    ['addresses', 'Indirizzi', 'instances.view'],
-    ['backups', 'Backup', 'backups.view'],
-    ['licenses', 'Licenze', 'licenses.view'],
-    ['support', 'Supporto', 'support.access'],
-    ['commands', 'Comandi', 'instances.view'],
+    ['overview', 'Panoramica', 'scope.view'],
+    ['addresses', 'Indirizzi', 'scope.view'],
+    ['backups', 'Backup', 'scope.view'],
+    ['licenses', 'Licenze', 'scope.view'],
+    ['support', 'Supporto', 'hub.view'],
+    ['commands', 'Comandi', 'scope.view'],
 ];
 
 let groups = [];
@@ -34,7 +34,7 @@ export async function render(container, params = []) {
 // ============== LIST ==============
 
 async function renderList(container) {
-    if (checkPermission('instances.manage')) {
+    if (checkPermission('hub.manage')) {
         setPageActions(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroups')}>
             <i class="ti ti-folders me-1"></i>Gruppi</button>`);
     }
@@ -151,11 +151,11 @@ async function renderDetail(container, id, tab) {
     if (!tabs.some(([t]) => t === tab)) tab = 'overview';
 
     const actions = [];
-    if (i.online) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('hubRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
-    if (checkPermission('instances.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
-    if (checkPermission('enrollment.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
-    if (checkPermission('instances.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('hubRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
-    if (checkPermission('instances.manage') && i.status !== 'active') actions.push(`<button class="btn btn-danger" ${actionAttrs('hubDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
+    if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('hubRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
+    if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
+    if (checkPermission('hub.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
+    if (checkPermission('hub.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('hubRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
+    if (checkPermission('hub.manage') && i.status !== 'active') actions.push(`<button class="btn btn-danger" ${actionAttrs('hubDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
     setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
 
     container.innerHTML = `
@@ -252,8 +252,8 @@ async function addresses(el, i) {
 
 async function backups(el, i) {
     const rows = await apiGet(`/instances/${i.id}/backups`);
-    const manage = checkPermission('backups.manage');
-    const canRestore = checkPermission('backups.restore') && i.status === 'active';
+    const manage = checkPermission('scope.manage');
+    const canRestore = checkPermission('scope.manage') && i.status === 'active';
     el.innerHTML = `
         ${manage && i.status === 'active' ? `<div class="card-body border-bottom">
             <button class="btn btn-primary" ${actionAttrs('hubBackupRun')}><i class="ti ti-database-export me-1"></i>Esegui backup ora</button>
@@ -275,7 +275,7 @@ async function backups(el, i) {
 
 async function licenses(el, i) {
     const rows = await apiGet(`/licenses?instance_id=${i.id}`);
-    const manage = checkPermission('licenses.manage') && i.status === 'active';
+    const manage = checkPermission('hub.manage') && i.status === 'active';
     el.innerHTML = `
         ${manage ? `<div class="card-body border-bottom"><button class="btn btn-primary" ${actionAttrs('hubLicenseNew')}>
             <i class="ti ti-certificate me-1"></i>Emetti licenza</button></div>` : ''}
@@ -301,6 +301,10 @@ export function licenseTable(rows, manage, showInstance = false) {
 async function support(el, i) {
     const rows = await apiGet(`/instances/${i.id}/support`);
     const can = i.status === 'active' && i.online;
+    if (!checkPermission('hub.manage')) {
+        el.innerHTML = sessionTable(rows);
+        return;
+    }
     el.innerHTML = `
         <div class="card-body border-bottom">
             <div class="btn-list">
@@ -325,7 +329,7 @@ export function sessionTable(rows, showInstance = false) {
             <td class="text-muted">${escapeHtml(s.reason)}</td><td>${s.port}</td>
             <td class="font-monospace">${escapeHtml(s.allowed_ip)}</td><td>${fmtDate(s.expires_at)}</td>
             <td>${s.status === 'open' ? '<span class="badge bg-warning-lt">aperta</span>' : `<span class="badge bg-secondary-lt">${escapeHtml(SESSION_STATUS[s.status] || s.status)}</span>`}</td>
-            <td class="text-end"><div class="btn-list justify-content-end">${s.status === 'open' ? `
+            <td class="text-end"><div class="btn-list justify-content-end">${s.status === 'open' && checkPermission('hub.manage') ? `
                 ${s.kind === 'ui' ? `<button class="btn btn-sm btn-outline-primary" ${actionAttrs('hubSupportTicket', s.id)}>Nuovo link</button>` : ''}
                 <button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubSupportClose', s.id)}>Chiudi</button>` : ''}</div></td>
         </tr>`).join('') || `<tr><td colspan="${showInstance ? 9 : 8}" class="text-muted">Nessuna sessione</td></tr>`}
@@ -446,23 +450,27 @@ registerActions({
     },
     hubEdit: () => {
         const i = current;
+        // Partners and customers: their own groups only, no external reference
+        const hub = checkPermission('hub.manage');
         formModal('Modifica istanza', `
             <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(i.name)}" required maxlength="100"></div>
             <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(i.description)}" maxlength="500"></div>
             <div class="mb-3"><label class="form-label">Gruppo</label><select name="group_id" class="form-select">
-                ${groupOptions(groups, i.group_id || '', { none: 'Nessuno (sito principale)' })}
+                ${groupOptions(groups, i.group_id || '', { none: hub ? 'Nessuno (sito principale)' : null })}
             </select></div>
             <div class="mb-3"><label class="form-label">Etichette (una per riga, chiave=valore)</label>
                 <textarea name="labels" class="form-control font-monospace" rows="3">${escapeHtml(labelsToText(i.labels))}</textarea></div>
             <div class="mb-3"><label class="form-label">Riferimento esterno</label>
-                <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(i.external_ref || '')}"></div>
+                <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(i.external_ref || '')}" ${hub ? '' : 'readonly'}>
+                ${hub ? '' : '<div class="form-hint">Lo imposta il sistema di provisioning o un superuser.</div>'}</div>
             <label class="form-check"><input type="checkbox" name="backup_enabled" class="form-check-input" ${i.backup_enabled ? 'checked' : ''}>
                 <span class="form-check-label">Backup pianificati</span></label>`,
         async (form) => {
             const d = formData(form);
-            await apiPatch(`/instances/${i.id}`, { name: d.name, description: d.description, group_id: d.group_id,
-                                                  backup_enabled: form.backup_enabled.checked,
-                                                  labels: textToLabels(d.labels), external_ref: d.external_ref });
+            const body = { name: d.name, description: d.description, group_id: d.group_id,
+                           backup_enabled: form.backup_enabled.checked, labels: textToLabels(d.labels) };
+            if (hub) body.external_ref = d.external_ref;
+            await apiPatch(`/instances/${i.id}`, body);
             reloadDetail('overview');
         });
     },

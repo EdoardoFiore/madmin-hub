@@ -1,54 +1,58 @@
 """
-MADMIN Authentication Models
+MADMIN Hub authentication models.
 
-Defines User, Permission, and UserPermission tables for granular access control.
-Superusers bypass all permission checks. Regular users need explicit permissions.
+Access is a role, an access level and, for partners and customers, one group:
+
+    role        superuser | partner | customer
+    access      rw | ro
+    group_id    the partner or customer group (None for superusers)
+
+A superuser sees the whole hub; a partner its partner group and the customers
+under it; a customer its own group. rw lets the user change what is in that
+scope (instances, backups, users); ro only lets it look. What only the hub
+operator does (support access, enrollment, licenses, groups, settings, API
+keys, logs, revoking instances) needs a superuser, rw to change it.
+
+Capabilities are derived from role and access, never stored: there is nothing
+to grant one by one and nothing that can drift.
 """
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field
 from pydantic import field_validator
-from typing import Optional, List, Set, TYPE_CHECKING
+from typing import Literal, Optional, List, Set
 from datetime import datetime
 import re
 import uuid
 
 
+ROLES = ("superuser", "partner", "customer")
+ACCESS_LEVELS = ("rw", "ro")
+Role = Literal["superuser", "partner", "customer"]
+Access = Literal["rw", "ro"]
 
-class UserPermission(SQLModel, table=True):
-    """
-    Junction table linking Users to Permissions.
-    Enables many-to-many relationship for granular access control.
-    """
-    __tablename__ = "user_permission"
+# Capability slugs (what the API checks and the UI reads from /me):
+#   scope.view    instances, backups and licenses in the user's scope
+#   scope.manage  edit instances, run/download/delete/restore backups in scope
+#   users.view    users in the scope (superusers: every user)
+#   users.manage  create and edit users in the scope, never above one's own level
+#   hub.view      hub-wide areas: support sessions, enrollment, licenses, groups,
+#                 settings, API keys, logs
+#   hub.manage    change them, revoke and delete instances
+CAPABILITIES = ("scope.view", "scope.manage", "users.view", "users.manage", "hub.view", "hub.manage")
 
-    user_id: uuid.UUID = Field(foreign_key="user.id", primary_key=True)
-    permission_slug: str = Field(foreign_key="permission.slug", primary_key=True)
 
-
-class Permission(SQLModel, table=True):
-    """
-    Permission definition.
-
-    Permissions are identified by a slug (e.g., "users.manage", "firewall.edit").
-    The hub has no modules: module_id is always None (kept for parity with MADMIN,
-    without the foreign key to installed_module, a table that does not exist here).
-    """
-    __tablename__ = "permission"
-
-    slug: str = Field(primary_key=True, max_length=100)
-    description: str = Field(max_length=255)
-    module_id: Optional[str] = Field(default=None, max_length=100, index=True)
-
-    # Relationships
-    users: List["User"] = Relationship(back_populates="permissions", link_model=UserPermission)
+def capabilities_for(role: str, access: str) -> Set[str]:
+    caps = {"scope.view"}
+    if access == "rw":
+        caps |= {"scope.manage", "users.view", "users.manage"}
+    if role == "superuser":
+        caps |= {"hub.view", "users.view"}
+        if access == "rw":
+            caps.add("hub.manage")
+    return caps
 
 
 class User(SQLModel, table=True):
-    """
-    System user with authentication and authorization data.
-
-    Superusers have all permissions implicitly.
-    Regular users must have permissions explicitly assigned.
-    """
+    """System user with authentication and authorization data."""
     __tablename__ = "user"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -58,8 +62,12 @@ class User(SQLModel, table=True):
 
     # Status
     is_active: bool = Field(default=True)
-    is_superuser: bool = Field(default=False)
     is_protected: bool = Field(default=False)  # First setup user — cannot be modified or deleted by others
+
+    # Access (see the module docstring). Defaults are the least privileged.
+    role: str = Field(default="customer", max_length=10, index=True)
+    access: str = Field(default="ro", max_length=2)
+    group_id: Optional[str] = Field(default=None, foreign_key="instance_group.id", max_length=36, index=True)
 
     # 2FA Fields
     totp_secret: Optional[str] = Field(default=None, max_length=512)  # encrypted, longer than plain
@@ -84,59 +92,23 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = Field(default=None)
 
-    # What to grant this user on modules activated *later*. A module's slugs do
-    # not exist yet when the account is created, so without this an operator who
-    # can activate a module could never manage the thing they just installed.
-    # Superuser-only to set: it hands out permissions nobody reviewed.
-    module_default_level: str = Field(default="none", max_length=10)  # none | view | manage
-    module_default_capabilities: bool = Field(default=False)  # the module's extra slugs too
-
     # Preferences (JSON string)
     preferences: str = Field(default="{}")
 
-    # Relationships
-    permissions: List[Permission] = Relationship(back_populates="users", link_model=UserPermission)
+    @property
+    def is_superuser(self) -> bool:
+        """Hub-wide scope (read only too: writing also needs can_write)."""
+        return self.role == "superuser"
 
-    def has_permission(self, permission_slug: str) -> bool:
-        """Check if user has a specific permission."""
-        if self.is_superuser:
-            return True
-        return permission_slug in self.effective_permission_slugs()
+    @property
+    def can_write(self) -> bool:
+        return self.access == "rw"
 
-    def has_any_permission(self, permission_slugs: List[str]) -> bool:
-        """Check if user has any of the given permissions."""
-        if self.is_superuser:
-            return True
-        return bool(self.effective_permission_slugs().intersection(permission_slugs))
+    def capabilities(self) -> Set[str]:
+        return capabilities_for(self.role, self.access)
 
-    def has_all_permissions(self, permission_slugs: List[str]) -> bool:
-        """Check if user has every one of the given permissions."""
-        if self.is_superuser:
-            return True
-        return self.effective_permission_slugs().issuperset(permission_slugs)
-
-    def permission_slugs(self) -> Set[str]:
-        """
-        Slugs explicitly granted to this user (empty for superusers, who bypass
-        checks). This is what the permission editor reads and writes — the
-        implied ones must not leak into it, or saving would persist them.
-        """
-        return {p.slug for p in self.permissions}
-
-    def effective_permission_slugs(self) -> Set[str]:
-        """
-        Granted slugs plus the ones they imply.
-
-        Managing an area necessarily means seeing it, so `<area>.manage` implies
-        `<area>.view`. Without this, granting only `settings.manage` hid the very
-        page it was meant to unlock.
-        """
-        granted = self.permission_slugs()
-        implied = {
-            f"{slug.rsplit('.', 1)[0]}.view"
-            for slug in granted if slug.endswith('.manage')
-        }
-        return granted | implied
+    def has_permission(self, slug: str) -> bool:
+        return slug in self.capabilities()
 
 
 class LoginAttempt(SQLModel, table=True):
@@ -169,28 +141,28 @@ class UserCreate(SQLModel):
         return v
     password: str  # strength validated in service layer
     email: Optional[str] = None
-    is_superuser: bool = False
+    role: Role = "customer"
+    access: Access = "ro"
+    group_id: Optional[str] = Field(default=None, max_length=36)  # required for partner/customer
     # Account policy, applied as the user is created rather than by a follow-up
     # PATCH — a failed second call would otherwise leave an account that is live
     # but not subject to the policy the admin asked for.
     totp_enforced: bool = False              # Force 2FA on first login
     must_change_password: bool = False       # Force password change at first login
     password_expires_at: Optional[datetime] = None  # Overrides the global policy
-    module_default_level: str = "none"       # none | view | manage, superuser-only
-    module_default_capabilities: bool = False
 
 
 class UserUpdate(SQLModel):
-    """Schema for updating a user."""
+    """Schema for updating a user. Omitted fields are left unchanged."""
     password: Optional[str] = None  # strength validated in service layer
     email: Optional[str] = None
     is_active: Optional[bool] = None
-    is_superuser: Optional[bool] = None
+    role: Optional[Role] = None
+    access: Optional[Access] = None
+    group_id: Optional[str] = Field(default=None, max_length=36)
     totp_enforced: Optional[bool] = None  # Force 2FA on user
     must_change_password: Optional[bool] = None  # Force password change at next login
     password_expires_at: Optional[datetime] = None  # Manual per-user expiry override
-    module_default_level: Optional[str] = None       # none | view | manage, superuser-only
-    module_default_capabilities: Optional[bool] = None
 
 
 class UserPreferencesUpdate(SQLModel):
@@ -211,6 +183,10 @@ class UserResponse(SQLModel):
     is_active: bool
     is_superuser: bool
     is_protected: bool = False
+    role: str
+    access: str
+    group_id: Optional[str] = None
+    group_path: str = ""          # "Partner / Customer", for display
     totp_enabled: bool = False
     totp_enforced: bool = False
     totp_locked: bool = False
@@ -218,17 +194,8 @@ class UserResponse(SQLModel):
     password_expires_at: Optional[datetime] = None
     created_at: datetime
     last_login: Optional[datetime]
-    permissions: List[str] = []  # List of permission slugs
-    module_default_level: str = "none"
-    module_default_capabilities: bool = False
+    permissions: List[str] = []  # capability slugs (derived from role and access)
     preferences: str = "{}"
-
-
-class PermissionResponse(SQLModel):
-    """Schema for permission API responses."""
-    slug: str
-    description: str
-    module_id: Optional[str]
 
 
 class Token(SQLModel):
@@ -241,24 +208,3 @@ class TokenData(SQLModel):
     """Data extracted from JWT token."""
     username: Optional[str] = None
     user_id: Optional[uuid.UUID] = None
-
-
-# Hub permission definitions: one slug per area, so an operator can be given
-# exactly one (e.g. support access without backups or licenses).
-CORE_PERMISSIONS = [
-    {"slug": "users.view", "description": "View user list"},
-    {"slug": "users.manage", "description": "Create, edit, delete users"},
-    {"slug": "permissions.manage", "description": "Assign permissions to users (requires users.manage)"},
-    {"slug": "instances.view", "description": "View instances, facts, address history and commands"},
-    {"slug": "instances.manage", "description": "Edit, group, revoke and delete instances"},
-    {"slug": "enrollment.manage", "description": "Create and revoke enrollment tokens"},
-    {"slug": "backups.view", "description": "View instance backups"},
-    {"slug": "backups.manage", "description": "Run, schedule, download and delete instance backups"},
-    {"slug": "backups.restore", "description": "Restore a backup on an instance — overwrites its whole configuration, users included"},
-    {"slug": "licenses.view", "description": "View licenses"},
-    {"slug": "licenses.manage", "description": "Issue and revoke licenses"},
-    {"slug": "support.access", "description": "Open temporary superuser UI and root SSH sessions on instances"},
-    {"slug": "settings.view", "description": "View hub settings"},
-    {"slug": "settings.manage", "description": "Modify hub settings"},
-    {"slug": "logs.view", "description": "View the hub audit log"},
-]

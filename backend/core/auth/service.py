@@ -17,14 +17,13 @@ from typing import Optional, List, Tuple
 import bcrypt
 import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, text
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, text
 import uuid
 import logging
 
 from config import get_settings
 from core import secrets as data_secrets
-from .models import User, Permission, UserPermission, UserCreate, UserUpdate, CORE_PERMISSIONS
+from .models import User, UserCreate, UserUpdate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -193,7 +192,6 @@ async def authenticate_user(session: AsyncSession, username: str, password: str)
     """
     result = await session.execute(
         select(User)
-        .options(selectinload(User.permissions))
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()
@@ -211,30 +209,27 @@ async def authenticate_user(session: AsyncSession, username: str, password: str)
 
 
 async def get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> Optional[User]:
-    """Get a user by their UUID, including permissions."""
+    """Get a user by their UUID."""
     result = await session.execute(
         select(User)
-        .options(selectinload(User.permissions))
         .where(User.id == user_id)
     )
     return result.scalar_one_or_none()
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> Optional[User]:
-    """Get a user by username, including permissions."""
+    """Get a user by username."""
     result = await session.execute(
         select(User)
-        .options(selectinload(User.permissions))
         .where(User.username == username)
     )
     return result.scalar_one_or_none()
 
 
 async def get_all_users(session: AsyncSession) -> List[User]:
-    """Get all users with their permissions."""
+    """Get all users."""
     result = await session.execute(
         select(User)
-        .options(selectinload(User.permissions))
         .order_by(User.username)
     )
     return result.scalars().all()
@@ -264,11 +259,12 @@ async def create_user(session: AsyncSession, user_data: UserCreate) -> User:
         username=user_data.username,
         email=user_data.email,
         hashed_password=get_password_hash(user_data.password),
-        is_superuser=user_data.is_superuser,
+        role=user_data.role,
+        access=user_data.access,
+        # Superusers have no group: their scope is the whole hub
+        group_id=None if user_data.role == "superuser" else user_data.group_id,
         totp_enforced=user_data.totp_enforced,
         must_change_password=user_data.must_change_password,
-        module_default_level=user_data.module_default_level,
-        module_default_capabilities=user_data.module_default_capabilities,
         password_changed_at=now,
         # An explicit expiry wins over the global policy, same as on update
         password_expires_at=(
@@ -310,8 +306,15 @@ async def update_user(session: AsyncSession, user_id: uuid.UUID, user_data: User
         user.email = user_data.email
     if user_data.is_active is not None:
         user.is_active = user_data.is_active
-    if user_data.is_superuser is not None:
-        user.is_superuser = user_data.is_superuser
+    # Role, access and group arrive already checked by the router
+    if user_data.role is not None:
+        user.role = user_data.role
+    if user_data.access is not None:
+        user.access = user_data.access
+    if user.role == "superuser":
+        user.group_id = None
+    elif user_data.group_id is not None:
+        user.group_id = user_data.group_id
     if user_data.totp_enforced is not None:
         user.totp_enforced = user_data.totp_enforced
     # Admin explicit overrides (applied after password-change recompute)
@@ -319,10 +322,6 @@ async def update_user(session: AsyncSession, user_id: uuid.UUID, user_data: User
         user.must_change_password = user_data.must_change_password
     if user_data.password_expires_at is not None:
         user.password_expires_at = user_data.password_expires_at
-    if user_data.module_default_level is not None:
-        user.module_default_level = user_data.module_default_level
-    if user_data.module_default_capabilities is not None:
-        user.module_default_capabilities = user_data.module_default_capabilities
 
     session.add(user)
     await session.flush()
@@ -352,52 +351,6 @@ async def update_last_login(session: AsyncSession, user: User) -> None:
     session.add(user)
 
 
-# --- Permission Management ---
-
-async def get_all_permissions(session: AsyncSession) -> List[Permission]:
-    """Get all registered permissions."""
-    result = await session.execute(
-        select(Permission).order_by(Permission.slug)
-    )
-    return result.scalars().all()
-
-
-async def get_user_permissions(session: AsyncSession, user_id: uuid.UUID) -> List[str]:
-    """Get list of permission slugs for a user."""
-    user = await get_user_by_id(session, user_id)
-    if not user:
-        return []
-    if user.is_superuser:
-        # Return all permissions for superuser
-        perms = await get_all_permissions(session)
-        return [p.slug for p in perms]
-    return [p.slug for p in user.permissions]
-
-
-async def set_user_permissions(session: AsyncSession, user_id: uuid.UUID, permission_slugs: List[str]) -> User:
-    """
-    Set permissions for a user (replaces existing permissions).
-    """
-    user = await get_user_by_id(session, user_id)
-    if not user:
-        raise ValueError("User not found")
-
-    # Clear existing permissions
-    await session.execute(
-        UserPermission.__table__.delete().where(UserPermission.user_id == user_id)
-    )
-
-    # Add new permissions
-    for slug in permission_slugs:
-        link = UserPermission(user_id=user_id, permission_slug=slug)
-        session.add(link)
-
-    await session.flush()
-
-    # Refresh to get updated permissions
-    return await get_user_by_id(session, user_id)
-
-
 async def apply_password_expiry_policy(session: AsyncSession, max_age_days: int) -> int:
     """
     Backfill password_expires_at for all users that don't have one set.
@@ -420,57 +373,6 @@ async def apply_password_expiry_policy(session: AsyncSession, max_age_days: int)
         session.add(user)
 
     return len(users_to_update)
-
-
-async def init_core_permissions(session: AsyncSession) -> None:
-    """
-    Reconcile core permissions with CORE_PERMISSIONS.
-
-    Authoritative, not merely additive: slugs that were removed or renamed in
-    code are dropped from the database too. Without this, a retired slug would
-    linger forever in the permission picker while governing nothing — grantable
-    but dead. Module permissions (module_id NOT NULL) are untouched; they are
-    owned by the module lifecycle.
-
-    Called during application startup.
-    """
-    known_slugs = {p["slug"] for p in CORE_PERMISSIONS}
-
-    result = await session.execute(
-        select(Permission).where(Permission.module_id.is_(None))
-    )
-    existing_by_slug = {p.slug: p for p in result.scalars().all()}
-
-    for perm_data in CORE_PERMISSIONS:
-        existing = existing_by_slug.get(perm_data["slug"])
-
-        if not existing:
-            session.add(Permission(
-                slug=perm_data["slug"],
-                description=perm_data["description"],
-                module_id=None  # Core permissions have no module
-            ))
-            logger.info(f"Created core permission: {perm_data['slug']}")
-        elif existing.description != perm_data["description"]:
-            existing.description = perm_data["description"]
-            session.add(existing)
-
-    stale_slugs = sorted(set(existing_by_slug) - known_slugs)
-    if stale_slugs:
-        # user_permission has no ON DELETE CASCADE: clear the link rows first,
-        # or the delete below fails on the foreign key.
-        await session.execute(
-            delete(UserPermission).where(UserPermission.permission_slug.in_(stale_slugs))
-        )
-        await session.execute(
-            delete(Permission).where(Permission.slug.in_(stale_slugs))
-        )
-        logger.warning(
-            f"Removed {len(stale_slugs)} stale core permissions (grants revoked): "
-            f"{', '.join(stale_slugs)}"
-        )
-
-    await session.commit()
 
 
 async def create_first_user(
@@ -499,7 +401,8 @@ async def create_first_user(
         username=username,
         email=f"{username}@localhost",
         hashed_password=get_password_hash(password),
-        is_superuser=True,
+        role="superuser",
+        access="rw",
         is_protected=True,
         must_change_password=force_password_change,
         password_changed_at=now

@@ -33,7 +33,7 @@ const FIELDS = [
 
 export async function render(container) {
     const s = await apiGet('/settings/system');
-    const ro = !checkPermission('settings.manage');
+    const ro = !checkPermission('hub.manage');
     container.innerHTML = `
         <form id="hub-settings" class="row row-cards">
             ${FIELDS.map(([title, fields]) => `

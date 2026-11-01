@@ -76,7 +76,7 @@ async def list_audit_logs(
     search_body: bool = Query(default=False, description="Also search request bodies (slow)"),
     from_date: Optional[str] = Query(default=None, description="From date (ISO format)"),
     to_date: Optional[str] = Query(default=None, description="To date (ISO format)"),
-    current_user: User = Depends(require_permission("logs.view")),
+    current_user: User = Depends(require_permission("hub.view")),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -142,7 +142,7 @@ async def list_audit_logs(
 
 @router.get("/audit/users", response_model=AuditUsersResponse)
 async def list_audit_users(
-    current_user: User = Depends(require_permission("logs.view")),
+    current_user: User = Depends(require_permission("hub.view")),
     session: AsyncSession = Depends(get_session),
 ):
     """Get distinct usernames from audit log for filter dropdown."""
@@ -159,7 +159,7 @@ async def export_audit_csv(
     search_body: bool = Query(default=False),
     from_date: Optional[str] = Query(default=None),
     to_date: Optional[str] = Query(default=None),
-    current_user: User = Depends(require_permission("logs.view")),
+    current_user: User = Depends(require_permission("hub.view")),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -237,7 +237,7 @@ async def export_audit_csv(
 async def get_system_log(
     lines: int = Query(default=200, ge=10, le=1000),
     search: Optional[str] = Query(default=None, description="Filter text (grep)"),
-    current_user: User = Depends(require_permission("logs.view")),
+    current_user: User = Depends(require_permission("hub.view")),
 ):
     """
     Get raw system logs from journalctl.

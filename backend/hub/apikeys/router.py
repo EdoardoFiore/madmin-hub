@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from core.auth.dependencies import require_superuser
+from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import get_session
 
@@ -29,12 +29,12 @@ def key_out(k: ApiKey) -> dict:
 
 
 @router.get("/scopes")
-async def scopes(user: User = Depends(require_superuser())):
+async def scopes(user: User = Depends(require_permission("hub.view"))):
     return [{"scope": s, "description": d} for s, d in SCOPES.items()]
 
 
 @router.get("")
-async def list_keys(session: AsyncSession = Depends(get_session), user: User = Depends(require_superuser())):
+async def list_keys(session: AsyncSession = Depends(get_session), user: User = Depends(require_permission("hub.view"))):
     rows = (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))).scalars().all()
     return [key_out(k) for k in rows]
 
@@ -61,7 +61,7 @@ class KeyCreate(BaseModel):
 
 @router.post("", status_code=201)
 async def create_key(body: KeyCreate, session: AsyncSession = Depends(get_session),
-                     user: User = Depends(require_superuser())):
+                     user: User = Depends(require_permission("hub.manage"))):
     if (await session.execute(select(ApiKey).where(ApiKey.name == body.name))).first():
         raise HTTPException(409, "Esiste già una chiave con questo nome")
     key_id, secret, full = new_key()
@@ -76,7 +76,7 @@ async def create_key(body: KeyCreate, session: AsyncSession = Depends(get_sessio
 
 @router.post("/{key_id}/revoke")
 async def revoke_key(key_id: str, session: AsyncSession = Depends(get_session),
-                     user: User = Depends(require_superuser())):
+                     user: User = Depends(require_permission("hub.manage"))):
     row = await session.get(ApiKey, key_id)
     if row is None:
         raise HTTPException(404, "Chiave non trovata")

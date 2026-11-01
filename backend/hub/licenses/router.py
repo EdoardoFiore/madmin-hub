@@ -1,5 +1,6 @@
 """
-Licenses (UI).
+Licenses (UI). Everyone sees the licenses of the instances in their scope;
+issuing and revoking them is a hub operation (superuser, rw).
 """
 import re
 from datetime import datetime
@@ -14,6 +15,7 @@ from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import get_session
 
+from hub import scope
 from hub.instances.router import get_instance_or_404
 from hub.models import Instance, License
 from . import service
@@ -30,9 +32,10 @@ def license_out(lic: License, instance_name: str = "") -> dict:
 @router.get("")
 async def list_licenses(instance_id: Optional[str] = Query(default=None, max_length=36),
                         session: AsyncSession = Depends(get_session),
-                        user: User = Depends(require_permission("licenses.view"))):
+                        user: User = Depends(require_permission("scope.view"))):
     query = (select(License, Instance.name).join(Instance, Instance.id == License.instance_id)
              .order_by(License.created_at.desc()))
+    query = scope.filter_instances(query, await scope.group_ids(session, user))
     if instance_id:
         query = query.where(License.instance_id == instance_id)
     return [license_out(lic, name) for lic, name in (await session.execute(query)).all()]
@@ -54,8 +57,8 @@ class LicenseCreate(BaseModel):
 
 @router.post("", status_code=201)
 async def create_license(body: LicenseCreate, session: AsyncSession = Depends(get_session),
-                         user: User = Depends(require_permission("licenses.manage"))):
-    instance = await get_instance_or_404(session, body.instance_id)
+                         user: User = Depends(require_permission("hub.manage"))):
+    instance = await get_instance_or_404(session, body.instance_id, user)
     if instance.status != "active":
         raise HTTPException(409, "Istanza non attiva")
     existing = (await session.execute(select(License).where(
@@ -73,7 +76,7 @@ async def create_license(body: LicenseCreate, session: AsyncSession = Depends(ge
 
 @router.post("/{license_id}/revoke")
 async def revoke_license(license_id: str, session: AsyncSession = Depends(get_session),
-                         user: User = Depends(require_permission("licenses.manage"))):
+                         user: User = Depends(require_permission("hub.manage"))):
     lic = await session.get(License, license_id)
     if lic is None:
         raise HTTPException(404, "Licenza non trovata")

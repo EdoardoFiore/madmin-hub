@@ -24,7 +24,7 @@ sudo MADMIN_HUB_ADMIN_PASSWORD='...' bash scripts/setup-hub.sh --host hub.exampl
 backend/
   main.py            app, lifespan (background tasks), /api/ui/menu
   config.py          Settings (.env): DATABASE_URL, SECRET_KEY, DATA_DIR
-  core/              copied from MADMIN: auth (JWT, TOTP, lockout, RBAC), audit, secrets (Fernet/HKDF),
+  core/              copied from MADMIN: auth (JWT, TOTP, lockout; roles instead of MADMIN's permissions), audit, secrets (Fernet/HKDF),
                      concurrency, http, sdnotify; settings (one SystemSettings row)
   hub/
     models.py        every table (Instance, InstanceAddress, AgentCertificate, EnrollmentToken,
@@ -33,6 +33,7 @@ backend/
     agents/          protocol.py (IDENTICAL to madmin/backend/core/hub/protocol.py),
                      auth (client cert), registry (live connections), dispatcher (commands), router (/agent/*)
     groups.py        hierarchy (hub) -> customer | (hub) -> partner -> customer, subtree_ids
+    scope.py         what a user may see: filters every instance/backup/license/user query
     registration.py  optional fields (name, group, labels, external_ref) applied at enrollment
     enrollment/      tokens, shared identity issuing (service.py), token-less requests (requests.py)
     apikeys/         provisioning API keys (scoped, CIDR, hashed); provisioning/ = /api/provisioning/*
@@ -62,9 +63,15 @@ scripts/setup-hub.sh
 - `--hub-url` on the instance: an EnrollmentRequest, approved from Enrollment > In attesa with the same fields a token carries.
 - All fields are optional. API keys work only on `/api/provisioning/*` (`require_scope`). The UI JWT dependencies never accept one. They are never installed on instances.
 
-## Groups and the future partner role
+## Groups, roles and scope
 
-Partners are top-level groups with customers under them; customers can also sit at the top level. Every listing filters by subtree (`hub.groups.subtree_ids`). A partner role (users of a partner reaching the hub and seeing only their subtree) is **planned, not implemented**. It would be a `User.partner_group_id` and a filter by `subtree_ids` in every instance query, and it would leave out support, PKI, API keys and settings.
+Partners are top-level groups with customers under them; customers can also sit at the top level.
+
+Users have a `role` (superuser | partner | customer), an `access` (rw | ro) and, for partners and customers, one `group_id` of the matching kind. Capabilities are derived, never stored (`core.auth.models.capabilities_for`): `scope.view`, `scope.manage`, `users.view`, `users.manage`, `hub.view`, `hub.manage`. `require_permission(<capability>)` checks the role; **every route on instances, backups, licenses and users must also filter by scope** (`hub/scope.py`: `group_ids`, `filter_instances`, `get_instance`, `check_group`). Out of scope = 404, never 403.
+
+- partner/customer rw: edit their instances (not `external_ref`), backups (run, download, delete, restore), users of their subtree (never superusers).
+- superuser only: support, enrollment, licenses (issue/revoke), groups, settings, API keys, logs, revoke/delete instances, clone suspects. `ro` superuser sees all of it, changes nothing.
+- Nobody changes their own role, access or group; a change revokes the target's sessions.
 
 ## Data
 

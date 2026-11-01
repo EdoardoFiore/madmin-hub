@@ -32,7 +32,6 @@ async def lifespan(app: FastAPI):
     logger.info("MADMIN Hub starting up...")
     from core import sdnotify
     from core.auth.rate_limiter import login_rate_limiter
-    from core.auth.service import init_core_permissions
     from core.concurrency import spawn_background
     from core.database import async_session_maker, init_db
     from hub import pki
@@ -41,8 +40,6 @@ async def lifespan(app: FastAPI):
     watchdog_task = asyncio.create_task(sdnotify.watchdog_loop(), name="systemd-watchdog")
 
     await init_db()
-    async with async_session_maker() as session:
-        await init_core_permissions(session)
     async with async_session_maker() as session:
         await login_rate_limiter.load_from_db(session)
     if not pki.is_initialized():
@@ -143,14 +140,15 @@ def create_app() -> FastAPI:
     async def menu(current_user: User = Depends(get_current_user)):
         return {
             "core": [
-                {"label": "menu.dashboard", "icon": "home", "route": "#dashboard", "permission": "instances.view"},
-                {"label": "menu.instances", "icon": "server", "route": "#instances", "permission": "instances.view"},
-                {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "support.access"},
-                {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "licenses.view"},
-                {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "enrollment.manage"},
+                # permission = capability (core.auth.models.CAPABILITIES)
+                {"label": "menu.dashboard", "icon": "home", "route": "#dashboard", "permission": "scope.view"},
+                {"label": "menu.instances", "icon": "server", "route": "#instances", "permission": "scope.view"},
+                {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "hub.view"},
+                {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "scope.view"},
+                {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "hub.view"},
                 {"label": "menu.users", "icon": "users", "route": "#users", "permission": "users.view"},
-                {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "logs.view"},
-                {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "settings.view"},
+                {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "hub.view"},
+                {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "hub.view"},
             ],
             "modules": [],
         }

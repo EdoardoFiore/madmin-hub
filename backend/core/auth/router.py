@@ -23,7 +23,6 @@ from .models import (
     UserPreferencesUpdate,
     UserProfileUpdate,
     UserResponse,
-    PermissionResponse,
     User
 )
 from . import service
@@ -36,8 +35,6 @@ from .dependencies import (
     get_current_user,
     get_setup_user,
     require_permission,
-    require_all_permissions,
-    require_superuser,
     oauth2_scheme
 )
 from .rate_limiter import login_rate_limiter, user_key
@@ -77,7 +74,7 @@ class PasswordChangePendingRequest(BaseModel):
     new_password: str
 
 
-def _user_response(user: User) -> UserResponse:
+def _user_response(user: User, group_paths: Optional[Dict[str, str]] = None) -> UserResponse:
     """Helper to build a UserResponse from a User ORM object."""
     return UserResponse(
         id=user.id,
@@ -86,6 +83,10 @@ def _user_response(user: User) -> UserResponse:
         is_active=user.is_active,
         is_superuser=user.is_superuser,
         is_protected=user.is_protected,
+        role=user.role,
+        access=user.access,
+        group_id=user.group_id,
+        group_path=(group_paths or {}).get(user.group_id or "", ""),
         totp_enabled=user.totp_enabled,
         totp_enforced=user.totp_enforced,
         totp_locked=user.totp_locked,
@@ -93,73 +94,70 @@ def _user_response(user: User) -> UserResponse:
         password_expires_at=user.password_expires_at,
         created_at=user.created_at,
         last_login=user.last_login,
-        permissions=[p.slug for p in user.permissions] if not user.is_superuser else ["*"],
-        module_default_level=getattr(user, "module_default_level", "none"),
-        module_default_capabilities=getattr(user, "module_default_capabilities", False),
+        permissions=sorted(user.capabilities()),
         preferences=getattr(user, "preferences", "{}")
     )
 
 
-def _assert_can_set_module_defaults(actor: User, data) -> None:
+async def _group_paths(session: AsyncSession) -> Dict[str, str]:
+    from hub.groups import all_groups, paths
+    return paths(await all_groups(session))
+
+
+async def _response(session: AsyncSession, user: User) -> UserResponse:
+    return _user_response(user, await _group_paths(session))
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+
+def _visible_in(actor: User, target: User, ids) -> bool:
     """
-    Only a superuser may set the module default policy.
-
-    It grants permissions on modules that do not exist yet, so nobody can review
-    what is being handed out at the time it is decided — _assert_can_grant has
-    nothing to compare against.
+    Whether actor may see target, given actor's scope (hub.scope.group_ids).
+    Superusers see everyone; partners and customers see themselves and the
+    partner/customer users of their scope, never a superuser.
     """
-    if actor.is_superuser:
-        return
-
-    if getattr(data, "module_default_level", None) not in (None, "none") or \
-            getattr(data, "module_default_capabilities", None):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superusers can set default permissions for future modules"
-        )
-
-
-def _assert_can_grant(actor: User, permission_slugs: List[str]) -> None:
-    """
-    A non-superuser can only grant permissions they hold themselves.
-
-    Without this, `users.manage` + `permissions.manage` would be enough to mint an
-    account more privileged than the one doing the granting.
-    """
-    if actor.is_superuser:
-        return
-
-    excess = sorted(set(permission_slugs) - actor.effective_permission_slugs())
-    if excess:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"You cannot grant permissions you do not hold: {', '.join(excess)}"
-        )
-
-
-def _assert_can_manage_target(actor: User, target: User) -> None:
-    """
-    A non-superuser can only act on users whose permissions are a subset of their own.
-
-    Closes the loop left open by _assert_can_grant: `users.manage` also allows
-    overwriting another account's password (UserUpdate.password needs no current
-    password) or disabling it, which would otherwise hand over a higher-privileged
-    account without ever granting a permission.
-    """
-    if actor.is_superuser:
-        return
-
+    if actor.is_superuser or target.id == actor.id:
+        return True
     if target.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superusers can manage superuser accounts"
-        )
+        return False
+    return target.group_id is not None and target.group_id in (ids or set())
 
-    excess = sorted(target.effective_permission_slugs() - actor.effective_permission_slugs())
-    if excess:
+
+async def _visible(session: AsyncSession, actor: User, target: User) -> bool:
+    from hub import scope
+    return _visible_in(actor, target, await scope.group_ids(session, actor))
+
+
+async def _get_visible_user(session: AsyncSession, actor: User, username: str) -> User:
+    user = await service.get_user_by_username(session, username)
+    if not user or not await _visible(session, actor, user):
+        raise _not_found()
+    return user
+
+
+async def _check_assignment(session: AsyncSession, actor: User, role: str, group_id: Optional[str]) -> None:
+    """
+    Role and group actor may give an account. Only a superuser creates
+    superusers; partners and customers need a group of the matching kind
+    inside actor's scope. Any access level is allowed: actor holds rw
+    (users.manage), the highest there is.
+    """
+    if role == "superuser":
+        if not actor.is_superuser:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="Solo un superuser può creare o promuovere superuser")
+        return
+    if not group_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Un utente partner o cliente richiede un gruppo")
+    from hub import scope
+    group = await scope.check_group(session, actor, group_id)
+    if group.kind != role:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"You cannot manage a user holding permissions you do not have: {', '.join(excess)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Il ruolo partner va con un gruppo partner, il ruolo cliente con un gruppo cliente",
         )
 
 
@@ -183,6 +181,13 @@ def _assert_self_edit_allowed(user: User, data: UserUpdate) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot deactivate your own account"
+        )
+    if (data.role is not None and data.role != user.role) or \
+            (data.access is not None and data.access != user.access) or \
+            (data.group_id is not None and (data.group_id or None) != user.group_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Non puoi cambiare ruolo, accesso o gruppo del tuo account"
         )
 
 
@@ -226,8 +231,6 @@ async def init_first_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
     try:
         user = await service.create_first_user(session, data.username, data.password)
-        # Safe despite the relationship not being eagerly loaded here: the user is
-        # a superuser, so _user_response short-circuits to ["*"] without touching it.
         return _user_response(user)
     except ValueError:
         raise HTTPException(
@@ -537,10 +540,11 @@ async def complete_2fa_setup(
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
 ):
     """Get current authenticated user information."""
-    return _user_response(current_user)
+    return await _response(session, current_user)
 
 
 @router.patch("/me/preferences", response_model=UserResponse)
@@ -554,7 +558,7 @@ async def update_user_preferences(
     session.add(current_user)
     await session.commit()
     await session.refresh(current_user)
-    return _user_response(current_user)
+    return await _response(session, current_user)
 
 
 @router.patch("/me/profile", response_model=UserResponse)
@@ -569,9 +573,8 @@ async def update_own_profile(
         current_user.email = email or None
     session.add(current_user)
     await session.commit()
-    # Re-fetch to get eagerly-loaded permissions (commit expires all relationships)
     updated = await service.get_user_by_username(session, current_user.username)
-    return _user_response(updated)
+    return await _response(session, updated)
 
 
 # --- User Management ---
@@ -581,11 +584,14 @@ async def list_users(
     current_user: User = Depends(require_permission("users.view")),
     session: AsyncSession = Depends(get_session)
 ):
-    """List all users (requires users.view permission)."""
+    """Users the caller may see (superusers: everyone; others: their scope)."""
+    from hub import scope
     users = await service.get_all_users(session)
+    group_paths = await _group_paths(session)
+    ids = await scope.group_ids(session, current_user)
     # Serialize through the shared helper: a second hand-written UserResponse
     # silently dropped every field added to the schema afterwards.
-    return [_user_response(u) for u in users]
+    return [_user_response(u, group_paths) for u in users if _visible_in(current_user, u, ids)]
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -594,22 +600,13 @@ async def create_user(
     current_user: User = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_session)
 ):
-    """Create a new user (requires users.manage permission)."""
-    # Prevent non-superusers from creating superusers (mirrors the PATCH guard)
-    if user_data.is_superuser and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superusers can grant superuser status"
-        )
-
-    _assert_can_set_module_defaults(current_user, user_data)
-
+    """Create a user in the caller's scope (see _check_assignment)."""
+    await _check_assignment(session, current_user, user_data.role, user_data.group_id)
     try:
         user = await service.create_user(session, user_data)
         await session.commit()
-        # Re-fetch to get eagerly-loaded permissions (commit expires all relationships)
         user = await service.get_user_by_username(session, user.username)
-        return _user_response(user)
+        return await _response(session, user)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -620,12 +617,8 @@ async def get_user(
     current_user: User = Depends(require_permission("users.view")),
     session: AsyncSession = Depends(get_session)
 ):
-    """Get a specific user by username."""
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    return _user_response(user)
+    """Get a specific user by username (404 when out of the caller's scope)."""
+    return await _response(session, await _get_visible_user(session, current_user, username))
 
 
 @router.patch("/users/{username}", response_model=UserResponse)
@@ -635,10 +628,8 @@ async def update_user(
     current_user: User = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_session)
 ):
-    """Update a user (requires users.manage permission)."""
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    """Update a user in the caller's scope."""
+    user = await _get_visible_user(session, current_user, username)
 
     # Protected user: the first setup user can only be modified by themselves
     if user.is_protected and user.id != current_user.id:
@@ -647,33 +638,27 @@ async def update_user(
             detail="The system first user can only be modified by themselves"
         )
 
-    # Prevent non-superusers from creating superusers
-    if user_data.is_superuser and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superusers can grant superuser status"
-        )
-
-    _assert_can_set_module_defaults(current_user, user_data)
-
-    # Never let a non-superuser act on a more privileged account
-    if user.id != current_user.id:
-        _assert_can_manage_target(current_user, user)
-    else:
+    if user.id == current_user.id:
         _assert_self_edit_allowed(user, user_data)
+    elif user_data.role is not None or user_data.group_id is not None:
+        # The resulting role and group, checked as on creation
+        role = user_data.role or user.role
+        group_id = user_data.group_id if user_data.group_id is not None else user.group_id
+        await _check_assignment(session, current_user, role, group_id)
 
+    before = (user.role, user.access, user.group_id)
     try:
         updated_user = await service.update_user(session, user.id, user_data)
 
-        # Disabled, or given a new password: sessions opened before end now.
-        # Re-enabling revokes nothing and restores nothing: old tokens stay dead.
-        if user_data.is_active is False or user_data.password is not None:
+        # Disabled, given a new password, or moved to another role, access or
+        # group: sessions opened before end now. Re-enabling revokes nothing.
+        if user_data.is_active is False or user_data.password is not None or \
+                (updated_user.role, updated_user.access, updated_user.group_id) != before:
             service.revoke_sessions(updated_user)
         await session.commit()
 
-        # Re-fetch to get eagerly-loaded permissions (commit expires all relationships)
         updated_user = await service.get_user_by_username(session, username)
-        return _user_response(updated_user)
+        return await _response(session, updated_user)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -684,10 +669,8 @@ async def delete_user(
     current_user: User = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_session)
 ):
-    """Delete a user (requires users.manage permission)."""
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    """Delete a user in the caller's scope."""
+    user = await _get_visible_user(session, current_user, username)
 
     # Prevent self-deletion
     if user.id == current_user.id:
@@ -703,31 +686,8 @@ async def delete_user(
             detail="The system first user cannot be deleted"
         )
 
-    # Never let a non-superuser delete a more privileged account
-    _assert_can_manage_target(current_user, user)
-
     await service.delete_user(session, user.id)
     await session.commit()
-
-
-# --- Permission Management ---
-
-@router.get("/permissions", response_model=List[PermissionResponse])
-async def list_permissions(
-    current_user: User = Depends(require_all_permissions(["users.view", "permissions.manage"])),
-    session: AsyncSession = Depends(get_session)
-):
-    """
-    List all available permissions.
-
-    permissions.manage is a modifier of user management, not a standalone capability:
-    the catalog is only ever consulted from the Users screen.
-    """
-    permissions = await service.get_all_permissions(session)
-    return [
-        PermissionResponse(slug=p.slug, description=p.description, module_id=p.module_id)
-        for p in permissions
-    ]
 
 
 @router.delete("/users/{username}/2fa", status_code=status.HTTP_204_NO_CONTENT)
@@ -740,12 +700,7 @@ async def disable_user_2fa(
     Administrator endpoint to disable and reset 2FA for a specific user.
     Useful for resetting 2FA if a user lost their device or was locked out.
     """
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    user = await _get_visible_user(session, current_user, username)
 
     if user.is_protected and user.id != current_user.id:
         raise HTTPException(
@@ -760,7 +715,6 @@ async def disable_user_2fa(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Use /api/auth/me/2fa/disable to turn off your own 2FA"
         )
-    _assert_can_manage_target(current_user, user)
 
     # Disable 2FA and clear lock
     user.totp_enabled = False
@@ -774,62 +728,6 @@ async def disable_user_2fa(
     service.revoke_sessions(user)
 
     await session.commit()
-
-
-@router.put("/users/{username}/permissions", response_model=UserResponse)
-async def set_user_permissions(
-    username: str,
-    permission_slugs: List[str],
-    current_user: User = Depends(require_all_permissions(["users.manage", "permissions.manage"])),
-    session: AsyncSession = Depends(get_session)
-):
-    """Set permissions for a user (replaces existing permissions)."""
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    # Cannot modify own permissions (privilege escalation prevention)
-    if user.id == current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You cannot modify your own permissions"
-        )
-
-    # Protected user: the first setup user can only be modified by themselves
-    if user.is_protected:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="The system first user can only be modified by themselves"
-        )
-
-    # Cannot modify superuser permissions (they have all permissions implicitly)
-    if user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot modify permissions for superuser accounts"
-        )
-
-    # A non-superuser can neither grant beyond their own set nor touch a more privileged account
-    _assert_can_manage_target(current_user, user)
-    _assert_can_grant(current_user, permission_slugs)
-
-    # Reject unknown slugs here: they would otherwise reach the FK constraint as a 500
-    known_slugs = {p.slug for p in await service.get_all_permissions(session)}
-    unknown = sorted(set(permission_slugs) - known_slugs)
-    if unknown:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown permissions: {', '.join(unknown)}"
-        )
-
-    try:
-        await service.set_user_permissions(session, user.id, permission_slugs)
-        await session.commit()
-        # Re-fetch to get eagerly-loaded permissions (commit expires all relationships)
-        updated_user = await service.get_user_by_username(session, username)
-        return _user_response(updated_user)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 # --- Self-Service Password Change ---
@@ -1040,49 +938,21 @@ async def can_edit_user(
     Check if current user can edit target user.
     Used by frontend to show/hide edit buttons.
     """
-    # Probing arbitrary usernames requires users.view: the 404/200 split would
-    # otherwise let any authenticated user enumerate accounts.
+    # Probing other usernames requires users.view, and only users in scope
+    # answer: the 404/200 split would otherwise enumerate accounts.
     if username != current_user.username and not current_user.has_permission("users.view"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied. Required: users.view"
         )
+    user = await _get_visible_user(session, current_user, username)
 
-    user = await service.get_user_by_username(session, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    can_edit = True
-    can_change_password = True
-    can_delete = True
-
-    # Self-edit: can only change password via /me/password
-    if user.id == current_user.id:
-        can_edit = current_user.has_permission("users.manage")
-        can_change_password = True
-        can_delete = False
-
-    # Protected user can only be modified by themselves
-    if user.is_protected and user.id != current_user.id:
-        can_edit = False
-        can_change_password = False
-        can_delete = False
-
-    # Must have users.manage to edit others
-    if not current_user.has_permission("users.manage") and user.id != current_user.id:
-        can_edit = False
-        can_change_password = False
-        can_delete = False
-
-    # A non-superuser cannot act on a more privileged account (see _assert_can_manage_target)
-    if user.id != current_user.id and not current_user.is_superuser:
-        if user.is_superuser or (user.effective_permission_slugs() - current_user.effective_permission_slugs()):
-            can_edit = False
-            can_change_password = False
-            can_delete = False
-
+    self_edit = user.id == current_user.id
+    manage = current_user.has_permission("users.manage") and not self_edit
+    if user.is_protected and not self_edit:
+        manage = False
     return {
-        "can_edit": can_edit,
-        "can_change_password": can_change_password,
-        "can_delete": can_delete
+        "can_edit": manage,
+        "can_change_password": self_edit or manage,
+        "can_delete": manage,
     }

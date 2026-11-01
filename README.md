@@ -109,6 +109,25 @@ Rimuove il servizio, la configurazione nginx, `/opt/madmin-hub` (**PKI e backup 
 
 Anche con `--keep-db` il `SECRET_KEY` va perso insieme al `.env`, quindi i segreti nel database (TOTP, passphrase dei backup) non sono più leggibili. `--keep-db` serve a consultare i dati, non a reinstallare conservandoli: per questo basta rilanciare lo script di installazione.
 
+## Utenti e ruoli
+
+Ogni utente ha un **ruolo**, un **accesso** e, se partner o cliente, un **gruppo**:
+
+| Ruolo | Vede | Gruppo |
+|---|---|---|
+| Superuser | tutto l'hub | nessuno |
+| Partner | le istanze del partner e dei suoi clienti | un gruppo partner |
+| Cliente | le istanze del cliente | un gruppo cliente |
+
+| Accesso | Partner e cliente | Superuser |
+|---|---|---|
+| Sola lettura (`ro`) | istanze, backup, licenze, comandi | in più: supporto, enrollment, impostazioni, chiavi API, log (senza modificarli) |
+| Lettura e scrittura (`rw`) | in più: modifica delle istanze, backup (avvio, download, eliminazione, ripristino), utenti del proprio gruppo | tutto, compresi accesso di supporto, licenze, gruppi, revoca ed eliminazione di istanze |
+
+- Un partner o cliente con `rw` crea utenti solo dentro il proprio gruppo (un partner anche per i suoi clienti) e mai superuser.
+- Nessuno può cambiare ruolo, accesso o gruppo del proprio account.
+- Il primo utente, creato dallo script di installazione, è superuser `rw` e può essere modificato solo da sé stesso.
+
 ## Registrare un'istanza
 
 Il client dell'hub (`backend/core/hub/`, opzioni `--hub-*` di `setup-madmin.sh`) è nel branch `feat/hub-agent` del repository MADMIN e non ancora in `main`. Le istanze vanno installate da quel branch.

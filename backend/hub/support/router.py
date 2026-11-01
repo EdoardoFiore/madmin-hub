@@ -57,8 +57,8 @@ class SshOpen(_OpenBase):
     replace: bool = False
 
 
-async def _active_instance(session, instance_id: str) -> Instance:
-    instance = await get_instance_or_404(session, instance_id)
+async def _active_instance(session, instance_id: str, user: User) -> Instance:
+    instance = await get_instance_or_404(session, instance_id, user)
     if instance.status != "active":
         raise HTTPException(409, "Istanza non attiva")
     return instance
@@ -66,7 +66,7 @@ async def _active_instance(session, instance_id: str) -> Instance:
 
 @router.get("/support")
 async def list_open(session: AsyncSession = Depends(get_session),
-                    user: User = Depends(require_permission("support.access"))):
+                    user: User = Depends(require_permission("hub.view"))):
     rows = (await session.execute(
         select(SupportSession, Instance.name).join(Instance, Instance.id == SupportSession.instance_id)
         .where(SupportSession.status == "open").order_by(SupportSession.created_at.desc())
@@ -76,7 +76,7 @@ async def list_open(session: AsyncSession = Depends(get_session),
 
 @router.get("/instances/{instance_id}/support")
 async def list_for_instance(instance_id: str, session: AsyncSession = Depends(get_session),
-                            user: User = Depends(require_permission("support.access"))):
+                            user: User = Depends(require_permission("hub.view"))):
     rows = (await session.execute(
         select(SupportSession).where(SupportSession.instance_id == instance_id)
         .order_by(SupportSession.created_at.desc()).limit(100)
@@ -87,8 +87,8 @@ async def list_for_instance(instance_id: str, session: AsyncSession = Depends(ge
 @router.post("/instances/{instance_id}/support/ui", status_code=201)
 async def open_ui(instance_id: str, body: UiOpen, request: Request,
                   session: AsyncSession = Depends(get_session),
-                  user: User = Depends(require_permission("support.access"))):
-    instance = await _active_instance(session, instance_id)
+                  user: User = Depends(require_permission("hub.manage"))):
+    instance = await _active_instance(session, instance_id, user)
     check_capability(instance.id, protocol.CMD_SUPPORT_UI_OPEN)
     res = await service.open_ui(session, instance, user.username, body.minutes,
                                 body.allowed_ip or get_client_ip(request), body.reason)
@@ -99,8 +99,8 @@ async def open_ui(instance_id: str, body: UiOpen, request: Request,
 @router.post("/instances/{instance_id}/support/ssh", status_code=201)
 async def open_ssh(instance_id: str, body: SshOpen, request: Request,
                    session: AsyncSession = Depends(get_session),
-                   user: User = Depends(require_permission("support.access"))):
-    instance = await _active_instance(session, instance_id)
+                   user: User = Depends(require_permission("hub.manage"))):
+    instance = await _active_instance(session, instance_id, user)
     check_capability(instance.id, protocol.CMD_SUPPORT_SSH_GRANT)
     res = await service.open_ssh(session, instance, user.username, body.minutes,
                                  body.allowed_ip or get_client_ip(request), body.reason, body.public_key,
@@ -120,7 +120,7 @@ async def _open_session(session, session_id: str) -> SupportSession:
 
 @router.post("/support/{session_id}/ticket")
 async def new_ticket(session_id: str, session: AsyncSession = Depends(get_session),
-                     user: User = Depends(require_permission("support.access"))):
+                     user: User = Depends(require_permission("hub.manage"))):
     row = await _open_session(session, session_id)
     if row.kind != "ui":
         raise HTTPException(400, "Solo per sessioni UI")
@@ -129,7 +129,7 @@ async def new_ticket(session_id: str, session: AsyncSession = Depends(get_sessio
 
 @router.post("/support/{session_id}/close")
 async def close(session_id: str, session: AsyncSession = Depends(get_session),
-                user: User = Depends(require_permission("support.access"))):
+                user: User = Depends(require_permission("hub.manage"))):
     row = await _open_session(session, session_id)
     await service.close(session, row, by=user.username)
     return session_out(row)

@@ -7,7 +7,7 @@ import { checkPermission, setPageActions } from '../app.js';
 import { licenseTable, licenseModal } from './instances.js';
 
 export async function render(container) {
-    const manage = checkPermission('licenses.manage');
+    const manage = checkPermission('hub.manage');
     if (manage) {
         setPageActions(`<button class="btn btn-primary" ${actionAttrs('hubLicenseNewGlobal')}>
             <i class="ti ti-certificate me-1"></i>Emetti licenza</button>`);

@@ -5,7 +5,7 @@
 import { apiGet, apiPost } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions, loadingSpinner } from '../utils.js';
 import { setPageActions, getUser } from '../app.js';
-import { fmtDate, formModal, secretModal, formData, groupPath, labelBadges,
+import { fmtDate, formModal, secretModal, copyBlock, enrollTokenHelp, formData, groupPath, labelBadges,
          registrationFieldsHtml, registrationFieldsValue } from './hub-common.js';
 
 let containerEl = null;
@@ -95,7 +95,7 @@ function tokenModal() {
             max_uses: d.max_uses ? Number(d.max_uses) : null, bind_ip: d.bind_ip || null,
         });
         secretModal('Token di enrollment',
-            'Mostrato una sola volta. Salvalo in un file sull\'istanza e passalo a <code>setup-madmin.sh --hub-token-file</code> (oppure nella variabile MADMIN_HUB_TOKEN).',
+            enrollTokenHelp(res.token, { expiresAt: res.expires_at, maxUses: d.max_uses ? Number(d.max_uses) : null }),
             res.token);
         reload();
     }, { submitText: 'Crea' });
@@ -195,7 +195,14 @@ async function keyModal() {
             scopes: [...form.querySelectorAll('input[name=scope]:checked')].map(i => i.value),
             days: d.days ? Number(d.days) : null,
         });
-        secretModal('Chiave API', 'Mostrata una sola volta: va nel sistema di provisioning come <code>Authorization: Bearer &lt;chiave&gt;</code>.', res.key);
+        secretModal('Chiave API', `
+            <p class="text-muted mb-3">Mostrata <strong>una sola volta</strong>: salvala subito nel sistema di provisioning.
+                Funziona solo sulle API <code>/api/provisioning/*</code>, non nella UI.</p>
+            <h4 class="mb-1">Uso</h4>
+            <p class="mb-2">In ogni richiesta, come header:</p>
+            ${copyBlock(`Authorization: Bearer ${res.key}`)}
+            <p class="text-muted small mb-0">Documentazione: <code>docs/API.md</code> nel repository dell'hub.</p>`,
+            res.key);
         reload();
     }, { submitText: 'Crea', size: 'lg' });
 }

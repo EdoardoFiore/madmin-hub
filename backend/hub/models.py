@@ -242,7 +242,7 @@ class SupportSession(SQLModel, table=True):
     kind: str = Field(max_length=5)                 # ui | ssh
     operator: str = Field(max_length=100)
     reason: str = Field(default="", max_length=500)
-    status: str = Field(default="open", max_length=10, index=True)  # open | closed | expired
+    status: str = Field(default="open", max_length=10, index=True)  # open | closed | expired | replaced
     port: int
     allowed_ip: str = Field(max_length=45)
     username: str = Field(default="", max_length=60)    # ui: account on the instance

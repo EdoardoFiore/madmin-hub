@@ -52,6 +52,9 @@ class UiOpen(_OpenBase):
 
 class SshOpen(_OpenBase):
     public_key: str = Field(min_length=20, max_length=16384)
+    # The instance has one SSH grant: an open SSH session is closed and
+    # replaced only when asked (the UI warns first); otherwise 409
+    replace: bool = False
 
 
 async def _active_instance(session, instance_id: str) -> Instance:
@@ -100,7 +103,8 @@ async def open_ssh(instance_id: str, body: SshOpen, request: Request,
     instance = await _active_instance(session, instance_id)
     check_capability(instance.id, protocol.CMD_SUPPORT_SSH_GRANT)
     res = await service.open_ssh(session, instance, user.username, body.minutes,
-                                 body.allowed_ip or get_client_ip(request), body.reason, body.public_key)
+                                 body.allowed_ip or get_client_ip(request), body.reason, body.public_key,
+                                 replace=body.replace)
     return {"session": session_out(res["session"], instance.name),
             "certificate": res["certificate"], "command": res["command"]}
 

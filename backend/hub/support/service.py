@@ -103,16 +103,32 @@ async def new_ticket(session, row: SupportSession, operator: str) -> dict:
 
 
 async def open_ssh(session, instance: Instance, operator: str, minutes: int,
-                   allowed_ip: str, reason: str, public_key: str) -> dict:
+                   allowed_ip: str, reason: str, public_key: str, replace: bool = False) -> dict:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     # Validated before anything changes on the instance
     try:
         pki.load_ssh_public_key(public_key)
     except pki.PKIError as e:
         raise HTTPException(400, str(e))
+    # One SSH grant per instance (same principal for every session): two open
+    # sessions would share it, and closing either would revoke both
+    previous = (await session.execute(select(SupportSession).where(
+        SupportSession.instance_id == instance.id, SupportSession.kind == "ssh",
+        SupportSession.status == "open",
+    ))).scalars().all()
+    if previous and not replace:
+        p = previous[0]
+        raise HTTPException(409, f"Sessione SSH già attiva su questa istanza (operatore {p.operator}): "
+                                 "confermare la sostituzione per chiuderla")
     port = await _allocate_port(session)
     data = await run_command(session, instance.id, protocol.CMD_SUPPORT_SSH_GRANT,
                              {"minutes": minutes}, operator=operator)
+    # Only once the new grant is in place (a failed grant leaves the open
+    # session alone). No support.ssh.revoke for the old one: it would remove
+    # the grant just written. The grant replaced the principal line with the
+    # new expiry; closing the old listener cuts its connections, the only way in.
+    for p in previous:
+        await close(session, p, by=operator, status="replaced")
     principal = str(data.get("principal", ""))
     cert = pki.sign_ssh_user_cert(public_key, principal, f"{operator}@{instance.id}", expires_at)
     row = SupportSession(
@@ -132,7 +148,9 @@ async def open_ssh(session, instance: Instance, operator: str, minutes: int,
     return {
         "session": row,
         "certificate": cert,
-        "command": (f"ssh -p {port} -o CertificateFile=madmin-{instance.id[:8]}-cert.pub "
+        # Absolute (~ is expanded by ssh): a relative CertificateFile is looked
+        # up in the current directory and, when missing, silently skipped
+        "command": (f"ssh -p {port} -o CertificateFile=~/.ssh/madmin-{instance.id[:8]}-cert.pub "
                     f"-o HostKeyAlias=madmin-{instance.id} {user}@{host}"),
     }
 

@@ -81,7 +81,59 @@ export function formModal(title, bodyHtml, onSubmit, { submitText = 'Salva', sub
 }
 
 /** A value shown once (token, link, certificate), with a copy button. */
-export function secretModal(title, intro, value, extraHtml = '') {
+/**
+ * Read-only text (a command, token, key) with a Copy button. Works inside any
+ * modal opened by secretModal, which wires the buttons. Long single lines wrap
+ * in the textarea instead of overflowing.
+ */
+export function copyBlock(text, rows = null) {
+    const value = String(text ?? '');
+    const n = rows || Math.min(8, Math.max(1, value.split('\n').length, Math.ceil(value.length / 80)));
+    return `
+        <div class="mb-2">
+            <textarea class="form-control font-monospace small" rows="${n}" readonly
+                spellcheck="false" style="resize: vertical">${escapeHtml(value)}</textarea>
+            <button type="button" class="btn btn-sm btn-outline-primary mt-1" data-copy-text="${escapeHtml(value)}">
+                <i class="ti ti-copy me-1"></i>Copia
+            </button>
+        </div>`;
+}
+
+/**
+ * How to use an enrollment token on the instance, with the token already in
+ * the commands. Without a token: the same text with a placeholder.
+ */
+export function enrollTokenHelp(token = null, { expiresAt = null, maxUses = 1, reenroll = false } = {}) {
+    const t = token ? token.replace(/'/g, '') : '<token>';
+    const uses = reenroll ? 'Registra di nuovo <strong>questa istanza</strong> (stessa identità, backup e licenze)'
+        : !maxUses ? 'Utilizzabile da più istanze'
+        : maxUses === 1 ? 'Vale per <strong>una sola istanza</strong>'
+        : `Vale per <strong>${maxUses} istanze</strong>`;
+    const expiry = expiresAt ? ` e scade il <strong>${escapeHtml(fmtDate(expiresAt))}</strong>` : '';
+    return `
+        <p class="text-muted mb-3">
+            Mostrato <strong>una sola volta</strong>. ${uses}${expiry}.
+            I comandi vanno eseguiti come root sull'istanza; il client dell'hub è nel branch
+            <code>feat/hub-agent</code> di MADMIN.
+        </p>
+
+        <h4 class="mb-1">Nuova installazione di MADMIN</h4>
+        <p class="mb-2">Dalla cartella del repository MADMIN:</p>
+        ${copyBlock(`sudo MADMIN_HUB_TOKEN='${t}' bash scripts/setup-madmin.sh -u admin -p '<password>'`)}
+
+        <h4 class="mt-4 mb-1">MADMIN già installato</h4>
+        ${copyBlock(`cd /opt/madmin/backend && sudo MADMIN_HUB_TOKEN='${t}' ../venv/bin/python -m core.hub enroll`)}
+        <p class="text-muted small mb-0">
+            Se l'istanza è già registrata (anche su un altro hub) aggiungi <code>--force</code>.
+            Verifica con <code>cd /opt/madmin/backend && sudo ../venv/bin/python -m core.hub status</code>.
+        </p>`;
+}
+
+/**
+ * Modal for something shown once. `intro` is HTML (paragraphs, lists,
+ * copyBlock()s); `value`, when given, goes below it in a copy block.
+ */
+export function secretModal(title, intro, value = null, extraHtml = '') {
     const id = `hub-secret-${Date.now()}`;
     document.body.insertAdjacentHTML('beforeend', `
         <div class="modal modal-blur fade" id="${id}" tabindex="-1">
@@ -92,11 +144,8 @@ export function secretModal(title, intro, value, extraHtml = '') {
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
-                        <p>${intro}</p>
-                        <textarea class="form-control font-monospace" rows="4" readonly>${escapeHtml(value)}</textarea>
-                        <button type="button" class="btn btn-outline-primary mt-2" data-copy>
-                            <i class="ti ti-copy me-1"></i>Copia
-                        </button>
+                        <div class="mb-3">${intro}</div>
+                        ${value != null ? copyBlock(value, 4) : ''}
                         ${extraHtml}
                     </div>
                     <div class="modal-footer">
@@ -107,14 +156,17 @@ export function secretModal(title, intro, value, extraHtml = '') {
         </div>`);
     const el = document.getElementById(id);
     const modal = new bootstrap.Modal(el);
-    el.querySelector('[data-copy]').addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(value);
-            showToast('Copiato', 'success');
-        } catch {
-            el.querySelector('textarea').select();
-        }
+    el.querySelectorAll('[data-copy-text]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(btn.dataset.copyText);
+                showToast('Copiato', 'success');
+            } catch {
+                btn.previousElementSibling?.select();
+            }
+        });
     });
+    el.querySelectorAll('textarea[readonly]').forEach((t) => t.addEventListener('focus', () => t.select()));
     el.addEventListener('hidden.bs.modal', () => el.remove());
     modal.show();
 }

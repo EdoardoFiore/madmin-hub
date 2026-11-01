@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, apiDelete, getToken } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, loadingSpinner, formatBytes,
          actionAttrs, registerActions } from '../utils.js';
 import { checkPermission, setPageActions } from '../app.js';
-import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal,
+import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels } from './hub-common.js';
 
 const TABS = [
@@ -313,6 +313,8 @@ async function support(el, i) {
         ${sessionTable(rows)}`;
 }
 
+const SESSION_STATUS = { closed: 'chiusa', expired: 'scaduta', replaced: 'sostituita' };
+
 export function sessionTable(rows, showInstance = false) {
     return `<div class="table-responsive"><table class="table card-table table-vcenter">
         <thead><tr>${showInstance ? '<th>Istanza</th>' : ''}<th>Tipo</th><th>Operatore</th><th>Motivo</th><th>Porta</th>
@@ -322,7 +324,7 @@ export function sessionTable(rows, showInstance = false) {
             <td>${s.kind === 'ui' ? 'UI' : 'SSH'}</td><td>${escapeHtml(s.operator)}</td>
             <td class="text-muted">${escapeHtml(s.reason)}</td><td>${s.port}</td>
             <td class="font-monospace">${escapeHtml(s.allowed_ip)}</td><td>${fmtDate(s.expires_at)}</td>
-            <td>${s.status === 'open' ? '<span class="badge bg-warning-lt">aperta</span>' : `<span class="badge bg-secondary-lt">${escapeHtml(s.status)}</span>`}</td>
+            <td>${s.status === 'open' ? '<span class="badge bg-warning-lt">aperta</span>' : `<span class="badge bg-secondary-lt">${escapeHtml(SESSION_STATUS[s.status] || s.status)}</span>`}</td>
             <td class="text-end"><div class="btn-list justify-content-end">${s.status === 'open' ? `
                 ${s.kind === 'ui' ? `<button class="btn btn-sm btn-outline-primary" ${actionAttrs('hubSupportTicket', s.id)}>Nuovo link</button>` : ''}
                 <button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubSupportClose', s.id)}>Chiudi</button>` : ''}</div></td>
@@ -373,11 +375,66 @@ export function licenseModal(instanceId, onDone) {
     }, { submitText: 'Emetti' });
 }
 
+function sshSessionModal(res) {
+    const s = res.session || {};
+    const path = `~/.ssh/madmin-${current.id.slice(0, 8)}-cert.pub`;
+    // One line that writes the file: no editor in between (TextEdit on macOS
+    // would save rich text). The certificate never contains a single quote.
+    const save = `mkdir -p ~/.ssh && printf '%s\\n' '${res.certificate.trim()}' > ${path}`;
+    secretModal('Accesso SSH di supporto aperto', `
+        <p class="text-muted mb-3">
+            Valido fino a <strong>${escapeHtml(fmtDate(s.expires_at))}</strong>,
+            solo dall'IP <strong class="font-monospace">${escapeHtml(s.allowed_ip || '')}</strong>
+            e solo attraverso la porta <strong>${escapeHtml(String(s.port ?? ''))}</strong> dell'hub.
+        </p>
+
+        <h4 class="mb-1">1. Salva il certificato</h4>
+        <p class="mb-2">Nel terminale del tuo computer (macOS o Linux):</p>
+        ${copyBlock(save)}
+
+        <h4 class="mt-4 mb-1">2. Connettiti</h4>
+        ${copyBlock(res.command)}
+
+        <h4 class="mt-4 mb-1">Requisiti</h4>
+        <ul class="mb-3">
+            <li>La chiave privata della chiave pubblica che hai indicato deve essere in <code>~/.ssh/</code>
+                con un nome standard (<code>id_ed25519</code>, <code>id_rsa</code>, …) oppure caricata in ssh-agent.
+                Altrimenti aggiungi al comando <code>-i ~/.ssh/&lt;tua_chiave&gt;</code>.</li>
+            <li>Il certificato va salvato esattamente in <code>${escapeHtml(path)}</code>:
+                se ssh non lo trova lo ignora senza errori.</li>
+        </ul>
+
+        <details>
+            <summary class="text-muted">Se ti chiede la password</summary>
+            <p class="mt-2 mb-2">Il certificato non è stato usato. Ripeti il comando con <code>-v</code> e cerca:</p>
+            <ul class="mb-2">
+                <li><code>no identity cert loaded</code>: il file non è nel percorso indicato o è danneggiato.
+                    Controllalo con <code>ssh-keygen -L -f ${escapeHtml(path)}</code>.</li>
+                <li>nessuna riga <code>CERT</code> tra le chiavi offerte: la chiave privata non è stata trovata (vedi requisiti).</li>
+            </ul>
+        </details>
+
+        <details class="mt-2">
+            <summary class="text-muted">Certificato (per salvarlo a mano, es. su Windows)</summary>
+            <div class="mt-2">${copyBlock(res.certificate.trim(), 4)}</div>
+        </details>`);
+}
+
 export function uiLinkModal(res) {
-    secretModal('Accesso UI di supporto',
-        `Apri il link entro ${Math.round((res.ticket_ttl || 120) / 60)} minuti: vale una sola volta. Il browser segnalerà il certificato dell'istanza (autofirmato).`,
+    const s = res.session || {};
+    const until = s.expires_at
+        ? `<li>La sessione resta aperta fino a <strong>${escapeHtml(fmtDate(s.expires_at))}</strong>,
+               solo dall'IP <strong class="font-monospace">${escapeHtml(s.allowed_ip || '')}</strong>.</li>` : '';
+    secretModal('Accesso UI di supporto', `
+        <ul class="mb-0">
+            <li>Apri il link entro <strong>${Math.round((res.ticket_ttl || 120) / 60)} minuti</strong>: vale una sola volta.
+                Se scade, chiedine uno nuovo dalla scheda Supporto.</li>
+            <li>Il browser segnalerà il certificato dell'istanza (autofirmato): è normale, prosegui.</li>
+            ${until}
+        </ul>`,
         res.url,
-        `<a class="btn btn-primary mt-2 ms-2" href="${escapeHtml(res.url)}" target="_blank" rel="noopener noreferrer">Apri</a>`);
+        `<a class="btn btn-primary" href="${escapeHtml(res.url)}" target="_blank" rel="noopener noreferrer">
+            <i class="ti ti-external-link me-1"></i>Apri</a>`);
 }
 
 registerActions({
@@ -412,8 +469,9 @@ registerActions({
     hubReenroll: async () => {
         if (!await confirmDialog('Token re-enroll', 'Il token (monouso, 72 ore) registra di nuovo questa istanza mantenendo la stessa identità, backup e licenze: da usare con setup-madmin.sh --hub-token-file dopo una reinstallazione. Il certificato attuale viene revocato al suo utilizzo.', 'Genera', 'btn-primary')) return;
         try {
-            const { token } = await apiPost(`/enrollment/instances/${current.id}/reenroll`, {});
-            secretModal('Token re-enroll', 'Mostrato una sola volta.', token);
+            const res = await apiPost(`/enrollment/instances/${current.id}/reenroll`, {});
+            secretModal('Token re-enroll',
+                enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
         } catch (e) { showToast(e.message, 'error'); }
     },
     hubRevoke: async () => {
@@ -473,21 +531,37 @@ registerActions({
             reloadDetail('support');
         }, { submitText: 'Apri sessione' });
     },
-    hubSupportSsh: () => {
-        formModal('Accesso SSH root temporaneo', `${minutesField()}${reasonField}${ipField}
+    hubSupportSsh: async () => {
+        // The instance has one SSH grant: a new session replaces the open one
+        let open = [];
+        try {
+            open = (await apiGet(`/instances/${current.id}/support`))
+                .filter(s => s.kind === 'ssh' && s.status === 'open');
+        } catch (e) { showToast(e.message, 'error'); return; }
+        const warning = open.length ? `
+            <div class="alert alert-warning mb-3">
+                <h4 class="alert-title">Una sessione SSH è già attiva su questa istanza</h4>
+                <ul class="mb-2">${open.map(s => `
+                    <li>Operatore <strong>${escapeHtml(s.operator)}</strong>, IP <span class="font-monospace">${escapeHtml(s.allowed_ip)}</span>,
+                        scade il ${escapeHtml(fmtDate(s.expires_at))}<br>
+                        <span class="text-muted">${escapeHtml(s.reason)}</span></li>`).join('')}
+                </ul>
+                <div>L'istanza ammette un solo accesso SSH alla volta: proseguendo, la sessione attuale
+                    viene <strong>chiusa</strong> e chi è collegato viene disconnesso.</div>
+            </div>` : '';
+        formModal('Accesso SSH root temporaneo', `${warning}${minutesField()}${reasonField}${ipField}
             <div class="mb-3"><label class="form-label">La tua chiave pubblica SSH (ed25519 consigliata)</label>
                 <textarea name="public_key" class="form-control font-monospace" rows="3" required placeholder="ssh-ed25519 AAAA..."></textarea></div>`,
         async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ssh`, {
-                minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null, public_key: d.public_key });
-            const file = `madmin-${current.id.slice(0, 8)}-cert.pub`;
-            secretModal('Certificato SSH di supporto',
-                `Salva il certificato come <code>${escapeHtml(file)}</code> accanto alla tua chiave privata, poi connettiti con:<br>
-                 <code>${escapeHtml(res.command)}</code><br>Valido solo fino alla scadenza della sessione e solo attraverso il tunnel.`,
-                res.certificate);
+                minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null,
+                public_key: d.public_key, replace: open.length > 0 });
+            sshSessionModal(res);
             reloadDetail('support');
-        }, { submitText: 'Apri sessione', size: 'lg' });
+        }, open.length
+            ? { submitText: 'Chiudi la sessione attuale e apri', submitClass: 'btn-warning', size: 'lg' }
+            : { submitText: 'Apri sessione', size: 'lg' });
     },
     hubSupportTicket: async (id) => {
         try { uiLinkModal(await apiPost(`/support/${id}/ticket`, {})); } catch (e) { showToast(e.message, 'error'); }

@@ -87,7 +87,7 @@ The maximum frame size is 1 MB.
 | code | meaning | agent behaviour |
 |---|---|---|
 | 4400 | malformed frame / wrong version | reconnects with backoff |
-| 4401 | certificate unknown/revoked, instance not active | **stops**, marks itself revoked, waits for a new enrollment |
+| 4401 | certificate unknown/revoked, instance not active | **stops**, marks itself revoked, removes the support access (accounts, SSH grant, sshd CA), waits for a new enrollment |
 | 4409 | replaced by a newer connection of the same instance | reconnects |
 
 The newest connection wins: the hub closes the old one with 4409 and never refuses the new one.

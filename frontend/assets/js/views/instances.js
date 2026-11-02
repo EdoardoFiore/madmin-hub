@@ -1,12 +1,15 @@
 /**
- * MADMIN Hub - Instances: list (#instances) and detail (#instances/<id>/<tab>).
+ * MADMIN Hub - Instances: tree of groups and instances on the left, and on the
+ * right the overview of the fleet (#instances), of a group (#instances/group/<id>)
+ * or the detail of an instance (#instances/<id>/<tab>).
  */
 import { apiGet, apiPost, apiPatch, apiDelete, getToken } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, loadingSpinner, formatBytes,
          actionAttrs, registerActions } from '../utils.js';
 import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
-         formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels } from './hub-common.js';
+         formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
+         cmpVersion, meter } from './hub-common.js';
 
 const TABS = [
     ['overview', 'Panoramica', 'scope.view'],
@@ -19,97 +22,450 @@ const TABS = [
 
 let groups = [];
 let current = null;   // instance shown in the detail
-let containerEl = null;
+let mainEl = null;    // right pane: overview or detail
+
+// ============== TREE (left) ==============
+// The shell empties the page on every route change, so the tree is rebuilt
+// each time: the lists are cached for a few seconds, and the filters, the
+// collapsed groups and the scroll position live here to survive navigation.
+
+const CACHE_MS = 15000;
+const REFRESH_MS = 30000;
+const COLLAPSED_KEY = 'hub.treeCollapsed';
+
+let instances = [];   // every instance in scope, any status
+let fetchedAt = 0;
+let filterQ = '';
+let filterStatus = 'active';
+let treeScroll = 0;
+let selected = { kind: 'root', id: null };
+let refreshTimer = null;
+
+const STATUS_FILTERS = [
+    ['active', 'Attive', i => i.status === 'active'],
+    ['online', 'Online', i => i.status === 'active' && i.online],
+    ['offline', 'Offline', i => i.status === 'active' && !i.online],
+    ['revoked', 'Revocate', i => i.status === 'revoked'],
+    ['decommissioned', 'Dismesse', i => i.status === 'decommissioned'],
+    ['', 'Tutti gli stati', () => true],
+];
+
+let collapsed = new Set();
+try { collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { /* all open */ }
+
+function saveCollapsed() {
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch { /* not remembered */ }
+}
+
+async function fetchLists(force = false) {
+    if (!force && Date.now() - fetchedAt < CACHE_MS) return;
+    const [g, list] = await Promise.all([apiGet('/groups').catch(() => []), apiGet('/instances')]);
+    groups = g;
+    instances = list;
+    fetchedAt = Date.now();
+}
+
+/** Groups by id, top level (a customer whose partner is out of scope is top level too), children. */
+function hierarchy() {
+    const byId = Object.fromEntries(groups.map(g => [g.id, g]));
+    return {
+        byId,
+        top: groups.filter(g => !g.parent_id || !byId[g.parent_id]),
+        children: id => groups.filter(g => g.parent_id === id),
+    };
+}
+
+function subtreeIds(groupId) {
+    return new Set([groupId, ...hierarchy().children(groupId).map(c => c.id)]);
+}
+
+function groupIcon(g, extra = '') {
+    return g.kind === 'partner'
+        ? `<i class="ti ti-briefcase text-purple ${extra}" title="Partner"></i>`
+        : `<i class="ti ti-building text-azure ${extra}" title="Cliente"></i>`;
+}
+
+/** The newest MADMIN version among the active instances in scope. */
+function latestVersion() {
+    let latest = null;
+    for (const i of instances) {
+        if (i.status === 'active' && i.madmin_version && (!latest || cmpVersion(i.madmin_version, latest) > 0)) latest = i.madmin_version;
+    }
+    return latest;
+}
+
+const isOutdated = (i, latest) => !!(latest && i.status === 'active' && i.madmin_version && cmpVersion(i.madmin_version, latest) < 0);
+
+function summary(list, latest) {
+    const active = list.filter(i => i.status === 'active');
+    const online = active.filter(i => i.online).length;
+    return { total: list.length, active: active.length, online, offline: active.length - online,
+             outdated: active.filter(i => isOutdated(i, latest)).length };
+}
+
+const passesStatus = i => (STATUS_FILTERS.find(([v]) => v === filterStatus) || STATUS_FILTERS[0])[2](i);
+
+function passesSearch(i) {
+    if (!filterQ) return true;
+    const q = filterQ.toLowerCase();
+    return [i.name, i.hostname, i.last_ip, i.id, i.external_ref, i.madmin_version,
+            ...Object.entries(i.labels || {}).map(([k, v]) => `${k}=${v}`)]
+        .some(v => v && String(v).toLowerCase().includes(q));
+}
+
+function statusDot(i) {
+    if (i.status !== 'active') return '<span class="status-dot bg-secondary"></span>';
+    return i.online ? '<span class="status-dot bg-success"></span>' : '<span class="status-dot bg-danger"></span>';
+}
+
+function versionTag(i, latest) {
+    if (!i.madmin_version) return '';
+    const old = isOutdated(i, latest);
+    return `<span class="tree-ver ${old ? 'text-warning' : 'text-muted'}"
+        title="${old ? `Versione precedente all'ultima nel parco (${escapeHtml(latest)})` : 'Versione MADMIN'}">${escapeHtml(i.madmin_version)}</span>`;
+}
+
+function countTag(s) {
+    if (!s.active) return '<span class="tree-count text-muted">0</span>';
+    return `<span class="tree-count ${s.offline ? 'text-danger' : 'text-success'}"
+        title="${s.online} online su ${s.active} attive">${s.online}/${s.active}</span>`;
+}
+
+function renderTree() {
+    const tree = document.getElementById('inst-tree');
+    if (!tree) return;
+    const latest = latestVersion();
+    const q = filterQ.toLowerCase();
+    const { byId, top, children } = hierarchy();
+    const shown = instances.filter(passesStatus);
+
+    const leaf = (i, depth) => {
+        const title = [i.status === 'active' ? (i.online ? 'Online' : `Offline, ultimo contatto ${relTime(i.last_seen_at)}`)
+                                             : (i.status === 'revoked' ? 'Revocata' : 'Dismessa'),
+                       i.last_ip, i.madmin_version && `MADMIN ${i.madmin_version}`].filter(Boolean).join(' · ');
+        return `<a class="tree-node ${i.status !== 'active' ? 'inactive' : ''} ${selected.kind === 'instance' && selected.id === i.id ? 'active' : ''}"
+                href="#instances/${escapeHtml(i.id)}" style="--depth:${depth}" title="${escapeHtml(title)}">
+            <span class="tree-toggle"></span>${statusDot(i)}
+            <span class="tree-name ms-2">${escapeHtml(i.name)}</span>${versionTag(i, latest)}</a>`;
+    };
+
+    // A group whose name matches the search shows all its instances
+    const node = (g, depth, whole = false) => {
+        whole = whole || (q && g.name.toLowerCase().includes(q));
+        const kids = children(g.id).map(c => node(c, depth + 1, whole)).filter(Boolean);
+        const own = shown.filter(i => i.group_id === g.id && (whole || passesSearch(i)));
+        if (q && !whole && !kids.length && !own.length) return '';
+        const open = q || !collapsed.has(g.id);
+        const toggle = kids.length || own.length
+            ? `<span class="tree-toggle" data-toggle="${escapeHtml(g.id)}" title="${open ? 'Comprimi' : 'Espandi'}">
+                   <i class="ti ti-chevron-${open ? 'down' : 'right'}"></i></span>`
+            : '<span class="tree-toggle"></span>';
+        const ids = subtreeIds(g.id);
+        return `<a class="tree-node ${selected.kind === 'group' && selected.id === g.id ? 'active' : ''}"
+                href="#instances/group/${escapeHtml(g.id)}" style="--depth:${depth}">
+                ${toggle}${groupIcon(g)}<span class="tree-name fw-medium ms-2">${escapeHtml(g.name)}</span>
+                ${countTag(summary(instances.filter(i => ids.has(i.group_id)), latest))}</a>
+            ${open ? kids.join('') + own.map(i => leaf(i, depth + 1)).join('') : ''}`;
+    };
+
+    const groupsHtml = top.map(g => node(g, 1)).join('');
+    const loose = shown.filter(i => !byId[i.group_id] && passesSearch(i)).map(i => leaf(i, 1)).join('');
+    tree.innerHTML = `
+        <a class="tree-node ${selected.kind === 'root' ? 'active' : ''}" href="#instances" style="--depth:0">
+            <i class="ti ti-sitemap"></i><span class="tree-name fw-bold ms-2">Tutte le istanze</span>
+            ${countTag(summary(instances, latest))}</a>
+        ${groupsHtml}${loose}
+        ${groupsHtml || loose ? '' : `<div class="text-muted small px-3 py-2">${instances.length
+            ? 'Nessuna istanza corrisponde ai filtri.' : 'Nessuna istanza registrata.'}</div>`}`;
+}
+
+/** Search or status changed: the tree, and the instance table of an overview. */
+function onFilter() {
+    renderTree();
+    if (selected.kind !== 'instance') renderOverviewTable();
+}
 
 export async function render(container, params = []) {
-    containerEl = container;
-    groups = await apiGet('/groups').catch(() => []);
-    if (params[0]) {
-        await renderDetail(container, params[0], params[1] || 'overview');
-    } else {
-        await renderList(container);
-    }
-}
+    clearInterval(refreshTimer);
+    destroyCharts();
+    await fetchLists();
+    selected = params[0] === 'group' ? { kind: 'group', id: params[1] }
+        : params[0] ? { kind: 'instance', id: params[0] } : { kind: 'root', id: null };
+    // Enrolled after the lists were cached
+    if (selected.kind === 'instance' && !instances.some(i => i.id === selected.id)) await fetchLists(true);
 
-// ============== LIST ==============
-
-async function renderList(container) {
-    if (checkPermission('hub.manage')) {
-        setPageActions(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroups')}>
-            <i class="ti ti-folders me-1"></i>Gruppi</button>`);
+    // What is opened (also from a link elsewhere) is expanded, with its partner
+    const { byId } = hierarchy();
+    const opened = selected.kind === 'group' ? selected.id : instances.find(i => i.id === selected.id)?.group_id;
+    for (let g = byId[opened]; g; g = byId[g.parent_id]) {
+        if (collapsed.delete(g.id)) saveCollapsed();
     }
+
+    // On a phone the tree is shown only on the first page
     container.innerHTML = `
-        <div class="card">
-            <div class="card-header">
-                <div class="row g-2 w-100">
-                    <div class="col-md-5"><input id="inst-q" class="form-control" placeholder="Cerca nome, hostname, IP, ID, riferimento, etichetta"></div>
-                    <div class="col-md-3">
-                        <select id="inst-status" class="form-select">
-                            <option value="">Tutti gli stati</option>
-                            <option value="active" selected>Attive</option>
-                            <option value="revoked">Revocate</option>
-                            <option value="decommissioned">Dismesse</option>
+        <div class="inst-layout">
+            <div class="inst-side ${selected.kind === 'root' ? '' : 'd-none d-lg-block'}">
+                <div class="card inst-tree-card">
+                    <div class="card-body p-2 border-bottom">
+                        <div class="input-icon mb-2">
+                            <span class="input-icon-addon"><i class="ti ti-search"></i></span>
+                            <input id="inst-q" class="form-control form-control-sm" value="${escapeHtml(filterQ)}"
+                                placeholder="Nome, hostname, IP, ID, etichetta, gruppo" aria-label="Cerca">
+                        </div>
+                        <select id="inst-status" class="form-select form-select-sm" aria-label="Stato">
+                            ${STATUS_FILTERS.map(([v, label]) => `<option value="${v}" ${v === filterStatus ? 'selected' : ''}>${label}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="col-md-4">
-                        <select id="inst-group" class="form-select">
-                            <option value="">Tutti i gruppi</option>
-                            <option value="none">Senza gruppo (sito principale)</option>
-                            ${groupOptions(groups, '', { none: null })}
-                        </select>
-                    </div>
+                    <div class="inst-tree" id="inst-tree"></div>
                 </div>
             </div>
-            <div id="inst-table">${loadingSpinner()}</div>
+            <div class="inst-main" id="inst-main">${loadingSpinner()}</div>
         </div>`;
-    const reload = () => loadList().catch(e => showToast(e.message, 'error'));
+
+    const tree = container.querySelector('#inst-tree');
+    tree.addEventListener('scroll', () => { treeScroll = tree.scrollTop; });
+    tree.addEventListener('click', (e) => {
+        const t = e.target.closest('[data-toggle]');
+        if (!t) return;
+        e.preventDefault();   // the chevron sits inside the group's link
+        collapsed.has(t.dataset.toggle) ? collapsed.delete(t.dataset.toggle) : collapsed.add(t.dataset.toggle);
+        saveCollapsed();
+        renderTree();
+    });
     let debounce;
-    container.querySelector('#inst-q').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(reload, 300); });
-    container.querySelector('#inst-status').addEventListener('change', reload);
-    container.querySelector('#inst-group').addEventListener('change', reload);
-    await reload();
+    container.querySelector('#inst-q').addEventListener('input', (e) => {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => { filterQ = e.target.value.trim(); onFilter(); }, 200);
+    });
+    container.querySelector('#inst-status').addEventListener('change', (e) => { filterStatus = e.target.value; onFilter(); });
+    renderTree();
+    tree.scrollTop = treeScroll;
+    const active = tree.querySelector('.tree-node.active');
+    if (active && (active.offsetTop < tree.scrollTop || active.offsetTop > tree.scrollTop + tree.clientHeight - active.offsetHeight)) {
+        tree.scrollTop = active.offsetTop - tree.clientHeight / 2;
+    }
+
+    // Online/offline kept current while the page is open
+    refreshTimer = setInterval(async () => {
+        if (!document.body.contains(tree) || !location.hash.startsWith('#instances')) {
+            clearInterval(refreshTimer);
+            return;
+        }
+        try { await fetchLists(true); renderTree(); } catch { /* next round */ }
+    }, REFRESH_MS);
+
+    mainEl = container.querySelector('#inst-main');
+    try {
+        if (selected.kind === 'instance') await renderDetail(mainEl, selected.id, params[1] || 'overview');
+        else renderGroup(mainEl, selected.id);
+    } catch (e) {
+        mainEl.innerHTML = `<div class="card"><div class="card-body text-danger">${escapeHtml(e.message)}</div></div>`;
+    }
 }
 
-async function loadList() {
-    const p = new URLSearchParams();
-    const q = containerEl.querySelector('#inst-q').value.trim();
-    const status = containerEl.querySelector('#inst-status').value;
-    const group = containerEl.querySelector('#inst-group').value;
-    if (q) p.set('q', q);
-    if (status) p.set('status', status);
-    if (group) p.set('group_id', group);
-    const rows = await apiGet(`/instances?${p}`);
-    const groupName = id => groupPath(groups, id);
-    containerEl.querySelector('#inst-table').innerHTML = rows.length ? `
+/** Fresh lists, then the tree: after a change made from this page. */
+async function reloadTree() {
+    try { await fetchLists(true); } catch { return; }
+    renderTree();
+}
+
+function breadcrumb(groupId, includeLast = true) {
+    const { byId } = hierarchy();
+    const chain = [];
+    for (let g = byId[groupId]; g; g = byId[g.parent_id]) chain.unshift(g);
+    if (!includeLast) chain.pop();
+    return `<ol class="breadcrumb inst-crumbs mb-1">
+        <li class="breadcrumb-item"><a href="#instances"><i class="ti ti-sitemap me-1"></i>Tutte le istanze</a></li>
+        ${chain.map(g => `<li class="breadcrumb-item"><a href="#instances/group/${escapeHtml(g.id)}">${groupIcon(g, 'me-1')}${escapeHtml(g.name)}</a></li>`).join('')}
+    </ol>`;
+}
+
+// ============== OVERVIEW (fleet or group) ==============
+
+const DISK_WARN = 85;
+const MEM_WARN = 90;
+const ISSUES_SHOWN = 8;
+
+let overviewGroups = null;   // group ids of the overview shown, null = all
+
+function statCard(label, value, cls = '', sub = '') {
+    return `
+        <div class="col-6 col-xl-3">
+            <div class="card card-sm"><div class="card-body">
+                <div class="subheader">${label}</div>
+                <div class="h1 mb-0 ${cls}">${value}</div>
+                ${sub ? `<div class="small text-muted text-truncate">${sub}</div>` : ''}
+            </div></div>
+        </div>`;
+}
+
+function renderGroup(el, groupId) {
+    const { byId, top, children } = hierarchy();
+    const g = groupId ? byId[groupId] : null;
+    const hub = checkPermission('hub.manage');
+    const actions = [];
+    if (hub) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroups')}><i class="ti ti-folders me-1"></i>Gruppi</button>`);
+    if (hub && g) {
+        actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroupEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
+        actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('hubGroupDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
+    }
+    setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
+    if (groupId && !g) {
+        overviewGroups = new Set();
+        el.innerHTML = `<div class="card"><div class="card-body text-muted">Gruppo non trovato.</div></div>`;
+        return;
+    }
+
+    overviewGroups = g ? subtreeIds(g.id) : null;
+    const list = instances.filter(i => !overviewGroups || overviewGroups.has(i.group_id));
+    const latest = latestVersion();
+    const s = summary(list, latest);
+    const active = list.filter(i => i.status === 'active');
+
+    // Versions of the active instances, newest first
+    const versions = {};
+    for (const i of active) versions[i.madmin_version || '?'] = (versions[i.madmin_version || '?'] || 0) + 1;
+    const versionRows = Object.entries(versions).sort((a, b) => cmpVersion(b[0], a[0])).map(([v, n]) => `
+        <tr><td class="font-monospace">${escapeHtml(v)}
+                ${v === latest ? '<span class="badge bg-success-lt ms-1">ultima</span>' : ''}</td>
+            <td style="width: 45%"><div class="progress progress-sm"><div class="progress-bar ${v === latest ? 'bg-success' : 'bg-warning'}"
+                style="width: ${Math.round(n * 100 / active.length)}%"></div></div></td>
+            <td class="text-end">${n}</td></tr>`).join('')
+        || '<tr><td class="text-muted">Nessuna istanza attiva</td></tr>';
+
+    // What needs a look: offline, nearly full, behind
+    const issues = [];
+    for (const i of active) {
+        const st = i.stats || {};
+        if (!i.online) issues.push([i, 'ti-plug-connected-x text-danger', `Offline, ultimo contatto ${relTime(i.last_seen_at)}`]);
+        else {
+            if (st.disk_percent >= DISK_WARN) issues.push([i, 'ti-database text-warning', `Disco al ${Math.round(st.disk_percent)}%`]);
+            if (st.mem_percent >= MEM_WARN) issues.push([i, 'ti-cpu text-warning', `RAM al ${Math.round(st.mem_percent)}%`]);
+        }
+        if (isOutdated(i, latest)) issues.push([i, 'ti-arrow-up-circle text-warning', `MADMIN ${escapeHtml(i.madmin_version)}, ultima ${escapeHtml(latest)}`]);
+    }
+    const issueRows = issues.slice(0, ISSUES_SHOWN).map(([i, icon, text]) => `
+        <tr class="cursor-pointer" ${actionAttrs('hubOpenInstance', i.id)}>
+            <td style="width: 1%"><i class="ti ${icon}"></i></td>
+            <td><strong>${escapeHtml(i.name)}</strong></td><td class="text-muted">${text}</td></tr>`).join('');
+
+    // Children: the customers of a partner, the top-level groups of the fleet
+    const subgroups = g ? children(g.id) : top;
+    const groupRows = subgroups.map(c => {
+        const ids = subtreeIds(c.id);
+        const cs = summary(instances.filter(i => ids.has(i.group_id)), latest);
+        return `<tr>
+            <td><a href="#instances/group/${escapeHtml(c.id)}">${groupIcon(c, 'me-1')}${escapeHtml(c.name)}</a></td>
+            <td class="text-muted">${c.kind === 'partner' ? 'Partner' : 'Cliente'}</td>
+            <td class="text-end">${cs.active}</td>
+            <td class="text-end text-success">${cs.online}</td>
+            <td class="text-end ${cs.offline ? 'text-danger' : 'text-muted'}">${cs.offline}</td>
+            <td class="text-end ${cs.outdated ? 'text-warning' : 'text-muted'}">${cs.outdated}</td></tr>`;
+    }).join('');
+
+    el.innerHTML = `
+        <div class="mb-3">
+            ${g ? breadcrumb(g.id, false) : ''}
+            <h2 class="mb-0">${g ? `${groupIcon(g, 'me-1')}${escapeHtml(g.name)}
+                <span class="badge ${g.kind === 'partner' ? 'bg-purple-lt' : 'bg-azure-lt'} ms-1">${g.kind === 'partner' ? 'Partner' : 'Cliente'}</span>`
+                : '<i class="ti ti-sitemap me-1"></i>Tutte le istanze'}</h2>
+            ${g?.description ? `<div class="text-muted">${escapeHtml(g.description)}</div>` : ''}
+        </div>
+        <div class="row row-cards mb-3">
+            ${statCard('Istanze attive', s.active, '', s.total > s.active ? `${s.total - s.active} revocate o dismesse` : '')}
+            ${statCard('Online', s.online, 'text-success', s.active ? `${Math.round(s.online * 100 / s.active)}%` : '')}
+            ${statCard('Offline', s.offline, s.offline ? 'text-danger' : '')}
+            ${statCard('Da aggiornare', s.outdated, s.outdated ? 'text-warning' : '', latest ? `ultima versione ${escapeHtml(latest)}` : '')}
+        </div>
+        <div class="row row-cards mb-3">
+            <div class="col-lg-5">
+                <div class="card h-100">
+                    <div class="card-header"><h3 class="card-title">Versioni MADMIN</h3></div>
+                    <table class="table card-table table-vcenter"><tbody>${versionRows}</tbody></table>
+                </div>
+            </div>
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-header"><h3 class="card-title">Da controllare</h3>
+                        ${issues.length ? `<div class="card-actions"><span class="badge bg-warning-lt">${issues.length}</span></div>` : ''}</div>
+                    ${issues.length ? `<div class="table-responsive"><table class="table card-table table-vcenter table-hover"><tbody>${issueRows}</tbody></table></div>
+                        ${issues.length > ISSUES_SHOWN ? `<div class="card-footer text-muted small">e altre ${issues.length - ISSUES_SHOWN} segnalazioni</div>` : ''}`
+                        : '<div class="card-body text-muted"><i class="ti ti-circle-check text-success me-1"></i>Tutte le istanze attive sono online e aggiornate.</div>'}
+                </div>
+            </div>
+        </div>
+        ${subgroups.length ? `
+        <div class="card mb-3">
+            <div class="card-header"><h3 class="card-title">${g ? 'Clienti' : 'Partner e clienti'}</h3></div>
+            <div class="table-responsive"><table class="table card-table table-vcenter">
+                <thead><tr><th>Gruppo</th><th>Tipo</th><th class="text-end">Attive</th><th class="text-end">Online</th>
+                    <th class="text-end">Offline</th><th class="text-end">Da aggiornare</th></tr></thead>
+                <tbody>${groupRows}</tbody></table></div>
+        </div>` : ''}
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Istanze</h3><div class="card-actions text-muted small" id="ov-inst-count"></div></div>
+            <div id="ov-inst-table"></div>
+        </div>`;
+    renderOverviewTable();
+}
+
+/** Instances of the overview shown, with the filters of the tree. */
+function renderOverviewTable() {
+    const box = document.getElementById('ov-inst-table');
+    if (!box) return;
+    const all = instances.filter(i => !overviewGroups || overviewGroups.has(i.group_id));
+    const rows = all.filter(i => passesStatus(i) && passesSearch(i));
+    const latest = latestVersion();
+    // A customer's page has a single group: no column for it
+    const showGroup = !overviewGroups || overviewGroups.size > 1;
+    document.getElementById('ov-inst-count').textContent =
+        rows.length === all.length ? `${all.length}` : `${rows.length} di ${all.length} (filtri a sinistra)`;
+    box.innerHTML = rows.length ? `
         <div class="table-responsive">
             <table class="table card-table table-vcenter table-hover">
-                <thead><tr><th>Nome</th><th>Stato</th><th>Hostname</th><th>IP sorgente</th>
-                    <th>Versione</th><th>Gruppo</th><th>Ultimo contatto</th></tr></thead>
-                <tbody>${rows.map(i => `
+                <thead><tr><th>Stato</th><th>Nome</th>${showGroup ? '<th>Gruppo</th>' : ''}<th>Versione</th>
+                    <th>IP sorgente</th><th style="min-width: 170px">Risorse</th><th>Ultimo contatto</th></tr></thead>
+                <tbody>${rows.map(i => {
+                    const st = i.stats || {};
+                    return `
                     <tr class="cursor-pointer" ${actionAttrs('hubOpenInstance', i.id)}>
+                        <td>${onlineBadge(i)}</td>
                         <td><strong>${escapeHtml(i.name)}</strong>
+                            ${i.hostname && i.hostname !== i.name ? `<div class="small text-muted">${escapeHtml(i.hostname)}</div>` : ''}
                             ${i.external_ref ? `<div class="small text-muted font-monospace">${escapeHtml(i.external_ref)}</div>` : ''}
                             <div>${labelBadges(i.labels)}</div></td>
-                        <td>${onlineBadge(i)}</td>
-                        <td>${escapeHtml(i.hostname || '-')}</td>
-                        <td>${escapeHtml(i.last_ip || '-')}</td>
-                        <td>${escapeHtml(i.madmin_version || '-')}</td>
-                        <td>${escapeHtml(groupName(i.group_id))}</td>
+                        ${showGroup ? `<td class="text-muted">${escapeHtml(groupPath(groups, i.group_id) || '-')}</td>` : ''}
+                        <td class="font-monospace ${isOutdated(i, latest) ? 'text-warning' : ''}">${escapeHtml(i.madmin_version || '-')}</td>
+                        <td class="font-monospace">${escapeHtml(i.last_ip || '-')}</td>
+                        <td>${i.online && st.cpu_percent !== undefined
+                            ? meter('CPU', st.cpu_percent) + meter('RAM', st.mem_percent) + meter('Disco', st.disk_percent)
+                            : '<span class="text-muted">-</span>'}</td>
                         <td>${i.online ? 'ora' : relTime(i.last_seen_at)}</td>
-                    </tr>`).join('')}
+                    </tr>`;
+                }).join('')}
                 </tbody>
             </table>
-        </div>` : '<div class="card-body text-muted">Nessuna istanza. Crea un token in Enrollment e installa MADMIN con --hub-token-file.</div>';
+        </div>`
+        : `<div class="card-body text-muted">${all.length ? 'Nessuna istanza corrisponde ai filtri.'
+            : 'Nessuna istanza. Crea un token in Enrollment e installa MADMIN con --hub-token-file.'}</div>`;
 }
 
 function groupsModal() {
-    const kindLabel = k => k === 'partner' ? '<span class="badge bg-purple-lt">partner</span>' : '<span class="badge bg-blue-lt">cliente</span>';
+    const kindLabel = k => k === 'partner'
+        ? '<span class="badge bg-purple-lt"><i class="ti ti-briefcase me-1"></i>partner</span>'
+        : '<span class="badge bg-azure-lt"><i class="ti ti-building me-1"></i>cliente</span>';
     const list = () => groups.map(g => `
         <tr><td>${g.parent_id ? '<span class="text-muted ms-3">└</span> ' : ''}${escapeHtml(g.name)} ${kindLabel(g.kind)}</td>
         <td class="text-muted">${escapeHtml(g.description)}</td><td>${g.instances}</td>
         <td class="text-end"><button type="button" class="btn btn-sm btn-ghost-danger" data-del="${escapeHtml(g.id)}">
         <i class="ti ti-trash"></i></button></td></tr>`).join('') || '<tr><td class="text-muted">Nessun gruppo</td></tr>';
     const parentSelect = () => groupOptions(groups, '', { none: 'Sito principale (primo livello)', partnersOnly: true });
+    const changed = async () => {
+        await fetchLists(true);
+        el.querySelector('#grp-list').innerHTML = list();
+        el.querySelector('#grp-parent').innerHTML = parentSelect();
+        renderTree();
+    };
     const el = formModal('Partner e clienti', `
         <p class="text-muted small">Il sito principale vede tutto. Sotto ci sono clienti diretti, oppure partner con i propri clienti.</p>
         <table class="table table-sm"><thead><tr><th>Gruppo</th><th>Descrizione</th><th>Istanze</th><th></th></tr></thead>
@@ -124,20 +480,20 @@ function groupsModal() {
         if (!d.name) throw new Error('Nome obbligatorio');
         if (d.kind === 'partner' && d.parent_id) throw new Error('Un partner sta solo al primo livello');
         await apiPost('/groups', { name: d.name, kind: d.kind, parent_id: d.parent_id || null, description: d.description });
-        groups = await apiGet('/groups');
         form.reset();
-        el.querySelector('#grp-list').innerHTML = list();
-        el.querySelector('#grp-parent').innerHTML = parentSelect();
+        await changed();
         return false;
     }, { submitText: 'Aggiungi', size: 'lg' });
+    // The overview counts the groups too
+    el.addEventListener('hidden.bs.modal', () => {
+        if (selected.kind !== 'instance' && document.body.contains(mainEl)) renderGroup(mainEl, selected.id);
+    });
     el.addEventListener('click', async (e) => {
         const id = e.target.closest('[data-del]')?.dataset.del;
         if (!id) return;
         try {
             await apiDelete(`/groups/${id}`);
-            groups = await apiGet('/groups');
-            el.querySelector('#grp-list').innerHTML = list();
-            el.querySelector('#grp-parent').innerHTML = parentSelect();
+            await changed();
         } catch (err) { showToast(err.message, 'error'); }
     });
 }
@@ -161,10 +517,10 @@ async function renderDetail(container, id, tab) {
 
     container.innerHTML = `
         <div class="mb-3">
-            <a href="#instances" class="text-muted"><i class="ti ti-arrow-left"></i> Istanze</a>
-            <h2 class="mt-1 mb-0">${escapeHtml(i.name)} ${onlineBadge(i)}</h2>
+            ${breadcrumb(i.group_id)}
+            <h2 class="mb-0">${escapeHtml(i.name)} ${onlineBadge(i)}</h2>
             <div class="text-muted small font-monospace">${escapeHtml(i.id)}</div>
-            <div class="mt-1">${i.group_id ? `<span class="badge bg-blue-lt me-1">${escapeHtml(groupPath(groups, i.group_id))}</span>` : ''}${labelBadges(i.labels)}</div>
+            <div class="mt-1">${labelBadges(i.labels)}</div>
         </div>
         ${i.clone_suspects?.length ? `<div class="alert alert-warning">Stesso machine-id di:
             ${i.clone_suspects.map(c => `<a href="#instances/${escapeHtml(c.id)}">${escapeHtml(c.name)}</a>`).join(', ')}
@@ -526,7 +882,11 @@ async function commands(el, i) {
         </tbody></table></div>`;
 }
 
-const reloadDetail = (tab) => renderDetail(containerEl, current.id, tab);
+// The tree too: name, group or status may have changed
+const reloadDetail = (tab) => {
+    reloadTree();
+    return renderDetail(mainEl, current.id, tab);
+};
 
 function minutesField(def = 60) {
     return `<div class="mb-3"><label class="form-label">Durata (minuti)</label>
@@ -672,6 +1032,31 @@ export function uiLinkModal(res) {
 registerActions({
     hubOpenInstance: (id) => { location.hash = `#instances/${id}`; },
     hubGroups: groupsModal,
+    hubGroupEdit: () => {
+        const g = hierarchy().byId[selected.id];
+        if (!g) return;
+        formModal(g.kind === 'partner' ? 'Modifica partner' : 'Modifica cliente', `
+            <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(g.name)}" required maxlength="100"></div>
+            <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(g.description)}" maxlength="500"></div>`,
+        async (form) => {
+            const d = formData(form);
+            if (!d.name) throw new Error('Nome obbligatorio');
+            await apiPatch(`/groups/${g.id}`, { name: d.name, description: d.description });
+            await fetchLists(true);
+            renderTree();
+            renderGroup(mainEl, g.id);
+        });
+    },
+    hubGroupDelete: async () => {
+        const g = hierarchy().byId[selected.id];
+        if (!g) return;
+        if (!await confirmDialog('Elimina gruppo', `Eliminare ${g.kind === 'partner' ? 'il partner' : 'il cliente'} ${g.name}? Deve essere vuoto: senza istanze, clienti e utenti.`, 'Elimina')) return;
+        try {
+            await apiDelete(`/groups/${g.id}`);
+            fetchedAt = 0;
+            location.hash = g.parent_id ? `#instances/group/${g.parent_id}` : '#instances';
+        } catch (e) { showToast(e.message, 'error'); }
+    },
     hubRefresh: async () => {
         try { await apiPost(`/instances/${current.id}/refresh`, {}); showToast('Dati aggiornati', 'success'); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
@@ -717,7 +1102,11 @@ registerActions({
     },
     hubDelete: async () => {
         if (!await confirmDialog('Elimina istanza', `Eliminare ${current.name} con backup, licenze e storico? Operazione irreversibile.`, 'Elimina')) return;
-        try { await apiDelete(`/instances/${current.id}`); location.hash = '#instances'; }
+        try {
+            await apiDelete(`/instances/${current.id}`);
+            fetchedAt = 0;
+            location.hash = current.group_id ? `#instances/group/${current.group_id}` : '#instances';
+        }
         catch (e) { showToast(e.message, 'error'); }
     },
     hubBackupRun: async () => {

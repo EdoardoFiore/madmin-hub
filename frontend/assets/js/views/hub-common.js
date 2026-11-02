@@ -178,6 +178,29 @@ export function formData(form) {
     return out;
 }
 
+// --- Versions and resources ---
+
+// "2.10.1" > "2.9.3": numeric parts, missing ones count as 0
+export function cmpVersion(a, b) {
+    const pa = String(a).split(/\D+/).filter(Boolean).map(Number);
+    const pb = String(b).split(/\D+/).filter(Boolean).map(Number);
+    for (let k = 0; k < Math.max(pa.length, pb.length); k++) {
+        const d = (pa[k] || 0) - (pb[k] || 0);
+        if (d) return d;
+    }
+    return 0;
+}
+
+/** A percentage as a small bar, red/orange when high (CPU, RAM, disk). */
+export function meter(label, v) {
+    if (v === undefined || v === null) return '';
+    const cls = v >= 90 ? 'bg-danger' : v >= 75 ? 'bg-warning' : 'bg-primary';
+    return `<div class="d-flex align-items-center gap-2 small lh-1 my-1">
+        <span class="text-muted" style="width: 2.6rem">${label}</span>
+        <div class="progress progress-sm flex-fill" style="min-width: 50px"><div class="progress-bar ${cls}" style="width: ${Math.min(100, v)}%"></div></div>
+        <span class="text-end" style="width: 2.4rem">${Math.round(v)}%</span></div>`;
+}
+
 // --- Groups (hub -> customer, hub -> partner -> customer) and labels ---
 
 /** <option>s for a group select; groups come sorted by path from /api/groups. */

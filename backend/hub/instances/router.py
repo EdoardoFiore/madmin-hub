@@ -19,11 +19,12 @@ from sqlmodel import select
 from core.auth.dependencies import require_permission
 from core.auth.models import User
 from core.database import get_session
+from core.settings.router import get_system_settings
 
 from hub.agents import protocol
 from hub.agents.dispatcher import run_command, send_ephemeral
 from hub.agents.registry import registry
-from hub.models import (AgentCertificate, Backup, Command, EnrollmentToken, Instance,
+from hub.models import (AgentCertificate, Backup, Command, EnrollmentRequest, EnrollmentToken, Instance,
                         InstanceAddress, InstanceGroup, License, SupportSession)
 from hub import groups as hub_groups, scope
 from hub.registration import check_external_ref, check_labels, instance_by_ref
@@ -63,26 +64,107 @@ async def get_instance_or_404(session, instance_id: str, user: User) -> Instance
     return await scope.get_instance(session, user, instance_id)
 
 
+EXPIRY_WARN_DAYS = 30
+DASHBOARD_LIST = 10
+
+
+def _iso(d: Optional[datetime]) -> Optional[str]:
+    return d.isoformat() if d else None
+
+
 @router.get("/dashboard")
 async def dashboard(session: AsyncSession = Depends(get_session),
                     user: User = Depends(require_permission("scope.view"))):
+    """
+    What the instance list does not carry (backups, licenses, certificates,
+    commands, support, enrollment), for the instances in the caller's scope.
+    Online state, versions and resources come from /instances.
+    """
     ids = await scope.group_ids(session, user)
     rows = (await session.execute(scope.filter_instances(select(Instance), ids))).scalars().all()
     online = registry.online_ids()
+    now = datetime.utcnow()
+    soon = now + timedelta(days=EXPIRY_WARN_DAYS)
+    names = {i.id: i.name for i in rows}
     versions: dict = {}
     for i in rows:
         if i.status == "active":
             versions[i.madmin_version or "?"] = versions.get(i.madmin_version or "?", 0) + 1
     in_scope = [i.id for i in rows]
+    active = [i for i in rows if i.status == "active"]
     failed = 0
+    backups = {"count": 0, "size": 0, "last_24h": 0, "interval_hours": 0, "stale": []}
+    licenses = {"active": 0, "features": {}, "expiring": []}
+    certificates_expiring = []
+    failed_recent = []
     if in_scope:
         failed = (await session.execute(
             select(func.count()).select_from(Command).where(
                 Command.instance_id.in_(in_scope),
                 Command.status.in_(("failed", "expired")),
-                Command.created_at > datetime.utcnow() - timedelta(days=1),
+                Command.created_at > now - timedelta(days=1),
             )
         )).scalar_one()
+
+        # Backups: totals, and the scheduled instances whose latest backup is
+        # older than two intervals (or missing)
+        count, size = (await session.execute(
+            select(func.count(), func.coalesce(func.sum(Backup.size), 0)).where(Backup.instance_id.in_(in_scope))
+        )).one()
+        backups["count"], backups["size"] = count, int(size)
+        backups["last_24h"] = (await session.execute(
+            select(func.count()).select_from(Backup).where(Backup.instance_id.in_(in_scope),
+                                                           Backup.created_at > now - timedelta(days=1))
+        )).scalar_one()
+        interval = (await get_system_settings(session)).backup_interval_hours
+        backups["interval_hours"] = interval
+        if interval > 0:
+            last = dict((await session.execute(
+                select(Backup.instance_id, func.max(Backup.created_at))
+                .where(Backup.instance_id.in_(in_scope)).group_by(Backup.instance_id)
+            )).all())
+            due = now - timedelta(hours=2 * interval)
+            stale = [i for i in active if i.backup_enabled and (last.get(i.id) is None or last[i.id] < due)]
+            stale.sort(key=lambda i: last.get(i.id) or datetime.min)
+            backups["stale_count"] = len(stale)
+            backups["stale"] = [{"id": i.id, "name": i.name, "online": i.id in online,
+                                 "last_backup_at": _iso(last.get(i.id))} for i in stale[:DASHBOARD_LIST]]
+
+        # Licenses: active ones by feature, entitlements ending soon
+        lic = (await session.execute(
+            select(License).where(License.instance_id.in_(in_scope), License.active == True)  # noqa: E712
+        )).scalars().all()
+        licenses["active"] = len(lic)
+        for x in lic:
+            licenses["features"][x.feature] = licenses["features"].get(x.feature, 0) + 1
+        licenses["expiring"] = [
+            {"id": x.id, "instance_id": x.instance_id, "instance_name": names.get(x.instance_id, ""),
+             "feature": x.feature, "valid_until": _iso(x.valid_until)}
+            for x in sorted((x for x in lic if x.valid_until and x.valid_until < soon), key=lambda x: x.valid_until)
+        ][:DASHBOARD_LIST]
+
+        # Agent certificates: the newest valid one of each active instance
+        cert_until = dict((await session.execute(
+            select(AgentCertificate.instance_id, func.max(AgentCertificate.not_after))
+            .where(AgentCertificate.instance_id.in_([i.id for i in active]),
+                   AgentCertificate.revoked == False)  # noqa: E712
+            .group_by(AgentCertificate.instance_id)
+        )).all()) if active else {}
+        certificates_expiring = [
+            {"id": iid, "name": names[iid], "online": iid in online, "not_after": _iso(na)}
+            for iid, na in sorted(cert_until.items(), key=lambda kv: kv[1]) if na < soon
+        ][:DASHBOARD_LIST]
+
+        cmds = (await session.execute(
+            select(Command).where(Command.instance_id.in_(in_scope),
+                                  Command.status.in_(("failed", "expired")),
+                                  Command.created_at > now - timedelta(days=7))
+            .order_by(Command.created_at.desc()).limit(DASHBOARD_LIST)
+        )).scalars().all()
+        failed_recent = [{"id": c.id, "instance_id": c.instance_id, "instance_name": names.get(c.instance_id, ""),
+                          "name": c.name, "status": c.status, "error": (c.error or "")[:200],
+                          "created_at": _iso(c.created_at)} for c in cmds]
+
     out = {
         "total": len(rows),
         "active": sum(1 for i in rows if i.status == "active"),
@@ -91,11 +173,29 @@ async def dashboard(session: AsyncSession = Depends(get_session),
         "versions": versions,
         "failed_commands_24h": failed,
         "offline": [instance_out(i) for i in rows if i.status == "active" and i.id not in online][:20],
+        "backups": backups,
+        "licenses": licenses,
+        "certificates_expiring": certificates_expiring,
+        "failed_commands": failed_recent,
     }
     if user.has_permission("hub.view"):
-        # Support is a hub operation: partners and customers do not see it
-        out["open_support_sessions"] = (await session.execute(
-            select(func.count()).select_from(SupportSession).where(SupportSession.status == "open")
+        # Support and enrollment are hub operations: partners and customers do not see them
+        sessions = (await session.execute(
+            select(SupportSession).where(SupportSession.status == "open").order_by(SupportSession.expires_at)
+        )).scalars().all()
+        out["open_support_sessions"] = len(sessions)
+        out["support_sessions"] = [
+            {"id": s.id, "instance_id": s.instance_id, "instance_name": names.get(s.instance_id, ""),
+             "kind": s.kind, "operator": s.operator, "reason": s.reason, "expires_at": _iso(s.expires_at)}
+            for s in sessions[:DASHBOARD_LIST]]
+        out["enrollment_pending"] = (await session.execute(
+            select(func.count()).select_from(EnrollmentRequest).where(
+                EnrollmentRequest.status == "pending", EnrollmentRequest.expires_at > now)
+        )).scalar_one()
+        out["enrollment_tokens"] = (await session.execute(
+            select(func.count()).select_from(EnrollmentToken).where(
+                EnrollmentToken.revoked == False, EnrollmentToken.expires_at > now,  # noqa: E712
+                (EnrollmentToken.max_uses == None) | (EnrollmentToken.uses < EnrollmentToken.max_uses))  # noqa: E711
         )).scalar_one()
     return out
 

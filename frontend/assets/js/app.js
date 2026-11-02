@@ -24,6 +24,9 @@ const views = {
     'logs': () => import('./views/logs.js'),
 };
 
+// Views laid out edge to edge (container-fluid instead of container-xl)
+const WIDE_VIEWS = new Set(['dashboard', 'instances']);
+
 // Current user data
 let currentUser = null;
 
@@ -623,6 +626,13 @@ async function handleRoute() {
     if (!hash) hash = 'dashboard';
 
     const [viewName, ...params] = hash.split('/');
+
+    // Views with a side panel use the whole width
+    const wide = WIDE_VIEWS.has(viewName);
+    document.querySelectorAll('.page-wrapper .container-xl, .page-wrapper .container-fluid').forEach((c) => {
+        c.classList.toggle('container-xl', !wide);
+        c.classList.toggle('container-fluid', wide);
+    });
 
     // Update page title
     const pageTitle = document.getElementById('page-title');

@@ -745,3 +745,108 @@ tr.fw-row-flash > td {
 .fw-capture-search {
     max-width: 320px;
 }
+
+/* == Hub instances: tree of groups and instances == */
+/* Fixed-width panel on the left, the rest to the page (the view is container-fluid) */
+.inst-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+}
+
+.inst-tree {
+    position: relative; /* offsetTop of the nodes, to scroll the open one into view */
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0.25rem 0;
+}
+
+@media (min-width: 992px) {
+    .inst-layout {
+        grid-template-columns: 300px minmax(0, 1fr);
+    }
+    /* The side cell stretches to the row, so the panel can stick while the page scrolls */
+    .inst-tree-card {
+        position: sticky;
+        top: 1rem;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 8rem);
+        margin-bottom: 0;
+    }
+    .inst-tree {
+        flex: 1 1 auto;
+        max-height: none;
+    }
+}
+
+@media (min-width: 1600px) {
+    .inst-layout {
+        grid-template-columns: 340px minmax(0, 1fr);
+    }
+}
+
+.inst-crumbs {
+    padding: 0;
+    background: none;
+}
+
+.inst-tree .tree-node {
+    display: flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0.25rem 0.75rem 0.25rem calc(0.5rem + var(--depth, 0) * 1.1rem);
+    border-left: 2px solid transparent;
+    color: inherit;
+    font-size: 0.875rem;
+    text-decoration: none;
+}
+
+.inst-tree .tree-node:hover {
+    background: var(--tblr-active-bg);
+    text-decoration: none;
+}
+
+.inst-tree .tree-node.active {
+    background: var(--tblr-primary-lt);
+    border-left-color: var(--tblr-primary);
+}
+
+.inst-tree .tree-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inst-tree .tree-node.inactive .tree-name {
+    color: var(--tblr-secondary);
+    text-decoration: line-through;
+}
+
+.inst-tree .tree-toggle {
+    flex: none;
+    display: inline-flex;
+    justify-content: center;
+    width: 1.25rem;
+    margin-right: 0.25rem;
+    border-radius: 3px;
+    color: var(--tblr-secondary);
+}
+
+.inst-tree .tree-toggle[data-toggle]:hover {
+    background: var(--tblr-border-color);
+    color: inherit;
+}
+
+.inst-tree .tree-ver,
+.inst-tree .tree-count {
+    flex: none;
+    margin-left: 0.5rem;
+    font-size: 0.75rem;
+}
+
+.inst-tree .tree-ver {
+    font-family: var(--tblr-font-monospace);
+}

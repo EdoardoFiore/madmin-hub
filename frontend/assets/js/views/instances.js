@@ -557,21 +557,30 @@ export function licenseModal(instanceId, onDone) {
     }, { submitText: 'Emetti' });
 }
 
+const SSH_OS_KEY = 'hub.sshOs';
+const SSH_OS = [['windows', 'Windows', 'ti-brand-windows'], ['macos', 'macOS', 'ti-brand-apple'], ['linux', 'Linux', 'ti-brand-ubuntu']];
+
 function sshSessionModal(res) {
     const s = res.session || {};
-    const path = `~/.ssh/madmin-${current.id.slice(0, 8)}-cert.pub`;
-    // One line that writes the file: no editor in between (TextEdit on macOS
-    // would save rich text). The certificate never contains a single quote.
-    const save = `mkdir -p ~/.ssh && printf '%s\\n' '${res.certificate.trim()}' > ${path}`;
-    secretModal('Accesso SSH di supporto aperto', `
-        <p class="text-muted mb-3">
-            Valido fino a <strong>${escapeHtml(fmtDate(s.expires_at))}</strong>,
-            solo dall'IP <strong class="font-monospace">${escapeHtml(s.allowed_ip || '')}</strong>
-            e solo attraverso la porta <strong>${escapeHtml(String(s.port ?? ''))}</strong> dell'hub.
-        </p>
+    const cert = res.certificate.trim();
+    const file = `madmin-${current.id.slice(0, 8)}-cert.pub`;
+    const unixPath = `~/.ssh/${file}`;
+    const winPath = `$HOME\\.ssh\\${file}`;
+    let os = 'windows';
+    try { os = SSH_OS.some(([k]) => k === localStorage.getItem(SSH_OS_KEY)) ? localStorage.getItem(SSH_OS_KEY) : os; } catch { /* default */ }
 
+    // One line that writes the file: no editor in between (TextEdit on macOS
+    // would save rich text, Notepad may add a BOM or .txt). The certificate
+    // never contains a single quote.
+    const unixSave = `mkdir -p ~/.ssh && printf '%s\\n' '${cert}' > ${unixPath}`;
+    // PowerShell: $HOME is %USERPROFILE%, the folder Windows OpenSSH expands ~ to,
+    // so the connect command (CertificateFile=~/.ssh/...) is the same everywhere
+    const winSave = `New-Item -ItemType Directory -Force "$HOME\\.ssh" | Out-Null; `
+        + `Set-Content -Encoding ascii -Path "${winPath}" -Value '${cert}'`;
+
+    const steps = (where, save, path, keyDir, agent, extraTrouble = '') => `
         <h4 class="mb-1">1. Salva il certificato</h4>
-        <p class="mb-2">Nel terminale del tuo computer (macOS o Linux):</p>
+        <p class="mb-2">${where}</p>
         ${copyBlock(save)}
 
         <h4 class="mt-4 mb-1">2. Connettiti</h4>
@@ -579,27 +588,68 @@ function sshSessionModal(res) {
 
         <h4 class="mt-4 mb-1">Requisiti</h4>
         <ul class="mb-3">
-            <li>La chiave privata della chiave pubblica che hai indicato deve essere in <code>~/.ssh/</code>
-                con un nome standard (<code>id_ed25519</code>, <code>id_rsa</code>, …) oppure caricata in ssh-agent.
-                Altrimenti aggiungi al comando <code>-i ~/.ssh/&lt;tua_chiave&gt;</code>.</li>
+            <li>La chiave privata della chiave pubblica che hai indicato deve essere in <code>${keyDir}</code>
+                con un nome standard (<code>id_ed25519</code>, <code>id_rsa</code>, …) oppure caricata in ${agent}.
+                Altrimenti aggiungi al comando <code>-i ${keyDir}&lt;tua_chiave&gt;</code>.</li>
             <li>Il certificato va salvato esattamente in <code>${escapeHtml(path)}</code>:
                 se ssh non lo trova lo ignora senza errori.</li>
         </ul>
 
         <details>
             <summary class="text-muted">Se ti chiede la password</summary>
-            <p class="mt-2 mb-2">Il certificato non è stato usato. Ripeti il comando con <code>-v</code> e cerca:</p>
+            <p class="mt-2 mb-2">Il certificato non è stato usato. Cerca nell'output (o ripeti il comando con <code>-v</code>):</p>
             <ul class="mb-2">
+                <li><code>Load key "…-cert.pub": invalid format</code>: il certificato è stato letto, ma non c'è
+                    la chiave privata corrispondente (ssh ripiega sul file del certificato). La chiave pubblica
+                    indicata non è tra quelle in <code>${keyDir}</code> con nome standard né in ssh-agent:
+                    usa <code>-i ${keyDir}&lt;tua_chiave&gt;</code> o apri una nuova sessione con la chiave giusta.
+                    Confronta l'impronta in <code>ssh-keygen -L -f ${escapeHtml(path)}</code> (riga <code>Public key</code>)
+                    con <code>ssh-keygen -lf ${keyDir}&lt;tua_chiave&gt;.pub</code>.</li>
                 <li><code>no identity cert loaded</code>: il file non è nel percorso indicato o è danneggiato.
                     Controllalo con <code>ssh-keygen -L -f ${escapeHtml(path)}</code>.</li>
                 <li>nessuna riga <code>CERT</code> tra le chiavi offerte: la chiave privata non è stata trovata (vedi requisiti).</li>
+                ${extraTrouble}
             </ul>
-        </details>
+        </details>`;
+
+    const panes = {
+        windows: steps(
+            `In <strong>PowerShell</strong> (non nel Prompt dei comandi). Serve il client OpenSSH di Windows 10/11
+             (<code>ssh -V</code> per verificarlo; PuTTY non supporta i certificati OpenSSH):`,
+            winSave, `${winPath}`, '$HOME\\.ssh\\', 'ssh-agent (servizio <code>OpenSSH Authentication Agent</code>)',
+            // OpenSSH wants "-----BEGIN/END ...-----\n": a key saved with Notepad or
+            // exported by PuTTYgen has CRLF and no final newline, so it is rejected
+            `<li><code>Load key "…\\id_rsa": invalid format</code> (o <code>id_ed25519</code>…): la chiave privata
+                ha fine riga Windows (CRLF). Convertila (fai prima una copia):
+                ${copyBlock('$k = "$HOME\\.ssh\\id_rsa"; [IO.File]::WriteAllText($k, ([IO.File]::ReadAllText($k) -replace "`r`n", "`n").TrimEnd("`n") + "`n")')}</li>`),
+        macos: steps('Nel Terminale:', unixSave, unixPath, '~/.ssh/', 'ssh-agent (<code>ssh-add --apple-use-keychain</code>)'),
+        linux: steps('Nel terminale:', unixSave, unixPath, '~/.ssh/', 'ssh-agent (<code>ssh-add</code>)'),
+    };
+
+    const el = secretModal('Accesso SSH di supporto aperto', `
+        <p class="text-muted mb-3">
+            Valido fino a <strong>${escapeHtml(fmtDate(s.expires_at))}</strong>,
+            solo dall'IP <strong class="font-monospace">${escapeHtml(s.allowed_ip || '')}</strong>
+            e solo attraverso la porta <strong>${escapeHtml(String(s.port ?? ''))}</strong> dell'hub.
+        </p>
+
+        <div class="btn-group w-100 mb-4" role="group" aria-label="Sistema operativo">
+            ${SSH_OS.map(([k, label, icon]) => `
+                <input type="radio" class="btn-check" name="ssh-os" id="ssh-os-${k}" value="${k}" ${k === os ? 'checked' : ''}>
+                <label class="btn" for="ssh-os-${k}"><i class="ti ${icon} me-1"></i>${label}</label>`).join('')}
+        </div>
+
+        ${SSH_OS.map(([k]) => `<div data-ssh-os="${k}" ${k === os ? '' : 'hidden'}>${panes[k]}</div>`).join('')}
 
         <details class="mt-2">
-            <summary class="text-muted">Certificato (per salvarlo a mano, es. su Windows)</summary>
-            <div class="mt-2">${copyBlock(res.certificate.trim(), 4)}</div>
+            <summary class="text-muted">Certificato (per salvarlo a mano)</summary>
+            <div class="mt-2">${copyBlock(cert, 4)}</div>
         </details>`);
+
+    el.querySelectorAll('input[name="ssh-os"]').forEach((r) => r.addEventListener('change', () => {
+        el.querySelectorAll('[data-ssh-os]').forEach((p) => { p.hidden = p.dataset.sshOs !== r.value; });
+        try { localStorage.setItem(SSH_OS_KEY, r.value); } catch { /* not remembered */ }
+    }));
 }
 
 export function uiLinkModal(res) {

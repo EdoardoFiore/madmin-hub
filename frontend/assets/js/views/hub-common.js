@@ -169,6 +169,7 @@ export function secretModal(title, intro, value = null, extraHtml = '') {
     el.querySelectorAll('textarea[readonly]').forEach((t) => t.addEventListener('focus', () => t.select()));
     el.addEventListener('hidden.bs.modal', () => el.remove());
     modal.show();
+    return el;
 }
 
 export function formData(form) {

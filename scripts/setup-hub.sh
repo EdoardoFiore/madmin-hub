@@ -166,6 +166,8 @@ EOF
 cat > /etc/nginx/sites-available/madmin-hub.conf << EOF
 limit_req_zone \$binary_remote_addr zone=hub_login:1m rate=10r/m;
 limit_req_zone \$binary_remote_addr zone=hub_enroll:1m rate=10r/m;
+# Pending registrations poll every 60 s each, possibly many behind one NAT address
+limit_req_zone \$binary_remote_addr zone=hub_register_poll:1m rate=60r/m;
 
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -236,6 +238,25 @@ server {
         limit_req zone=hub_enroll burst=5 nodelay;
         limit_req_status 429;
         client_max_body_size 256k;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-Cert "";
+    }
+    # Token-less registration: no client certificate yet (the instance gets
+    # one at approval). Without these the request fell into /agent/ below → 403
+    location = /agent/register {
+        limit_req zone=hub_enroll burst=5 nodelay;
+        limit_req_status 429;
+        client_max_body_size 256k;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-Cert "";
+    }
+    location ^~ /agent/register/ {
+        limit_req zone=hub_register_poll burst=30 nodelay;
+        limit_req_status 429;
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-SSL-Client-Verify "";

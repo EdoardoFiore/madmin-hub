@@ -420,6 +420,7 @@ async def commands(instance_id: str, limit: int = Query(default=50, ge=1, le=500
         d = c.model_dump()
         d["args"] = _json(d.pop("args_json"), {})
         d["result"] = _json(d.pop("result_json") or "", None)
+        d["progress"] = _json(d.pop("progress_json") or "", None)
         # Licenses travel as commands: the token is not for display
         if c.name == protocol.CMD_LICENSE_INSTALL:
             d["args"] = {"token": "***"}

@@ -33,9 +33,9 @@ export function onlineBadge(inst) {
 }
 
 export function commandStatusBadge(status) {
-    const cls = { queued: 'bg-secondary-lt', sent: 'bg-info-lt', done: 'bg-success-lt',
+    const cls = { queued: 'bg-secondary-lt', sent: 'bg-info-lt', running: 'bg-primary-lt', done: 'bg-success-lt',
                   failed: 'bg-danger-lt', expired: 'bg-warning-lt' }[status] || 'bg-secondary-lt';
-    const label = { queued: 'In coda', sent: 'Inviato', done: 'Completato',
+    const label = { queued: 'In coda', sent: 'Inviato', running: 'In corso', done: 'Completato',
                     failed: 'Fallito', expired: 'Scaduto' }[status] || status;
     return `<span class="badge ${cls}">${label}</span>`;
 }

@@ -394,6 +394,8 @@ async def control_channel(ws: WebSocket):
                     await _handle_heartbeat(conn, msg["payload"])
                 elif msg["type"] == protocol.CMD_RESULT:
                     await dispatcher.handle_result(instance.id, msg["id"], msg["payload"])
+                elif msg["type"] == protocol.CMD_PROGRESS:
+                    await dispatcher.handle_progress(instance.id, msg["id"], msg["payload"])
                 elif msg["type"] == protocol.EVENT:
                     await _handle_event(conn, msg["payload"])
                 else:

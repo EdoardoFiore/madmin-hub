@@ -85,7 +85,8 @@ The maximum frame size is 1 MB.
 | `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts` |
 | `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version` |
 | `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
-| `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix) |
+| `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix), `timeout`? (seconds) |
+| `cmd_progress` | agent → manager, same `id` as the cmd | `state` (`running`), `step`?, `percent`? (0–100), `message`? |
 | `cmd_result` | agent → manager, same `id` as the cmd | `ok`, then `data` or `error` {`code`, `message`} |
 | `event` | agent → manager | `name`, `data` |
 
@@ -120,7 +121,11 @@ The newest connection wins: the manager closes the old one with 4409 and never r
 
 ## Commands
 
-The manager persists commands with these states: queued → sent → done | failed | expired. It re-sends unanswered commands after every reconnect. The agent deduplicates by `id` and answers a repeat with the cached result. Commands that restart MADMIN keep their result on disk. Every command runs on the instance under an allowlist and Pydantic validation (unknown fields are rejected). Each command is written to the local audit log as `manager:<operator>`, method `MANAGER`, path `manager://<name>`.
+The manager persists commands with these states: queued → sent → [running →] done | failed | expired. It re-sends unanswered commands after every reconnect.
+
+- `exp` is the delivery deadline: the agent does not start a command after it (`expired`), and the manager marks a command not started by then as expired.
+- `timeout` is how long the execution may take. The agent lowers it to its own limit for that command, never raises it; without it the agent's limit applies.
+- A long command (`backup.run`, `backup.restore`) sends `cmd_progress {"state": "running"}` when it starts, then its steps. From then on `exp` no longer applies: the manager waits for the result until the execution timeout plus 5 minutes (1 hour plus 5 minutes without a timeout), then fails it with `timeout`. A running command re-sent after a reconnect is answered with a new `cmd_progress` (or its cached result), never started twice. The agent deduplicates by `id` and answers a repeat with the cached result. Commands that restart MADMIN keep their result on disk. Every command runs on the instance under an allowlist and Pydantic validation (unknown fields are rejected). Each command is written to the local audit log as `manager:<operator>`, method `MANAGER`, path `manager://<name>`.
 
 All the commands below are at version 1.
 

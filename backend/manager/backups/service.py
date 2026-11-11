@@ -78,7 +78,7 @@ async def _schedule_once() -> None:
                 continue
             pending = (await session.execute(select(Command.id).where(
                 Command.instance_id == inst.id, Command.name == protocol.CMD_BACKUP_RUN,
-                Command.status.in_(("queued", "sent")),
+                Command.status.in_(("queued", "sent", "running")),
             ).limit(1))).first()
             if pending:
                 continue

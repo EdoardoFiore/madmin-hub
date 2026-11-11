@@ -149,8 +149,8 @@ Steps:
 
 Steps:
 
-- [ ] Frame type, agent `ctx.progress(...)`, manager `Command.status = "running"`, `progress_json`, UI display.
-- [ ] `exp` / `timeout` split; `expire_task` skips running commands and fails them only after `timeout` plus a margin.
+- [x] Frame type, agent `ctx.report(...)`, manager `Command.status = "running"`, `progress_json`, UI display.
+- [x] `exp` / `timeout` split; `expire_task` skips running commands and fails them only after `timeout` plus a margin.
 
 ### 5.7 State reconciliation instead of reliable events (G9)
 

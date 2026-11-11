@@ -44,11 +44,17 @@ MAX_FRAME = 1024 * 1024
 HELLO = "hello"            # agent -> manager, first frame: facts + capabilities
 HELLO_ACK = "hello_ack"    # manager -> agent: accepted (revision, features, config)
 HEARTBEAT = "heartbeat"    # agent -> manager: periodic stats (+ facts when changed)
-CMD = "cmd"                # manager -> agent: {name, args, operator, exp}
+CMD = "cmd"                # manager -> agent: {name, args, operator, exp, timeout?}
+CMD_PROGRESS = "cmd_progress"  # agent -> manager: {state, step?, percent?, message?}, same id
 CMD_RESULT = "cmd_result"  # agent -> manager: {ok, data | error}, same id as the cmd
 EVENT = "event"            # agent -> manager: unsolicited notice {name, data}
 
-FRAME_TYPES = {HELLO, HELLO_ACK, HEARTBEAT, CMD, CMD_RESULT, EVENT}
+FRAME_TYPES = {HELLO, HELLO_ACK, HEARTBEAT, CMD, CMD_PROGRESS, CMD_RESULT, EVENT}
+
+# cmd.exp: the agent does not start a command after it (delivery deadline).
+# cmd.timeout: seconds the execution may take, lowered (never raised) to the
+# agent's own limit for that command. A command that has started reports
+# cmd_progress {"state": "running"} and is no longer subject to exp.
 
 # --- Close codes (WebSocket application range; unknown ones: reconnect) ---
 CLOSE_PROTOCOL = 4400     # malformed frame / unsupported protocol version

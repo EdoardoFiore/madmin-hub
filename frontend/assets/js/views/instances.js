@@ -882,9 +882,14 @@ async function commands(el, i) {
             <td>${fmtDate(c.created_at)}</td><td class="font-monospace">${escapeHtml(c.name)}</td>
             <td>${escapeHtml(c.operator)}</td><td>${commandStatusBadge(c.status)}</td>
             <td class="small text-muted">${escapeHtml(c.error ? `${c.error_code ? `[${c.error_code}] ` : ''}${c.error}`
-                : (c.result ? JSON.stringify(c.result).slice(0, 200) : ''))}</td>
+                : c.result ? JSON.stringify(c.result).slice(0, 200)
+                : c.status === 'running' && c.progress ? progressText(c.progress) : '')}</td>
         </tr>`).join('') || '<tr><td colspan="5" class="text-muted">Nessun comando</td></tr>'}
         </tbody></table></div>`;
+}
+
+function progressText(p) {
+    return [p.step, p.percent != null ? `${p.percent}%` : '', p.message].filter(Boolean).join(' · ');
 }
 
 // The tree too: name, group or status may have changed

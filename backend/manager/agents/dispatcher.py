@@ -4,7 +4,10 @@ Commands to instances.
 Persistent commands (Command table) survive disconnections and manager restarts:
 queued while the instance is offline, sent when it connects, re-sent after
 every reconnect until a result arrives (the agent deduplicates by id and
-answers a repeat with the cached result), expired when not answered in time.
+answers a repeat with the cached result), expired when not started before
+expires_at. A long command reports cmd_progress when it starts (running):
+from then on it has its execution timeout, and is failed with "timeout" only
+when that passes (plus a margin) without a result.
 
 Ephemeral commands (tunnel.open) are not stored: they only make sense now.
 """
@@ -15,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 from sqlmodel import select
 
 from core.database import async_session_maker
@@ -28,15 +31,22 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTL = timedelta(minutes=10)
 EXPIRE_INTERVAL = 60
+# A running command without its own timeout: the agent's limits are lower
+RUNNING_LIMIT = 3600
+RUNNING_MARGIN = 300
 
 
-def _frame(cmd_id: str, name: str, args: dict, operator: str, expires_at: datetime) -> str:
-    return protocol.frame(protocol.CMD, {
+def _frame(cmd_id: str, name: str, args: dict, operator: str, expires_at: datetime,
+           timeout: Optional[int] = None) -> str:
+    payload = {
         "name": name,
         "args": args,
         "operator": operator,
         "exp": int(expires_at.replace(tzinfo=timezone.utc).timestamp()),  # naive UTC in the DB
-    }, cmd_id)
+    }
+    if timeout:
+        payload["timeout"] = timeout
+    return protocol.frame(protocol.CMD, payload, cmd_id)
 
 
 # HTTP status for a failed command, by protocol error code
@@ -73,14 +83,18 @@ def _send(cmd: Command) -> bool:
     conn = registry.get(cmd.instance_id)
     if conn is None or cmd.name not in conn.capabilities:
         return False
-    return conn.send(_frame(cmd.id, cmd.name, json.loads(cmd.args_json), cmd.operator, cmd.expires_at))
+    return conn.send(_frame(cmd.id, cmd.name, json.loads(cmd.args_json), cmd.operator, cmd.expires_at,
+                            cmd.timeout))
 
 
 async def queue_command(session, instance_id: str, name: str, args: Optional[dict] = None,
-                        operator: str = "", ttl: timedelta = DEFAULT_TTL) -> Command:
+                        operator: str = "", ttl: timedelta = DEFAULT_TTL,
+                        timeout: Optional[int] = None) -> Command:
+    """ttl: how long the command may wait to be started; timeout: how long
+    its execution may take (None = the agent's own limit)."""
     cmd = Command(
         instance_id=instance_id, name=name, args_json=json.dumps(args or {}),
-        operator=operator[:100], expires_at=datetime.utcnow() + ttl,
+        operator=operator[:100], expires_at=datetime.utcnow() + ttl, timeout=timeout,
     )
     session.add(cmd)
     await session.commit()
@@ -100,6 +114,7 @@ async def run_command(session, instance_id: str, name: str, args: Optional[dict]
     cmd = Command(
         instance_id=instance_id, name=name, args_json=json.dumps(args or {}),
         operator=operator[:100], expires_at=datetime.utcnow() + timedelta(seconds=timeout + 30),
+        timeout=int(timeout),
     )
     session.add(cmd)
     await session.commit()
@@ -135,17 +150,35 @@ async def send_ephemeral(instance_id: str, name: str, args: dict, operator: str 
 
 
 async def resend_pending(instance_id: str) -> None:
-    """After a (re)connect: everything not answered yet, oldest first."""
+    """After a (re)connect: everything not answered yet, oldest first. A
+    running command is re-sent past its exp: the agent answers with its
+    progress or its cached result, never starts it again."""
     async with async_session_maker() as session:
         rows = (await session.execute(
             select(Command).where(
                 Command.instance_id == instance_id,
-                Command.status.in_(("queued", "sent")),
-                Command.expires_at > datetime.utcnow(),
+                or_(Command.status == "running",
+                    and_(Command.status.in_(("queued", "sent")), Command.expires_at > datetime.utcnow())),
             ).order_by(Command.created_at)
         )).scalars().all()
     sent = [cmd.id for cmd in rows if _send(cmd)]
     await _mark_sent(sent)
+
+
+async def handle_progress(instance_id: str, cmd_id: str, payload: dict) -> None:
+    """cmd_progress: the command started (running) and what it is doing."""
+    async with async_session_maker() as session:
+        cmd = (await session.execute(
+            select(Command).where(Command.id == cmd_id, Command.instance_id == instance_id)
+        )).scalar_one_or_none()
+        if cmd is None or cmd.status not in ("queued", "sent", "running"):
+            return  # ephemeral, not this instance's, or already finished
+        cmd.status = "running"
+        cmd.started_at = cmd.started_at or datetime.utcnow()
+        keep = {k: payload[k] for k in ("state", "step", "percent", "message") if k in payload}
+        cmd.progress_json = json.dumps(keep)[:1000]
+        session.add(cmd)
+        await session.commit()
 
 
 async def handle_result(instance_id: str, cmd_id: str, payload: dict) -> None:
@@ -181,13 +214,25 @@ async def expire_task() -> None:
     while True:
         await asyncio.sleep(EXPIRE_INTERVAL)
         try:
+            now = datetime.utcnow()
             async with async_session_maker() as session:
                 await session.execute(
                     update(Command).where(
                         Command.status.in_(("queued", "sent")),
-                        Command.expires_at <= datetime.utcnow(),
-                    ).values(status="expired", finished_at=datetime.utcnow())
+                        Command.expires_at <= now,
+                    ).values(status="expired", finished_at=now)
                 )
+                running = (await session.execute(
+                    select(Command).where(Command.status == "running")
+                )).scalars().all()
+                for cmd in running:
+                    limit = (cmd.timeout or RUNNING_LIMIT) + RUNNING_MARGIN
+                    if cmd.started_at and cmd.started_at + timedelta(seconds=limit) <= now:
+                        cmd.status = "failed"
+                        cmd.finished_at = now
+                        cmd.error_code = protocol.ERR_TIMEOUT
+                        cmd.error = f"nessun risultato entro {limit // 60} minuti dall'avvio"
+                        session.add(cmd)
                 await session.commit()
         except asyncio.CancelledError:
             raise

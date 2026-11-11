@@ -187,9 +187,11 @@ class ApiKey(SQLModel, table=True):
 
 
 class Command(SQLModel, table=True):
-    """A command for an instance. queued -> sent -> done | failed, or expired
-    when not answered before exp. Re-sent after every reconnect until it has
-    a result: the agent deduplicates by id."""
+    """A command for an instance. queued -> sent -> [running ->] done | failed,
+    or expired when not started before exp (expires_at). A long command
+    reports running when it starts and then has `timeout` seconds to finish.
+    Re-sent after every reconnect until it has a result: the agent
+    deduplicates by id."""
     __tablename__ = "command"
     __table_args__ = (Index("ix_command_instance_status", "instance_id", "status"),)
 
@@ -201,8 +203,11 @@ class Command(SQLModel, table=True):
     status: str = Field(default="queued", max_length=10)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     sent_at: Optional[datetime] = Field(default=None)
+    started_at: Optional[datetime] = Field(default=None)   # first cmd_progress
     finished_at: Optional[datetime] = Field(default=None)
     expires_at: datetime
+    timeout: Optional[int] = Field(default=None)   # execution limit sent to the agent (s)
+    progress_json: Optional[str] = Field(default=None)   # last cmd_progress
     result_json: Optional[str] = Field(default=None)
     error_code: Optional[str] = Field(default=None, max_length=30)   # protocol.ERR_*
     error: Optional[str] = Field(default=None, max_length=1000)

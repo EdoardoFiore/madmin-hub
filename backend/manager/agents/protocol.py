@@ -79,6 +79,7 @@ CMD_TUNNEL_OPEN = "tunnel.open"
 CMD_LICENSE_INSTALL = "license.install"
 CMD_LICENSE_REVOKE = "license.revoke"
 CMD_STATS_HISTORY = "stats.history"   # read only: resource and traffic history
+CMD_MANAGER_RELOCATE = "manager.relocate"   # move to another address of the same manager (same CA)
 
 # Symbolic tunnel targets: the agent maps them to local endpoints, the manager can
 # never name a host or port

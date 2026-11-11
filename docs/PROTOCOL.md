@@ -158,6 +158,9 @@ All the commands below are at version 1.
 | `license.install` | `token` | `license_id`, `feature`, `exp` |
 | `license.revoke` | `license_id` | `removed` |
 | `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
+| `manager.relocate` | `url` (https://host:port) | `url`, `changed` |
+
+`manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
 
 Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}.
 

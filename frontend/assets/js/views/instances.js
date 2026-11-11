@@ -512,6 +512,7 @@ async function renderDetail(container, id, tab) {
     if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
     if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
     if (checkPermission('manager.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
+    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRelocate')}><i class="ti ti-arrows-exchange me-1"></i>Cambia indirizzo</button>`);
     if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-warning" ${actionAttrs('managerSuspend')}><i class="ti ti-player-pause me-1"></i>Sospendi</button>`);
     if (checkPermission('manager.manage') && i.status === 'suspended') actions.push(`<button class="btn btn-outline-success" ${actionAttrs('managerResume')}><i class="ti ti-player-play me-1"></i>Riattiva</button>`);
     if (checkPermission('manager.manage') && ['active', 'suspended'].includes(i.status)) actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
@@ -1104,6 +1105,20 @@ registerActions({
             secretModal('Token re-enroll',
                 enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
         } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerRelocate: () => {
+        formModal('Cambia indirizzo del manager', `
+            <div class="text-muted small mb-3">L'istanza verifica che il nuovo indirizzo presenti un certificato della
+                stessa CA, vi si collega e lo mantiene solo se risponde; altrimenti resta sull'indirizzo attuale.
+                Il vecchio indirizzo deve restare raggiungibile finché lo spostamento non è confermato.</div>
+            <div class="mb-3"><label class="form-label">Nuovo indirizzo (https://host:porta)</label>
+                <input name="url" class="form-control" placeholder="vuoto = URL agent delle impostazioni" maxlength="255"></div>`,
+        async (form) => {
+            const d = formData(form);
+            const res = await apiPost(`/instances/${current.id}/relocate`, { url: d.url || null });
+            showToast(`Spostamento verso ${res.url} inviato: esito nella scheda Comandi`, 'success');
+            reloadDetail('commands');
+        }, { submitText: 'Invia' });
     },
     managerSuspend: async () => {
         if (!await confirmDialog('Sospendi istanza', `L'istanza ${current.name} viene disconnessa e non riceve comandi finché non è riattivata; riprova a collegarsi ogni 15 minuti e mantiene identità, backup e licenze. Le sessioni di supporto aperte vengono chiuse.`, 'Sospendi', 'btn-warning')) return;

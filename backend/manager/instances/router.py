@@ -22,7 +22,7 @@ from core.database import get_session
 from core.settings.router import get_system_settings
 
 from manager.agents import protocol
-from manager.agents.dispatcher import run_command, send_ephemeral
+from manager.agents.dispatcher import check_capability, queue_command, run_command, send_ephemeral
 from manager.agents.registry import registry
 from manager.models import (AgentCertificate, Backup, Command, EnrollmentRequest, EnrollmentToken, Instance,
                         InstanceAddress, InstanceGroup, License, SupportSession)
@@ -356,6 +356,59 @@ async def revoke(instance_id: str, session: AsyncSession = Depends(get_session),
     if instance.status in ("active", "suspended"):
         await revoke_instance(session, instance, by=user.username)
     return instance_out(instance)
+
+
+class RelocateIn(BaseModel):
+    # https://host:port of this manager's agent endpoint; empty = the agent URL in the settings
+    url: Optional[str] = Field(default=None, max_length=255)
+
+
+RELOCATE_TTL = timedelta(days=7)
+
+
+async def _relocate_url(session, url: Optional[str]) -> str:
+    from core.settings.models import SystemSettingsUpdate
+    url = url or (await get_system_settings(session)).agent_url
+    if not url:
+        raise HTTPException(400, "Nessun URL: impostare l'URL agent nelle impostazioni")
+    try:
+        return SystemSettingsUpdate(agent_url=url).agent_url
+    except ValueError:
+        raise HTTPException(422, "URL non valido (atteso https://host:porta)")
+
+
+@router.post("/instances/{instance_id}/relocate", status_code=202)
+async def relocate(instance_id: str, body: RelocateIn, session: AsyncSession = Depends(get_session),
+                   user: User = Depends(require_permission("manager.manage"))):
+    """The instance moves to another address of this manager (same CA): it
+    checks the address, connects there and keeps it only if it answers."""
+    instance = await get_instance_or_404(session, instance_id, user)
+    if instance.status != "active":
+        raise HTTPException(409, "Istanza non attiva")
+    url = await _relocate_url(session, body.url)
+    check_capability(instance.id, protocol.CMD_MANAGER_RELOCATE)
+    cmd = await queue_command(session, instance.id, protocol.CMD_MANAGER_RELOCATE, {"url": url},
+                              operator=user.username, ttl=RELOCATE_TTL)
+    return {"command_id": cmd.id, "status": cmd.status, "url": url}
+
+
+@router.post("/instances/relocate", status_code=202)
+async def relocate_all(body: RelocateIn, session: AsyncSession = Depends(get_session),
+                       user: User = Depends(require_permission("manager.manage"))):
+    """Every active instance (offline ones when they connect, within 7 days).
+    Instances already on that address answer without changing anything."""
+    url = await _relocate_url(session, body.url)
+    rows = (await session.execute(select(Instance).where(Instance.status == "active"))).scalars().all()
+    queued, skipped = 0, []
+    for instance in rows:
+        conn = registry.get(instance.id)
+        if conn is not None and not conn.supports(protocol.CMD_MANAGER_RELOCATE):
+            skipped.append(instance.name)
+            continue
+        await queue_command(session, instance.id, protocol.CMD_MANAGER_RELOCATE, {"url": url},
+                            operator=user.username, ttl=RELOCATE_TTL)
+        queued += 1
+    return {"url": url, "queued": queued, "unsupported": skipped}
 
 
 @router.post("/instances/{instance_id}/suspend")

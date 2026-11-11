@@ -563,6 +563,7 @@ async function overview(el, i) {
         <td>${(n.ipv4 || []).map(escapeHtml).join('<br>') || '-'}</td><td>${escapeHtml(n.mac || '-')}</td>
         <td>${n.is_up ? 'up' : 'down'}</td></tr>`).join('');
     el.innerHTML = `
+        ${rescueCard(i)}
         <div class="card-body border-bottom">
             <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                 <h4 class="mb-0 flex-fill"><i class="ti ti-chart-line me-2"></i>Risorse e traffico</h4>
@@ -891,6 +892,35 @@ async function commands(el, i) {
         </tbody></table></div>`;
 }
 
+// Shown while madmin-rescue reports (MADMIN down, every 5 minutes) or an
+// action is queued for it
+function rescueCard(i) {
+    const recent = i.rescue_at && (Date.now() - new Date(i.rescue_at + 'Z').getTime()) < 30 * 60000;
+    const act = i.rescue_action || {};
+    if (!recent && act.status !== 'pending') return '';
+    const r = i.rescue || {};
+    const manage = checkPermission('manager.manage');
+    const last = r.last_action ? `<div class="mt-2 small">Ultima azione: <strong>${escapeHtml(r.last_action.action)}</strong>
+        ${r.last_action.ok ? '<span class="badge bg-success-lt">riuscita</span>' : '<span class="badge bg-danger-lt">fallita</span>'}
+        <span class="text-muted">${fmtDate(r.last_action.at)}</span>
+        <pre class="small mt-1 mb-0">${escapeHtml(r.last_action.output || '')}</pre></div>` : '';
+    return `<div class="card-body border-bottom bg-danger-lt">
+        <h4><i class="ti ti-lifebuoy me-2"></i>Rescue: MADMIN non risponde</h4>
+        <div class="small">Ultimo report ${fmtDate(i.rescue_at)} · release ${escapeHtml(r.current || '?')}
+            (precedente ${escapeHtml(r.previous || '-')}) · ${escapeHtml(r.unit || '')} · disco libero ${r.disk_free_mb ?? '?'} MB</div>
+        ${act.status ? `<div class="mt-2">Azione <strong>${escapeHtml(act.action)}</strong> ${act.release_id ? escapeHtml(act.release_id) : ''}:
+            ${act.status === 'pending' ? 'in attesa del prossimo report (entro 5 minuti)' : `inviata ${fmtDate(act.sent_at)}`}
+            ${act.status === 'pending' && manage ? `<button class="btn btn-sm btn-link" ${actionAttrs('managerRescueCancel')}>Annulla</button>` : ''}</div>` : ''}
+        ${last}
+        ${manage ? `<div class="btn-list mt-2">
+            <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerRescue', 'restart')}>Riavvia MADMIN</button>
+            <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerRescue', 'rollback')}>Torna alla release precedente</button>
+            <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerRescue', 'install')}>Installa una release</button></div>` : ''}
+        <details class="mt-2"><summary class="small">Journal di madmin.service</summary>
+            <pre class="small mb-0" style="max-height: 360px; overflow: auto">${escapeHtml(r.journal || '')}</pre></details>
+    </div>`;
+}
+
 const UPDATE_RESULTS = { running: ['bg-info-lt', 'in corso'], verifying: ['bg-info-lt', 'in verifica'],
     ok: ['bg-success-lt', 'riuscito'], rolled_back: ['bg-warning-lt', 'annullato (rollback)'], failed: ['bg-danger-lt', 'fallito'] };
 
@@ -1118,6 +1148,31 @@ registerActions({
             secretModal('Token re-enroll',
                 enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
         } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerRescue: async (action) => {
+        const labels = { restart: 'riavviare MADMIN', rollback: 'tornare alla release precedente (con il database di allora)',
+                         install: 'installare una release' };
+        let body = { action };
+        if (action === 'install') {
+            const releases = await apiGet('/releases');
+            if (!releases.length) { showToast('Nessuna release caricata', 'warning'); return; }
+            return formModal('Rescue: installa una release', `
+                <div class="mb-3"><label class="form-label">Release</label>
+                    <select name="release_id" class="form-select">${releases.map(r =>
+                        `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} (${r.channel})</option>`).join('')}</select></div>`,
+            async (form) => {
+                await apiPost(`/instances/${current.id}/rescue`, { action, release_id: formData(form).release_id });
+                showToast('Azione in coda: la esegue il rescue al prossimo report', 'success');
+                reloadDetail('overview');
+            }, { submitText: 'Metti in coda', submitClass: 'btn-danger' });
+        }
+        if (!await confirmDialog('Rescue', `Il rescue dell'istanza proverà a ${labels[action]} al prossimo report (entro 5 minuti).`, 'Metti in coda')) return;
+        try { await apiPost(`/instances/${current.id}/rescue`, body); reloadDetail('overview'); }
+        catch (e) { showToast(e.message, 'error'); }
+    },
+    managerRescueCancel: async () => {
+        try { await apiDelete(`/instances/${current.id}/rescue`); reloadDetail('overview'); }
+        catch (e) { showToast(e.message, 'error'); }
     },
     managerUpdate: async () => {
         let releases;

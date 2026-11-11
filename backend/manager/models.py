@@ -72,6 +72,11 @@ class Instance(SQLModel, table=True):
     features_json: str = Field(default="[]")      # agent features from the last hello
     trusted_ca_json: str = Field(default="[]")    # CA fingerprints the agent trusts (hello.state.ca)
     update_json: str = Field(default="{}")        # updater journal (hello.state.update, update.status)
+    # Rescue (madmin-rescue, when MADMIN is down): last report and the one
+    # action a superuser queued for it {id, action, release_id?, sha256?, by, at, status}
+    rescue_json: str = Field(default="{}")
+    rescue_at: Optional[datetime] = Field(default=None)
+    rescue_action_json: str = Field(default="{}")
     stats_json: str = Field(default="{}")
 
     # Passphrase the instance encrypts its manager backups with (encrypted here

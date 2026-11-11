@@ -261,6 +261,36 @@ async def download_backup(backup_id: str, agent=Depends(require_agent),
                         headers={"X-Content-SHA256": backup.sha256})
 
 
+# --- Rescue (madmin-rescue, when MADMIN is down) ---
+
+@router.post("/rescue")
+async def rescue(request: Request, agent=Depends(require_agent), session: AsyncSession = Depends(get_session)):
+    """The instance's report; the answer carries the action a superuser
+    queued for it, once."""
+    instance, _ = agent
+    try:
+        report = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Report non valido")
+    if not isinstance(report, dict):
+        raise HTTPException(400, "Report non valido")
+    instance = await session.get(Instance, instance.id)
+    instance.rescue_json = json.dumps(report)[:60000]
+    instance.rescue_at = datetime.utcnow()
+    action = json.loads(instance.rescue_action_json or "{}")
+    answer = None
+    if action.get("status") == "pending":
+        action["status"] = "sent"
+        action["sent_at"] = datetime.utcnow().isoformat()
+        instance.rescue_action_json = json.dumps(action)
+        answer = {k: action[k] for k in ("id", "action", "release_id", "sha256") if k in action}
+    session.add(instance)
+    await session.commit()
+    logger.warning("Instance %s (%s): rescue report%s", instance.name, instance.id,
+                   f", action {answer['action']} sent" if answer else "")
+    return {"action": answer}
+
+
 # --- Releases (madmin.update) ---
 
 @router.get("/releases/{release_id}")

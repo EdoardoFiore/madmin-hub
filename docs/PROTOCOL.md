@@ -33,6 +33,7 @@ Instances are updated after the manager and can stay on an older release for a l
 | `POST /agent/backups` | yes | backup upload (`X-Content-SHA256`, `X-Command-Id`, `X-Archive-Name`) |
 | `GET /agent/backups/{id}` | yes | backup download (only this instance's, `X-Content-SHA256`) |
 | `GET /agent/releases/{release_id}` | yes | a `.release` file the manager holds (`madmin.update`) |
+| `POST /agent/rescue` | yes | report of `madmin-rescue` (MADMIN down or not connected) → `{"action": null \| {id, action: restart \| rollback \| install, release_id?, sha256?}}` |
 
 - Identity: X.509 client certificate issued by the manager CA, CN = `instance_id`, 90 days. The private key (ECDSA P-256) never leaves the instance.
 - nginx verifies the chain (`ssl_verify_client optional`) and passes `X-SSL-Client-Verify` and `X-SSL-Client-Cert`. The manager looks up the sha256 fingerprint: unknown or revoked certificate, or instance not `active`, means refusal.
@@ -201,6 +202,10 @@ An unknown code is treated as `failed`.
 
 - UI access: a hidden temporary superuser, entered with a one-time ticket (`/login.html#manager-ticket=…` → `POST /api/auth/token/manager-ticket`).
 - SSH access: an OpenSSH user certificate from the manager SSH CA with principal `madmin-support-<instance_id>`, `source-address=127.0.0.1` and validity equal to the session. The instance lists the principal for root only while the grant is open (`expiry-time`, `from="127.0.0.1"`).
+
+## Rescue
+
+`madmin-rescue` (MADMIN repository, `scripts/madmin-rescue`, standard library only) runs every 5 minutes from `/opt/madmin/updater/`. While MADMIN runs and its agent is connected it does nothing. Otherwise it recovers an interrupted update, then posts to `/agent/rescue` (client certificate): unit state, the last 200 journal lines of `madmin.service`, current and previous release, the update journal, free disk, the outcome of its last action. The answer carries at most one action, queued by a superuser on the instance page and sent once: `restart`, `rollback` (`madmin-update rollback`) or `install` (a release the manager holds, downloaded from `/agent/releases/` and installed by `madmin-update` like any update). The rescue never opens a shell, a tunnel or support access.
 
 ## CA rotation
 

@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import unquote
 
@@ -148,3 +148,41 @@ async def update_instance(instance_id: str, body: UpdateIn, session: AsyncSessio
     cmd = await queue_command(session, instance.id, protocol.CMD_UPDATE, args, operator=user.username,
                               ttl=UPDATE_TTL, timeout=UPDATE_TIMEOUT)
     return {"command_id": cmd.id, "status": cmd.status, "release_id": row.id}
+
+
+class RescueIn(BaseModel):
+    action: str = Field(pattern="^(restart|rollback|install)$")
+    release_id: Optional[str] = Field(default=None, max_length=80)
+
+
+@router.post("/instances/{instance_id}/rescue", status_code=202)
+async def queue_rescue(instance_id: str, body: RescueIn, session: AsyncSession = Depends(get_session),
+                       user: User = Depends(require_permission("manager.manage"))):
+    """The one action madmin-rescue runs at its next report (every 5 minutes
+    while MADMIN is down): restart, rollback, or install a release."""
+    instance = await get_instance_or_404(session, instance_id, user)
+    if instance.layout < 1:
+        raise HTTPException(409, "Installazione senza rescue (layout precedente)")
+    action = {"id": uuid.uuid4().hex, "action": body.action, "by": user.username,
+              "at": datetime.utcnow().isoformat(), "status": "pending"}
+    if body.action == "install":
+        row = await session.get(Release, body.release_id or "")
+        if row is None or not service.stored(row.id):
+            raise HTTPException(404, "Release non trovata")
+        action.update(release_id=row.id, sha256=row.sha256)
+    instance.rescue_action_json = json.dumps(action)
+    session.add(instance)
+    await session.commit()
+    return action
+
+
+@router.delete("/instances/{instance_id}/rescue", status_code=204)
+async def cancel_rescue(instance_id: str, session: AsyncSession = Depends(get_session),
+                        user: User = Depends(require_permission("manager.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
+    action = json.loads(instance.rescue_action_json or "{}")
+    if action.get("status") == "pending":
+        instance.rescue_action_json = "{}"
+        session.add(instance)
+        await session.commit()
+

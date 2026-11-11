@@ -59,6 +59,9 @@ def instance_out(i: Instance, detail: bool = False) -> dict:
     }
     if detail:
         out["facts"] = _json(i.facts_json, {})
+        out["rescue_at"] = i.rescue_at.isoformat() if i.rescue_at else None
+        out["rescue"] = _json(i.rescue_json, {})
+        out["rescue_action"] = _json(i.rescue_action_json, {})
     return out
 
 

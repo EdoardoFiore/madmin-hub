@@ -11,7 +11,7 @@ The previous attempt is in `../madmin-hub-legacy` (reference only, do not copy f
 ## Workflow
 
 - **No test commands are run locally.** Tested on a separate test server.
-- **No commits are made by Claude.** Commits are managed manually by the user.
+- **Claude may commit and push** (Conventional Commits, one logical change per commit). Work on a feature branch, never directly on `main`.
 - No DB migrations: `init_db()` only runs `create_all`; a new column needs a model default.
 
 ```bash

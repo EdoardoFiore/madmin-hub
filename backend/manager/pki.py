@@ -357,15 +357,20 @@ async def _rotation_blockers(stage: str) -> List[str]:
             rows = (await session.execute(select(Instance).where(
                 Instance.status.in_(("active", "suspended"))))).scalars().all()
             return [f"{i.name} ({i.id})" for i in rows if fp not in json.loads(i.trusted_ca_json or "[]")]
-        activated = datetime.fromisoformat(json.loads(_read("ca_rotation.json"))["activated_at"])
+        activated = datetime.fromisoformat(
+            json.loads(_read("ca_rotation.json"))["activated_at"]).replace(tzinfo=None)
         rows = (await session.execute(
             select(AgentCertificate, Instance.name).join(Instance, Instance.id == AgentCertificate.instance_id)
             .where(AgentCertificate.revoked == False,  # noqa: E712
                    AgentCertificate.not_after > datetime.utcnow(),
-                   AgentCertificate.not_before < activated.replace(tzinfo=None),
                    Instance.status.in_(("active", "suspended")))
         )).all()
-        return [f"{name} (certificato fino al {c.not_after:%Y-%m-%d})" for c, name in rows]
+        # An instance is ready once it holds a certificate of the new CA, issued
+        # after the activation (not_before is backdated 5 minutes at signing);
+        # its older ones are no longer used
+        renewed = {c.instance_id for c, _ in rows if c.not_before >= activated - timedelta(minutes=5)}
+        return sorted({f"{name} (certificato della CA precedente fino al {c.not_after:%Y-%m-%d})"
+                       for c, name in rows if c.instance_id not in renewed})
 
 
 # --- Agent certificates ---

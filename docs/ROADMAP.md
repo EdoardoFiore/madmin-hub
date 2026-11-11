@@ -94,7 +94,7 @@ Steps:
 - [x] Agent commits of `feat/hub-agent` applied on MADMIN `main` in the new branch `feat/manager-agent` (only 3 of its commits were not already in `main`).
 - [x] Rename on the MADMIN side (package, CLI, data directory, audit names, ticket route, installer flags). Support accounts are named `mgr-<operator>-<suffix>`; the user column is `is_manager_support`.
 - [x] Rename on the manager side (package, service, user, database, setup script, nginx names, capabilities `manager.view`/`manager.manage`, UI strings, `CLAUDE.md`, `docs/`).
-- [ ] Rename the repository and its directory to `madmin-manager` (by hand). The test manager is reinstalled from scratch: service, user, database and `/opt` path changed.
+- [x] Rename the repository and its directory to `madmin-manager`. The test manager was reinstalled from scratch (service, user, database and `/opt` path changed).
 - [x] Update `docs/PROTOCOL.md` and `docs/API.md` with the new names.
 
 ### 5.2 Tolerance rules (G1, G2)
@@ -208,10 +208,12 @@ Added to `facts`: `version` (semver, replaces `madmin_version`), `build` (git co
 
 ### 5.12 Phase 0 exit criteria
 
-- [ ] `docs/PROTOCOL.md` rewritten for the frozen v1, with a section "Compatibility rules" that states 5.2 as normative.
+- [x] `docs/PROTOCOL.md` rewritten for the frozen v1, with a section "Compatibility rules" that states 5.2 as normative.
 - [x] `protocol.py` identical in both repositories.
-- [ ] A compatibility test on the test server: an agent built from the Phase 0 tag connects to a manager patched to send an unknown frame type, an unknown payload field, an unknown close code and an unknown command; the agent stays connected and answers `unsupported`.
-- [ ] The Phase 0 agent is tagged (`agent-v1-baseline`): every later manager version is tested against it.
+- [x] A compatibility test on the test server: `scripts/agent-compat-check.py` stands in for a newer manager and sends unknown hello_ack fields, an unknown frame type, an unknown command, an unknown payload field, an unknown argument and an unknown close code; the agent stays connected, answers `unsupported` / `invalid_args` and comes back (passed 2026-11-11).
+- [x] The Phase 0 agent is tagged (`agent-v1-baseline` in the MADMIN repository): every later manager version is tested against it.
+
+Tested on the test server on 2026-11-11, besides the above: install of manager and instance from the branches, enrollment with a token, refresh, stats, backup and restore (with progress), UI support (1000 minutes) through the tunnel with a single-use ticket, SSH support (900 minutes) with a certificate, error codes, agent settings pushed by the manager, suspension (4403, reconnection after exactly 15 minutes), reconciliation of a lost SSH grant and of a deleted license, relocation (refused addresses, move to another name, back), a complete CA rotation (prepare, activate, renewal, retire) without losing the instance.
 
 ## 6. Phase 1 — Releases, updater, rescue
 

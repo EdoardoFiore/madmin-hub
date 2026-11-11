@@ -99,7 +99,8 @@ The maximum frame size is 1 MB.
 
 `facts` contains:
 
-- `madmin_version`, `hostname`, `machine_id`, `os`, `kernel`, `boot_time`
+- `version` (semver), `build` (git commit, `-dirty` with local changes, `dev` without a manifest), `release_id` (`<version>+<build>`), `layout` (on-disk layout: 0 = flat install without the updater), read from `manifest.json` next to `backend/`
+- `hostname`, `machine_id`, `os`, `kernel`, `boot_time`
 - `interfaces` [{name, mac, is_up, ipv4 ["a.b.c.d/mask"], ipv6}]
 - `ssh_ports`
 - `modules` [{id, version, enabled}]

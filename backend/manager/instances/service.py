@@ -79,7 +79,10 @@ def apply_facts(instance: Instance, facts: dict) -> None:
     instance.facts_json = raw
     instance.hostname = _clip(facts.get("hostname"), 255)
     instance.machine_id = _clip(facts.get("machine_id"), 64)
-    instance.madmin_version = _clip(facts.get("madmin_version"), 30)
+    instance.madmin_version = _clip(facts.get("version"), 30)
+    instance.build = _clip(facts.get("build"), 40)
+    layout = facts.get("layout")
+    instance.layout = layout if isinstance(layout, int) and not isinstance(layout, bool) else 0
     instance.os = _clip(facts.get("os"), 100)
 
 

@@ -198,7 +198,7 @@ Steps:
 
 Added to `facts`: `version` (semver, replaces `madmin_version`), `build` (git commit, 12 hex), `release_id` (`<version>+<build>`), `layout` (integer, the on-disk layout revision), `updater` (version of the updater), `rescue` (version of the rescue unit). They are read from the release manifest written at build time (Phase 1), never typed by hand. In development (no manifest) they are `dev`.
 
-- [ ] Agent facts; manager columns `version`, `build` (indexed, for fleet filters) filled by `apply_facts`.
+- [x] Agent facts `version`, `build`, `release_id`, `layout` from `manifest.json` (written by `setup-madmin.sh` until Phase 1 writes it in the release build); manager columns `build` (indexed) and `layout` filled by `apply_facts`. `updater` and `rescue` are added with Phase 1 (additive).
 
 ### 5.11 Support duration
 

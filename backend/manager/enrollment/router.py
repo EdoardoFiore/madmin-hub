@@ -114,7 +114,7 @@ def request_out(r: EnrollmentRequest, matches: list) -> dict:
         "expires_at": r.expires_at.isoformat(), "source_ip": r.source_ip,
         "key_fingerprint": r.key_fingerprint, "ca_pinned": r.ca_pinned,
         "hostname": facts.get("hostname"), "machine_id": facts.get("machine_id"),
-        "madmin_version": facts.get("madmin_version"), "os": facts.get("os"),
+        "madmin_version": facts.get("version"), "os": facts.get("os"),
         "interfaces": facts.get("interfaces") or [],
         "decided_by": r.decided_by, "decided_at": r.decided_at.isoformat() if r.decided_at else None,
         "instance_id": r.instance_id,

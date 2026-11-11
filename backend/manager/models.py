@@ -62,6 +62,8 @@ class Instance(SQLModel, table=True):
     hostname: str = Field(default="", max_length=255)
     machine_id: str = Field(default="", max_length=64, index=True)
     madmin_version: str = Field(default="", max_length=30)
+    build: str = Field(default="", max_length=40, index=True)   # git commit of the release
+    layout: int = Field(default=0)   # on-disk layout (0 = flat install, no updater)
     os: str = Field(default="", max_length=100)
     protocol: int = Field(default=0)              # major (frame `v`)
     protocol_revision: int = Field(default=0)     # negotiated in the last hello

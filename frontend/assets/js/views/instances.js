@@ -576,6 +576,7 @@ async function overview(el, i) {
                 <div class="col-lg-6">${kv([
                     ['Hostname', escapeHtml(f.hostname || i.hostname || '-')],
                     ['Versione MADMIN', escapeHtml(i.madmin_version || '-')],
+                    ['Build', `<span class="font-monospace">${escapeHtml(i.build || '-')}</span>`],
                     ['Sistema', escapeHtml(`${f.os || '-'} (kernel ${f.kernel || '?'})`)],
                     ['Machine ID', `<span class="font-monospace small">${escapeHtml(f.machine_id || '-')}</span>`],
                     ['Avvio', fmtDate(f.boot_time)],

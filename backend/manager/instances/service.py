@@ -116,6 +116,25 @@ async def close_support_sessions(session, instance_id: str, by: str) -> None:
         session.add(s)
 
 
+async def suspend_instance(session, instance: Instance, by: str) -> None:
+    """No connection and no command until resumed; the instance keeps its
+    identity (it may still renew its certificate). Support sessions close."""
+    instance.status = "suspended"
+    session.add(instance)
+    await close_support_sessions(session, instance.id, by)
+    await session.commit()
+    await registry.disconnect(instance.id, protocol.CLOSE_SUSPENDED, "suspended")
+    logger.info("Instance %s (%s) suspended by %s", instance.name, instance.id, by)
+
+
+async def resume_instance(session, instance: Instance, by: str) -> None:
+    """Active again: the agent connects at its next attempt (within 15 minutes)."""
+    instance.status = "active"
+    session.add(instance)
+    await session.commit()
+    logger.info("Instance %s (%s) resumed by %s", instance.name, instance.id, by)
+
+
 async def revoke_instance(session, instance: Instance, by: str, status: str = "revoked") -> None:
     instance.status = status
     session.add(instance)

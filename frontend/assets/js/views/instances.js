@@ -9,7 +9,7 @@ import { escapeHtml, showToast, confirmDialog, loadingSpinner, formatBytes,
 import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
-         cmpVersion, meter } from './manager-common.js';
+         cmpVersion, meter, STATUS_LABELS } from './manager-common.js';
 
 const TABS = [
     ['overview', 'Panoramica', 'scope.view'],
@@ -45,6 +45,7 @@ const STATUS_FILTERS = [
     ['active', 'Attive', i => i.status === 'active'],
     ['online', 'Online', i => i.status === 'active' && i.online],
     ['offline', 'Offline', i => i.status === 'active' && !i.online],
+    ['suspended', 'Sospese', i => i.status === 'suspended'],
     ['revoked', 'Revocate', i => i.status === 'revoked'],
     ['decommissioned', 'Dismesse', i => i.status === 'decommissioned'],
     ['', 'Tutti gli stati', () => true],
@@ -141,7 +142,7 @@ function renderTree() {
 
     const leaf = (i, depth) => {
         const title = [i.status === 'active' ? (i.online ? 'Online' : `Offline, ultimo contatto ${relTime(i.last_seen_at)}`)
-                                             : (i.status === 'revoked' ? 'Revocata' : 'Dismessa'),
+                                             : (STATUS_LABELS[i.status] || i.status),
                        i.last_ip, i.madmin_version && `MADMIN ${i.madmin_version}`].filter(Boolean).join(' · ');
         return `<a class="tree-node ${i.status !== 'active' ? 'inactive' : ''} ${selected.kind === 'instance' && selected.id === i.id ? 'active' : ''}"
                 href="#instances/${escapeHtml(i.id)}" style="--depth:${depth}" title="${escapeHtml(title)}">
@@ -511,8 +512,10 @@ async function renderDetail(container, id, tab) {
     if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
     if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
     if (checkPermission('manager.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
-    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
-    if (checkPermission('manager.manage') && i.status !== 'active') actions.push(`<button class="btn btn-danger" ${actionAttrs('managerDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
+    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-warning" ${actionAttrs('managerSuspend')}><i class="ti ti-player-pause me-1"></i>Sospendi</button>`);
+    if (checkPermission('manager.manage') && i.status === 'suspended') actions.push(`<button class="btn btn-outline-success" ${actionAttrs('managerResume')}><i class="ti ti-player-play me-1"></i>Riattiva</button>`);
+    if (checkPermission('manager.manage') && ['active', 'suspended'].includes(i.status)) actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
+    if (checkPermission('manager.manage') && !['active', 'suspended'].includes(i.status)) actions.push(`<button class="btn btn-danger" ${actionAttrs('managerDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
     setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
 
     container.innerHTML = `
@@ -1095,6 +1098,18 @@ registerActions({
             const res = await apiPost(`/enrollment/instances/${current.id}/reenroll`, {});
             secretModal('Token re-enroll',
                 enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
+        } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerSuspend: async () => {
+        if (!await confirmDialog('Sospendi istanza', `L'istanza ${current.name} viene disconnessa e non riceve comandi finché non è riattivata; riprova a collegarsi ogni 15 minuti e mantiene identità, backup e licenze. Le sessioni di supporto aperte vengono chiuse.`, 'Sospendi', 'btn-warning')) return;
+        try { await apiPost(`/instances/${current.id}/suspend`, {}); reloadDetail('overview'); }
+        catch (e) { showToast(e.message, 'error'); }
+    },
+    managerResume: async () => {
+        try {
+            await apiPost(`/instances/${current.id}/resume`, {});
+            showToast('Istanza riattivata: si ricollega entro 15 minuti', 'success');
+            reloadDetail('overview');
         } catch (e) { showToast(e.message, 'error'); }
     },
     managerRevoke: async () => {

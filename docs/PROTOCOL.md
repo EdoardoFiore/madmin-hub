@@ -111,7 +111,9 @@ The maximum frame size is 1 MB.
 |---|---|---|
 | 4400 | malformed frame, wrong major, no common revision | reconnects with backoff |
 | 4401 | certificate unknown/revoked, instance not active | **stops**, marks itself revoked, removes the support access (accounts, SSH grant, sshd CA), waits for a new enrollment |
+| 4403 | instance suspended by the manager | keeps everything (identity, support access, licenses) and tries again every 15 minutes; certificate renewal and unenroll keep working |
 | 4409 | replaced by a newer connection of the same instance | reconnects |
+| 4429 | manager busy; the close reason is the number of seconds to wait | waits that long (5–3600 s, 60 if unreadable), then reconnects |
 | any other | – | reconnects with backoff |
 
 The newest connection wins: the manager closes the old one with 4409 and never refuses the new one.

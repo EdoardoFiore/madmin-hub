@@ -50,7 +50,7 @@ class Instance(SQLModel, table=True):
     name: str = Field(max_length=100, index=True)
     description: str = Field(default="", max_length=500)
     group_id: Optional[str] = Field(default=None, foreign_key="instance_group.id", max_length=36)
-    # active | revoked | decommissioned
+    # active | suspended | revoked | decommissioned
     status: str = Field(default="active", max_length=20, index=True)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

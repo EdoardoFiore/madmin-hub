@@ -181,7 +181,7 @@ Steps:
 | 4409 | superseded | reconnect (unchanged) |
 | 4429 | try later; the reason carries the seconds | reconnect after that delay |
 
-- [ ] Add 4403 and 4429 on both sides; instance status `suspended` on the manager.
+- [x] Add 4403 and 4429 on both sides; instance status `suspended` on the manager (Sospendi / Riattiva, superuser). The manager does not send 4429 yet: the agent behaviour is what is frozen.
 
 ### 5.9 Moving the manager and rotating its CA (G10)
 

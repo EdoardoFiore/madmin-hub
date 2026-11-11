@@ -49,6 +49,14 @@ async def require_agent(request: Request, session: AsyncSession = Depends(get_se
     return found
 
 
+async def require_agent_or_suspended(request: Request, session: AsyncSession = Depends(get_session)):
+    """Also a suspended instance: renewal and unenroll keep working."""
+    found = await authenticate(session, request, allow_suspended=True)
+    if found is None:
+        raise HTTPException(403, "Certificato non valido o istanza revocata")
+    return found
+
+
 # --- Enrollment ---
 
 @router.get("/ca.pem")
@@ -158,7 +166,7 @@ class RenewRequest(BaseModel):
 
 
 @router.post("/renew")
-async def renew(body: RenewRequest, agent=Depends(require_agent), session: AsyncSession = Depends(get_session)):
+async def renew(body: RenewRequest, agent=Depends(require_agent_or_suspended), session: AsyncSession = Depends(get_session)):
     instance, _ = agent
     try:
         cert_pem, fp, serial, nb, na = pki.sign_agent_csr(body.csr, instance.id)
@@ -173,7 +181,7 @@ async def renew(body: RenewRequest, agent=Depends(require_agent), session: Async
 
 
 @router.post("/unenroll")
-async def unenroll(agent=Depends(require_agent), session: AsyncSession = Depends(get_session)):
+async def unenroll(agent=Depends(require_agent_or_suspended), session: AsyncSession = Depends(get_session)):
     instance, _ = agent
     instance = await session.get(Instance, instance.id)
     await revoke_instance(session, instance, by="instance", status="decommissioned")
@@ -349,13 +357,17 @@ async def _writer(conn: AgentConnection) -> None:
 async def control_channel(ws: WebSocket):
     source_ip = get_client_ip(ws)
     async with async_session_maker() as session:
-        found = await authenticate(session, ws)
+        found = await authenticate(session, ws, allow_suspended=True)
     await ws.accept()
     if found is None:
         # Accepted then closed, so the agent sees the code and stops retrying
         await ws.close(code=protocol.CLOSE_REVOKED, reason="revoked")
         return
     instance, _ = found
+    if instance.status == "suspended":
+        # The agent keeps its identity and access and comes back in 15 minutes
+        await ws.close(code=protocol.CLOSE_SUSPENDED, reason="suspended")
+        return
     try:
         conn = await _handle_hello(ws, instance.id, source_ip)
     except (protocol.ProtocolError, asyncio.TimeoutError, ValueError) as e:

@@ -28,7 +28,7 @@ from manager.models import (AgentCertificate, Backup, Command, EnrollmentRequest
                         InstanceAddress, InstanceGroup, License, SupportSession)
 from manager import groups as manager_groups, scope
 from manager.registration import check_external_ref, check_labels, instance_by_ref
-from .service import apply_facts, clone_suspects, revoke_instance
+from .service import apply_facts, clone_suspects, resume_instance, revoke_instance, suspend_instance
 
 router = APIRouter(prefix="/api", tags=["Instances"])
 
@@ -173,7 +173,8 @@ async def dashboard(session: AsyncSession = Depends(get_session),
         "total": len(rows),
         "active": sum(1 for i in rows if i.status == "active"),
         "online": sum(1 for i in rows if i.id in online),
-        "revoked": sum(1 for i in rows if i.status != "active"),
+        "suspended": sum(1 for i in rows if i.status == "suspended"),
+        "revoked": sum(1 for i in rows if i.status in ("revoked", "decommissioned")),
         "versions": versions,
         "failed_commands_24h": failed,
         "offline": [instance_out(i) for i in rows if i.status == "active" and i.id not in online][:20],
@@ -352,8 +353,28 @@ async def stats_history(instance_id: str, hours: int = Query(default=1, ge=1, le
 async def revoke(instance_id: str, session: AsyncSession = Depends(get_session),
                  user: User = Depends(require_permission("manager.manage"))):
     instance = await get_instance_or_404(session, instance_id, user)
-    if instance.status == "active":
+    if instance.status in ("active", "suspended"):
         await revoke_instance(session, instance, by=user.username)
+    return instance_out(instance)
+
+
+@router.post("/instances/{instance_id}/suspend")
+async def suspend(instance_id: str, session: AsyncSession = Depends(get_session),
+                  user: User = Depends(require_permission("manager.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
+    if instance.status != "active":
+        raise HTTPException(409, "Solo un'istanza attiva può essere sospesa")
+    await suspend_instance(session, instance, by=user.username)
+    return instance_out(instance)
+
+
+@router.post("/instances/{instance_id}/resume")
+async def resume(instance_id: str, session: AsyncSession = Depends(get_session),
+                 user: User = Depends(require_permission("manager.manage"))):
+    instance = await get_instance_or_404(session, instance_id, user)
+    if instance.status != "suspended":
+        raise HTTPException(409, "L'istanza non è sospesa")
+    await resume_instance(session, instance, by=user.username)
     return instance_out(instance)
 
 
@@ -361,7 +382,7 @@ async def revoke(instance_id: str, session: AsyncSession = Depends(get_session),
 async def delete_instance(instance_id: str, session: AsyncSession = Depends(get_session),
                           user: User = Depends(require_permission("manager.manage"))):
     instance = await get_instance_or_404(session, instance_id, user)
-    if instance.status == "active":
+    if instance.status in ("active", "suspended"):
         raise HTTPException(409, "Revocare l'istanza prima di eliminarla")
     from manager.backups.service import delete_instance_backups
     await delete_instance_backups(session, instance.id)

@@ -53,7 +53,12 @@ FRAME_TYPES = {HELLO, HELLO_ACK, HEARTBEAT, CMD, CMD_RESULT, EVENT}
 # --- Close codes (WebSocket application range; unknown ones: reconnect) ---
 CLOSE_PROTOCOL = 4400     # malformed frame / unsupported protocol version
 CLOSE_REVOKED = 4401      # certificate unknown or instance revoked: do not retry
+CLOSE_SUSPENDED = 4403    # instance suspended by the manager: keep everything, retry slowly
 CLOSE_SUPERSEDED = 4409   # a newer connection of the same instance replaced this one
+CLOSE_TRY_LATER = 4429    # manager busy: the close reason is the seconds to wait
+
+SUSPENDED_RETRY = 900               # seconds between attempts while suspended
+TRY_LATER_RANGE = (5, 3600)         # accepted wait of a 4429, seconds
 
 # --- Commands (manager -> agent) ---
 CMD_PING = "agent.ping"
@@ -170,3 +175,12 @@ def clamp_config(config: Any) -> Dict[str, int]:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             out[key] = int(min(hi, max(lo, value)))
     return out
+
+
+def try_later_delay(reason) -> int:
+    """Seconds to wait after a 4429 (its reason), clamped; 60 if unreadable."""
+    try:
+        seconds = int(str(reason).strip())
+    except (TypeError, ValueError):
+        return 60
+    return min(TRY_LATER_RANGE[1], max(TRY_LATER_RANGE[0], seconds))

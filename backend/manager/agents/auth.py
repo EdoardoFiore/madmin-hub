@@ -8,7 +8,10 @@ headers and does not proxy /agent/, and the backend listens on 127.0.0.1
 only, so the headers cannot be forged from outside.
 
 The certificate must also be one we issued and did not revoke: one indexed
-lookup by sha256 fingerprint (revocation is immediate, no CRL).
+lookup by sha256 fingerprint (revocation is immediate, no CRL). A suspended
+instance is recognised only where the caller allows it (control channel, to
+answer 4403; certificate renewal and unenroll, so a suspension does not let
+the identity expire).
 """
 from typing import Optional, Tuple
 from urllib.parse import unquote
@@ -20,7 +23,8 @@ from manager import pki
 from manager.models import AgentCertificate, Instance
 
 
-async def authenticate(session, conn: HTTPConnection) -> Optional[Tuple[Instance, AgentCertificate]]:
+async def authenticate(session, conn: HTTPConnection,
+                       allow_suspended: bool = False) -> Optional[Tuple[Instance, AgentCertificate]]:
     if conn.headers.get("x-ssl-client-verify") != "SUCCESS":
         return None
     raw = conn.headers.get("x-ssl-client-cert", "")
@@ -37,6 +41,7 @@ async def authenticate(session, conn: HTTPConnection) -> Optional[Tuple[Instance
     if row is None:
         return None
     cert, instance = row
-    if cert.revoked or instance.status != "active":
+    allowed = ("active", "suspended") if allow_suspended else ("active",)
+    if cert.revoked or instance.status not in allowed:
         return None
     return instance, cert

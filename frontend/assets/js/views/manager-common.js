@@ -20,10 +20,12 @@ export function relTime(value) {
     return `${Math.round(s / 86400)} g fa`;
 }
 
+export const STATUS_LABELS = { suspended: 'Sospesa', revoked: 'Revocata', decommissioned: 'Dismessa' };
+
 export function onlineBadge(inst) {
+    if (inst.status === 'suspended') return '<span class="badge bg-warning-lt">Sospesa</span>';
     if (inst.status !== 'active') {
-        const label = inst.status === 'revoked' ? 'Revocata' : 'Dismessa';
-        return `<span class="badge bg-secondary-lt">${label}</span>`;
+        return `<span class="badge bg-secondary-lt">${STATUS_LABELS[inst.status] || inst.status}</span>`;
     }
     return inst.online
         ? '<span class="badge bg-success-lt"><span class="status-dot status-dot-animated bg-success me-1"></span>Online</span>'

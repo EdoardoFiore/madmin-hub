@@ -361,7 +361,9 @@ async def delete_instance(instance_id: str, session: AsyncSession = Depends(get_
         raise HTTPException(409, "Revocare l'istanza prima di eliminarla")
     from hub.backups.service import delete_instance_backups
     await delete_instance_backups(session, instance.id)
-    for model in (InstanceAddress, AgentCertificate, Command, License, SupportSession):
+    # Every table with a foreign key to instance.id (enrollment requests: the
+    # approved one that created it, history only once the instance is gone)
+    for model in (InstanceAddress, AgentCertificate, Command, License, SupportSession, EnrollmentRequest):
         await session.execute(delete(model).where(model.instance_id == instance.id))
     await session.execute(delete(EnrollmentToken).where(EnrollmentToken.reenroll_instance_id == instance.id))
     await session.delete(instance)

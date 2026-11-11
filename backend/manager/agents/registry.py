@@ -27,6 +27,7 @@ class AgentConnection:
     capabilities: Dict[str, int] = field(default_factory=dict)   # command -> version
     features: Set[str] = field(default_factory=set)
     revision: int = protocol.PROTOCOL_REVISION
+    hello_state: dict = field(default_factory=dict)   # hello.state, reconciled once connected
     connected_at: datetime = field(default_factory=datetime.utcnow)
     outbox: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
 

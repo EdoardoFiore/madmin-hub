@@ -169,7 +169,7 @@ Events stay best effort. What must never drift is sent as **state** in every `he
 
 Steps:
 
-- [ ] Agent: collect the state. Manager: `reconcile(instance, state)` called from `_handle_hello`.
+- [x] Agent: collect the state. Manager: `reconcile(instance_id, state)` (`manager/agents/reconcile.py`) right after every connection. `update` is added with Phase 1.
 
 ### 5.8 Close codes
 

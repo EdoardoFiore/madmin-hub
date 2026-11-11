@@ -82,13 +82,28 @@ The maximum frame size is 1 MB.
 
 | type | direction | payload |
 |---|---|---|
-| `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts` |
+| `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts`, `state` |
 | `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version` |
 | `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
 | `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix), `timeout`? (seconds) |
 | `cmd_progress` | agent → manager, same `id` as the cmd | `state` (`running`), `step`?, `percent`? (0–100), `message`? |
 | `cmd_result` | agent → manager, same `id` as the cmd | `ok`, then `data` or `error` {`code`, `message`} |
 | `event` | agent → manager | `name`, `data` |
+
+`hello.state` is what the manager must not lose track of. Events are best effort (one sent while the instance is offline is lost); the manager reconciles with this state right after every connection:
+
+```json
+"state": {
+  "support": {"ui": ["mgr-..."], "ssh": {"open": true, "expires_at": 1730000000}},
+  "licenses": ["<license id>"],
+  "commands": {"running": ["<cmd id>"], "finished": ["<cmd id>"]}
+}
+```
+
+- `support`: open sessions the instance no longer has are closed as expired.
+- `licenses`: the licenses installed and valid now; an active license missing there gets a fresh token (unless an install is already pending).
+- `commands`: the ones running are marked running; `finished` are those whose result the agent still has (it answers them when they are re-sent).
+- A missing section means "unknown": the manager does nothing for it. Later sections (the outcome of an update, Phase 1) are additions.
 
 `hello_ack.config` tunes the agent. The values come from the manager settings; the agent clamps each one to its range (`protocol.CONFIG_LIMITS`) and keeps it until the next `hello_ack` or a restart of MADMIN:
 

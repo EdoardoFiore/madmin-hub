@@ -32,6 +32,7 @@ from manager.models import AgentCertificate, Backup, Command, EnrollmentToken, I
 from manager.instances.service import apply_facts, record_addresses, revoke_instance
 from . import dispatcher, protocol
 from .auth import authenticate
+from .reconcile import reconcile
 from .registry import AgentConnection, registry
 
 logger = logging.getLogger("madmin_manager.agents")
@@ -317,8 +318,9 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         "config": config,
         "manager_version": MANAGER_VERSION,
     }))
+    state = p.get("state") if isinstance(p.get("state"), dict) else {}
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
-                           capabilities=caps, features=features, revision=revision)
+                           capabilities=caps, features=features, revision=revision, hello_state=state)
 
 
 async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
@@ -382,6 +384,10 @@ async def control_channel(ws: WebSocket):
     logger.info("Instance %s (%s) connected from %s", instance.name, instance.id, source_ip)
     try:
         await dispatcher.resend_pending(instance.id)
+        try:
+            await reconcile(instance.id, conn.hello_state)
+        except Exception:
+            logger.exception("Instance %s: state not reconciled", instance.id)
         while True:
             raw = await ws.receive_text()
             try:

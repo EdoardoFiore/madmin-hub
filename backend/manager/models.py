@@ -71,6 +71,7 @@ class Instance(SQLModel, table=True):
     capabilities_json: str = Field(default="{}")  # {command: version} from the last hello
     features_json: str = Field(default="[]")      # agent features from the last hello
     trusted_ca_json: str = Field(default="[]")    # CA fingerprints the agent trusts (hello.state.ca)
+    update_json: str = Field(default="{}")        # updater journal (hello.state.update, update.status)
     stats_json: str = Field(default="{}")
 
     # Passphrase the instance encrypts its manager backups with (encrypted here
@@ -262,3 +263,24 @@ class SupportSession(SQLModel, table=True):
     expires_at: datetime
     closed_at: Optional[datetime] = Field(default=None)
     closed_by: str = Field(default="", max_length=100)
+
+
+class Release(SQLModel, table=True):
+    """A signed MADMIN release (madmin-<release_id>.release in DATA_DIR/releases/).
+    The manager only stores and distributes it: the instances check the
+    signature with their own keys. candidate on upload; stable once promoted
+    (rollouts beyond a single instance take stable releases only)."""
+    __tablename__ = "release"
+
+    id: str = Field(primary_key=True, max_length=80)   # <version>+<build>
+    version: str = Field(max_length=30, index=True)
+    build: str = Field(max_length=40)
+    channel: str = Field(default="candidate", max_length=10)   # candidate | stable
+    size: int = Field(default=0)
+    sha256: str = Field(max_length=64)          # of the .release file
+    manifest_json: str = Field(default="{}")
+    signed_by: str = Field(default="", max_length=100)   # key that verified it here ("" = no key configured)
+    notes: str = Field(default="", max_length=1000)
+    uploaded_by: str = Field(default="", max_length=100)
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+

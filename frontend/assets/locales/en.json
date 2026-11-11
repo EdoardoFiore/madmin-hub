@@ -103,7 +103,8 @@
         "instances": "Instances",
         "support": "Support",
         "licenses": "Licenses",
-        "enrollment": "Enrollment"
+        "enrollment": "Enrollment",
+        "releases": "Releases"
     },
     "app": {
         "pageNotFound": "Page not found",

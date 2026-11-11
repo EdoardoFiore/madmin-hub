@@ -42,6 +42,10 @@ class SystemSettings(SQLModel, table=True):
     agent_facts_interval: int = Field(default=300)
     agent_backoff_max: int = Field(default=60)
 
+    # Release signing public keys (PEM, one or more): an uploaded release must
+    # be signed by one of them. Empty = not checked here (the instances always check)
+    release_keys: str = Field(default="", max_length=10000)
+
     updated_at: Optional[str] = Field(default=None)
 
 
@@ -64,6 +68,7 @@ class SystemSettingsUpdate(SQLModel):
     agent_heartbeat_interval: Optional[int] = None
     agent_facts_interval: Optional[int] = None
     agent_backoff_max: Optional[int] = None
+    release_keys: Optional[str] = None
 
     @field_validator("registration_allowed_cidrs")
     @classmethod
@@ -154,3 +159,13 @@ class SystemSettingsUpdate(SQLModel):
         if v is not None and not lo <= v <= hi:
             raise ValueError(f"Valore fuori intervallo ({lo}-{hi})")
         return v
+
+    @field_validator("release_keys")
+    @classmethod
+    def _release_keys(cls, v):
+        if v:
+            from manager.releases.service import load_keys
+            load_keys(v)   # ValueError when a key is not an Ed25519 public key
+            v = v.strip() + "\n"
+        return v
+

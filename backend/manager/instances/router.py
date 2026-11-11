@@ -49,7 +49,7 @@ def instance_out(i: Instance, detail: bool = False) -> dict:
         "connected_at": conn.connected_at.isoformat() if conn else None,
         "last_seen_at": i.last_seen_at.isoformat() if i.last_seen_at else None,
         "last_ip": i.last_ip, "hostname": i.hostname, "madmin_version": i.madmin_version,
-        "build": i.build, "layout": i.layout,
+        "build": i.build, "layout": i.layout, "update": _json(i.update_json, {}),
         "os": i.os, "protocol": i.protocol, "protocol_revision": i.protocol_revision,
         "enrolled_at": i.enrolled_at.isoformat(),
         "backup_enabled": i.backup_enabled,

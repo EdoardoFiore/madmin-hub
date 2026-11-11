@@ -218,6 +218,13 @@ server {
         proxy_buffering off;
         include snippets/madmin-manager-proxy.conf;
     }
+    # Release upload (.release files, up to 1 GB, streamed to the backend)
+    location = /api/releases {
+        client_max_body_size 1g;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        include snippets/madmin-manager-proxy.conf;
+    }
     location /api {
         proxy_read_timeout 120s;
         include snippets/madmin-manager-proxy.conf;

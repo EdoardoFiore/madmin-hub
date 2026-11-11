@@ -261,6 +261,20 @@ async def download_backup(backup_id: str, agent=Depends(require_agent),
                         headers={"X-Content-SHA256": backup.sha256})
 
 
+# --- Releases (madmin.update) ---
+
+@router.get("/releases/{release_id}")
+async def download_release(release_id: str, agent=Depends(require_agent)):
+    from manager.releases.service import ReleaseError, stored
+    try:
+        path = stored(release_id)
+    except ReleaseError:
+        path = None
+    if path is None:
+        raise HTTPException(404, "Release non trovata")
+    return FileResponse(path, media_type="application/octet-stream")
+
+
 # --- Control channel ---
 
 # Abilities of this manager that are not commands (hello_ack.features)
@@ -308,9 +322,13 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         instance.features_json = json.dumps(sorted(features))
         instance.protocol = protocol.PROTOCOL_VERSION
         instance.protocol_revision = revision
-        trusted = (p.get("state") or {}).get("ca") if isinstance(p.get("state"), dict) else None
+        state = p.get("state") if isinstance(p.get("state"), dict) else {}
+        trusted = state.get("ca")
         if isinstance(trusted, list):
             instance.trusted_ca_json = json.dumps(sorted(str(f)[:64] for f in trusted[:10]))
+        update = state.get("update")
+        if isinstance(update, dict):
+            instance.update_json = json.dumps(update)[:8000]
         instance.last_seen_at = datetime.utcnow()
         if facts is not None:
             apply_facts(instance, facts)
@@ -328,6 +346,12 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
     bundle = pki.ca_bundle()   # during a CA rotation only
     if bundle:
         ack["ca_bundle"] = bundle
+    # An instance that reaches the manager after an update confirms it: the
+    # updater's health gate waits for this before committing
+    update = (p.get("state") or {}).get("update") if isinstance(p.get("state"), dict) else None
+    if isinstance(update, dict) and update.get("result") == "verifying" and update.get("release_id"):
+        ack["update_confirm"] = str(update["release_id"])[:80]
+        logger.info("Instance %s: update to %s confirmed", instance_id, ack["update_confirm"])
     await ws.send_text(protocol.frame(protocol.HELLO_ACK, ack))
     state = p.get("state") if isinstance(p.get("state"), dict) else {}
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
@@ -356,6 +380,15 @@ async def _handle_event(conn: AgentConnection, payload: dict) -> None:
     if name == protocol.EVENT_SUPPORT_EXPIRED:
         from manager.support.service import on_instance_expired
         await on_instance_expired(conn.instance_id, payload.get("data") or {})
+    elif name == protocol.EVENT_UPDATE_STATUS:
+        data = payload.get("data")
+        if isinstance(data, dict):
+            async with async_session_maker() as session:
+                instance = await session.get(Instance, conn.instance_id)
+                instance.update_json = json.dumps(data)[:8000]
+                session.add(instance)
+                await session.commit()
+            logger.info("Instance %s: update %s %s", conn.instance_id, data.get("release_id"), data.get("result"))
     elif name == protocol.EVENT_CA_UPDATED:
         trusted = (payload.get("data") or {}).get("ca")
         if isinstance(trusted, list):

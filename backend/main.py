@@ -127,9 +127,10 @@ def create_app() -> FastAPI:
     from manager.instances.router import router as instances_router
     from manager.licenses.router import router as licenses_router
     from manager.support.router import router as support_router
+    from manager.releases.router import router as releases_router
 
     for r in (auth_router, audit_router, settings_router, instances_router, enrollment_router,
-              backups_router, licenses_router, support_router, apikeys_router,
+              backups_router, licenses_router, support_router, releases_router, apikeys_router,
               provisioning_router, agent_router):
         app.include_router(r)
 
@@ -146,6 +147,7 @@ def create_app() -> FastAPI:
                 {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "manager.view"},
                 {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "scope.view"},
                 {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "manager.view"},
+                {"label": "menu.releases", "icon": "package", "route": "#releases", "permission": "manager.view"},
                 {"label": "menu.users", "icon": "users", "route": "#users", "permission": "users.view"},
                 {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "manager.view"},
                 {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "manager.view"},

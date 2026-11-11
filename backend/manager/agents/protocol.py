@@ -80,6 +80,7 @@ CMD_LICENSE_INSTALL = "license.install"
 CMD_LICENSE_REVOKE = "license.revoke"
 CMD_STATS_HISTORY = "stats.history"   # read only: resource and traffic history
 CMD_MANAGER_RELOCATE = "manager.relocate"   # move to another address of the same manager (same CA)
+CMD_UPDATE = "madmin.update"   # install a signed release the manager holds (madmin-update)
 
 # Symbolic tunnel targets: the agent maps them to local endpoints, the manager can
 # never name a host or port
@@ -92,6 +93,7 @@ SUPPORT_MINUTES_MAX = 1440
 # --- Events (agent -> manager) ---
 EVENT_SUPPORT_EXPIRED = "support.expired"
 EVENT_CA_UPDATED = "ca.updated"   # {"ca": [fingerprints]}: the trusted CAs changed
+EVENT_UPDATE_STATUS = "update.status"   # hello.state.update, when it changes
 
 # --- Errors: cmd_result {"ok": false, "error": {"code", "message"}} ---
 # The manager acts on the code only; the message is for the operator.

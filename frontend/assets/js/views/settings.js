@@ -29,6 +29,9 @@ const FIELDS = [
         ['agent_facts_interval', 'Controllo dei dati dell\'istanza ogni (secondi, 60-3600)', 'number'],
         ['agent_backoff_max', 'Attesa massima tra due riconnessioni (secondi, 30-900)', 'number'],
     ]],
+    ['Release', [
+        ['release_keys', 'Chiavi pubbliche di firma (PEM, una o più): una release caricata deve essere firmata da una di queste. Vuoto = non verificata qui (le istanze la verificano sempre)', 'textarea'],
+    ]],
     ['Backup e licenze', [
         ['backup_interval_hours', 'Backup pianificati ogni (ore, 0 = disattivati)', 'number'],
         ['backup_retention', 'Backup conservati per istanza', 'number'],
@@ -43,7 +46,9 @@ export async function render(container) {
         <form id="manager-settings" class="row row-cards">
             ${FIELDS.map(([title, fields]) => `
                 <div class="col-lg-6 col-xl-3"><div class="card"><div class="card-header"><h3 class="card-title">${title}</h3></div>
-                <div class="card-body">${fields.map(([k, label, type]) => type === 'checkbox' ? `
+                <div class="card-body">${fields.map(([k, label, type]) => type === 'textarea' ? `
+                    <div class="mb-3"><label class="form-label">${label}</label>
+                    <textarea name="${k}" class="form-control font-monospace small" rows="6" ${ro ? 'disabled' : ''}>${escapeHtml(s[k] ?? '')}</textarea></div>` : type === 'checkbox' ? `
                     <label class="form-check mb-3"><input name="${k}" type="checkbox" class="form-check-input" ${s[k] ? 'checked' : ''} ${ro ? 'disabled' : ''}>
                     <span class="form-check-label">${label}</span></label>` : `
                     <div class="mb-3"><label class="form-label">${label}</label>

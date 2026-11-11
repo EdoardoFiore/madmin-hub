@@ -32,6 +32,7 @@ Instances are updated after the manager and can stay on an older release for a l
 | `WSS /agent/tunnel/{conn_id}` | yes | one support tunnel (binary frames) |
 | `POST /agent/backups` | yes | backup upload (`X-Content-SHA256`, `X-Command-Id`, `X-Archive-Name`) |
 | `GET /agent/backups/{id}` | yes | backup download (only this instance's, `X-Content-SHA256`) |
+| `GET /agent/releases/{release_id}` | yes | a `.release` file the manager holds (`madmin.update`) |
 
 - Identity: X.509 client certificate issued by the manager CA, CN = `instance_id`, 90 days. The private key (ECDSA P-256) never leaves the instance.
 - nginx verifies the chain (`ssl_verify_client optional`) and passes `X-SSL-Client-Verify` and `X-SSL-Client-Cert`. The manager looks up the sha256 fingerprint: unknown or revoked certificate, or instance not `active`, means refusal.
@@ -83,7 +84,7 @@ The maximum frame size is 1 MB.
 | type | direction | payload |
 |---|---|---|
 | `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts`, `state` |
-| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version`, `ca_bundle`? (PEM, during a CA rotation) |
+| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version`, `ca_bundle`? (PEM, during a CA rotation), `update_confirm`? (release id) |
 | `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
 | `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix), `timeout`? (seconds) |
 | `cmd_progress` | agent → manager, same `id` as the cmd | `state` (`running`), `step`?, `percent`? (0–100), `message`? |
@@ -97,13 +98,17 @@ The maximum frame size is 1 MB.
   "support": {"ui": ["mgr-..."], "ssh": {"open": true, "expires_at": 1730000000}},
   "licenses": ["<license id>"],
   "commands": {"running": ["<cmd id>"], "finished": ["<cmd id>"]},
-  "ca": ["<sha256 of a trusted CA>"]
+  "ca": ["<sha256 of a trusted CA>"],
+  "update": {"update_id": "...", "release_id": "1.3.0+abc", "from_release": "1.2.0+def", "step": "health",
+             "result": "running | verifying | ok | rolled_back | failed", "detail": "...", "updated_at": "...",
+             "log_tail": "... (rolled_back / failed only)"}
 }
 ```
 
 - `support`: open sessions the instance no longer has are closed as expired.
 - `licenses`: the licenses installed and valid now; an active license missing there gets a fresh token (unless an install is already pending).
 - `ca`: the CAs the agent trusts, stored by the manager (readiness of a CA rotation).
+- `update`: the journal of the updater (`/opt/madmin/state/update.json`). When `result` is `verifying` the manager answers `hello_ack.update_confirm` with the `release_id`: the agent writes it to `state/update-confirm` and the updater's health gate can pass. A new release that cannot reach the manager is therefore rolled back.
 - `commands`: the ones running are marked running; `finished` are those whose result the agent still has (it answers them when they are re-sent).
 - A missing section means "unknown": the manager does nothing for it. Later sections (the outcome of an update, Phase 1) are additions.
 
@@ -161,10 +166,13 @@ All the commands below are at version 1.
 | `license.revoke` | `license_id` | `removed` |
 | `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
 | `manager.relocate` | `url` (https://host:port) | `url`, `changed` |
+| `madmin.update` | `release_id`, `sha256` (of the .release file), `deadline`? 60–3600 s | `release_id`, `unit`, `started` (persistent result; the outcome is `state.update` / `update.status`) |
 
 `manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
 
-Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}; `ca.updated` {`ca`: [fingerprints]} when the trusted CAs change after the hello (a bundle accepted from `hello_ack` or at a renewal).
+`madmin.update` is refused (`precondition`) on an installation without the updater (layout 0) and when the release is already installed, (`busy`) while an update runs. The agent downloads `/agent/releases/<release_id>` from its own manager, checks the sha256 and runs `madmin-update verify` (signature by a key the instance trusts, OS, layout, `min_from`, no downgrade, schema), then starts `madmin-update install` in a transient systemd unit and answers. See the MADMIN repository, `scripts/madmin-update` and `docs/RELEASING.md`.
+
+Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}; `update.status` (same payload as `state.update`) when the updater's journal changes after the hello; `ca.updated` {`ca`: [fingerprints]} when the trusted CAs change after the hello (a bundle accepted from `hello_ack` or at a renewal).
 
 ### Errors
 

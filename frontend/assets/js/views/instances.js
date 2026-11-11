@@ -512,6 +512,7 @@ async function renderDetail(container, id, tab) {
     if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
     if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
     if (checkPermission('manager.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
+    if (checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerUpdate')}><i class="ti ti-package me-1"></i>Aggiorna</button>`);
     if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRelocate')}><i class="ti ti-arrows-exchange me-1"></i>Cambia indirizzo</button>`);
     if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-warning" ${actionAttrs('managerSuspend')}><i class="ti ti-player-pause me-1"></i>Sospendi</button>`);
     if (checkPermission('manager.manage') && i.status === 'suspended') actions.push(`<button class="btn btn-outline-success" ${actionAttrs('managerResume')}><i class="ti ti-player-play me-1"></i>Riattiva</button>`);
@@ -580,7 +581,8 @@ async function overview(el, i) {
                 <div class="col-lg-6">${kv([
                     ['Hostname', escapeHtml(f.hostname || i.hostname || '-')],
                     ['Versione MADMIN', escapeHtml(i.madmin_version || '-')],
-                    ['Build', `<span class="font-monospace">${escapeHtml(i.build || '-')}</span>`],
+                    ['Build', `<span class="font-monospace">${escapeHtml(i.build || '-')}</span>${i.layout < 1 ? ' <span class="badge bg-secondary-lt" title="Installazione senza updater: per aggiornarla va reinstallata">senza updater</span>' : ''}`],
+                    ['Ultimo aggiornamento', updateText(i.update)],
                     ['Sistema', escapeHtml(`${f.os || '-'} (kernel ${f.kernel || '?'})`)],
                     ['Machine ID', `<span class="font-monospace small">${escapeHtml(f.machine_id || '-')}</span>`],
                     ['Avvio', fmtDate(f.boot_time)],
@@ -889,6 +891,17 @@ async function commands(el, i) {
         </tbody></table></div>`;
 }
 
+const UPDATE_RESULTS = { running: ['bg-info-lt', 'in corso'], verifying: ['bg-info-lt', 'in verifica'],
+    ok: ['bg-success-lt', 'riuscito'], rolled_back: ['bg-warning-lt', 'annullato (rollback)'], failed: ['bg-danger-lt', 'fallito'] };
+
+function updateText(u) {
+    if (!u || !u.release_id) return '-';
+    const [cls, label] = UPDATE_RESULTS[u.result] || ['bg-secondary-lt', u.result || '?'];
+    return `<span class="font-monospace">${escapeHtml(u.release_id)}</span> <span class="badge ${cls}">${label}</span>
+        ${u.result === 'running' || u.result === 'verifying' ? `<span class="text-muted small">(${escapeHtml(u.step || '')})</span>` : ''}
+        <div class="text-muted small">${fmtDate(u.updated_at)}${u.detail ? ` · ${escapeHtml(u.detail)}` : ''}</div>`;
+}
+
 function progressText(p) {
     return [p.step, p.percent != null ? `${p.percent}%` : '', p.message].filter(Boolean).join(' · ');
 }
@@ -1105,6 +1118,31 @@ registerActions({
             secretModal('Token re-enroll',
                 enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
         } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerUpdate: async () => {
+        let releases;
+        try { releases = (await apiGet('/releases')).filter(r => r.build !== current.build); }
+        catch (e) { showToast(e.message, 'error'); return; }
+        if (!releases.length) { showToast('Nessuna release disponibile: caricala in Release', 'warning'); return; }
+        formModal('Aggiorna MADMIN', `
+            <div class="text-muted small mb-3">L'istanza scarica la release dal manager, ne verifica la firma, la installa
+                accanto a quella attuale e passa alla nuova. Se entro il tempo indicato non torna attiva e
+                collegata al manager, torna da sola alla versione precedente (database compreso).
+                Durante il passaggio MADMIN si riavvia: il firewall resta attivo.</div>
+            <div class="mb-3"><label class="form-label">Release</label>
+                <select name="release_id" class="form-select" required>${releases.map(r =>
+                    `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} (${r.channel})</option>`).join('')}</select></div>
+            <div class="mb-3"><label class="form-label">Tempo per la verifica (secondi)</label>
+                <input name="deadline" type="number" class="form-control" min="60" max="3600" value="300"></div>
+            <div class="mb-3"><label class="form-label">Versione attuale</label>
+                <div class="font-monospace">${escapeHtml(current.madmin_version || '')}+${escapeHtml(current.build || '')}</div></div>`,
+        async (form) => {
+            const d = formData(form);
+            const res = await apiPost(`/instances/${current.id}/update`,
+                { release_id: d.release_id, deadline: Number(d.deadline) || null });
+            showToast(`Aggiornamento a ${res.release_id} inviato: avanzamento in Comandi e in Panoramica`, 'success');
+            reloadDetail('commands');
+        }, { submitText: 'Aggiorna', submitClass: 'btn-primary' });
     },
     managerRelocate: () => {
         formModal('Cambia indirizzo del manager', `

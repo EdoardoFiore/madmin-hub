@@ -23,8 +23,6 @@ from . import service
 
 router = APIRouter(prefix="/api", tags=["Support"])
 
-MAX_MINUTES = 8 * 60
-
 
 def session_out(row: SupportSession, instance_name: str = "") -> dict:
     d = row.model_dump()
@@ -33,7 +31,7 @@ def session_out(row: SupportSession, instance_name: str = "") -> dict:
 
 
 class _OpenBase(BaseModel):
-    minutes: int = Field(default=60, ge=5, le=MAX_MINUTES)
+    minutes: int = Field(default=60, ge=protocol.SUPPORT_MINUTES_MIN, le=protocol.SUPPORT_MINUTES_MAX)
     reason: str = Field(min_length=3, max_length=500)
     # IP allowed on the support port; default: the address of this request
     allowed_ip: Optional[str] = Field(default=None, max_length=45)

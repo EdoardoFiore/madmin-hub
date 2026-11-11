@@ -2,7 +2,21 @@
 
 `protocol.py` is identical in both repositories:
 `madmin/backend/core/manager/protocol.py` and `madmin-manager/backend/manager/agents/protocol.py`.
-Any change updates this document and is copied to the other side in the same change. `PROTOCOL_VERSION` is bumped only for incompatible changes (frame shape, existing commands): every frame carries it and a mismatch drops the connection. A new command is additive and needs no bump: the manager sends it only to agents that list it in `hello.capabilities`.
+Any change updates this document and is copied to the other side in the same change.
+
+## Compatibility rules (normative)
+
+Instances are updated after the manager and can stay on an older release for a long time. These rules let any manager talk to any agent released since protocol v1 was frozen, and they apply to both sides.
+
+- `v` in every frame is the **major** version of the envelope (`PROTOCOL_VERSION`). It is never bumped; a frame with a different `v` is refused (close 4400).
+- Each side speaks a range of **revisions** (`PROTOCOL_REVISION_MIN`..`PROTOCOL_REVISION`). `hello` carries the agent's range, `hello_ack.revision` the highest revision both speak. With no common revision the manager closes with 4400.
+- An unknown **frame type** is ignored (logged), never a reason to close.
+- An unknown **field** in a frame, a payload, `hello_ack.config` or the facts is ignored.
+- An unknown **event** is logged by the manager and otherwise ignored.
+- An unknown **close code** means: reconnect with backoff.
+- **Commands are versioned one by one.** `hello.capabilities` maps every command the agent implements to its version (`{"backup.run": 1, ...}`). A command's version is bumped when its arguments or its result change; the manager keeps the older shapes and never sends an argument the agent's version does not know. Command arguments stay strict on the agent (unknown fields are rejected): a silently dropped argument could change the meaning of a privileged action.
+- **Features** are abilities that are not commands. The agent lists its own in `hello.features`, the manager in `hello_ack.features`; a side uses a feature only if the other announced it.
+- Nothing is removed while an enrolled instance still advertises it.
 
 ## Transport and identity
 
@@ -68,12 +82,20 @@ The maximum frame size is 1 MB.
 
 | type | direction | payload |
 |---|---|---|
-| `hello` | agent → manager (first frame) | `protocol`, `instance_id`, `capabilities` [command names], `facts` |
-| `hello_ack` | manager → agent | `instance_id`, `server_time` |
-| `heartbeat` | agent → manager (60 s) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
+| `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts` |
+| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version` |
+| `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
 | `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix) |
-| `cmd_result` | agent → manager, same `id` as the cmd | `ok`, `data` or `error` |
+| `cmd_result` | agent → manager, same `id` as the cmd | `ok`, then `data` or `error` {`code`, `message`} |
 | `event` | agent → manager | `name`, `data` |
+
+`hello_ack.config` tunes the agent. The values come from the manager settings; the agent clamps each one to its range (`protocol.CONFIG_LIMITS`) and keeps it until the next `hello_ack` or a restart of MADMIN:
+
+| key | range (s) | default | meaning |
+|---|---|---|---|
+| `heartbeat_interval` | 30–600 | 60 | seconds between heartbeats |
+| `facts_interval` | 60–3600 | 300 | seconds between facts checks (facts are sent only when changed) |
+| `backoff_max` | 30–900 | 60 | longest wait between two reconnects, and between two registration polls after an error |
 
 `facts` contains:
 
@@ -86,9 +108,10 @@ The maximum frame size is 1 MB.
 
 | code | meaning | agent behaviour |
 |---|---|---|
-| 4400 | malformed frame / wrong version | reconnects with backoff |
+| 4400 | malformed frame, wrong major, no common revision | reconnects with backoff |
 | 4401 | certificate unknown/revoked, instance not active | **stops**, marks itself revoked, removes the support access (accounts, SSH grant, sshd CA), waits for a new enrollment |
 | 4409 | replaced by a newer connection of the same instance | reconnects |
+| any other | – | reconnects with backoff |
 
 The newest connection wins: the manager closes the old one with 4409 and never refuses the new one.
 
@@ -96,15 +119,17 @@ The newest connection wins: the manager closes the old one with 4409 and never r
 
 The manager persists commands with these states: queued → sent → done | failed | expired. It re-sends unanswered commands after every reconnect. The agent deduplicates by `id` and answers a repeat with the cached result. Commands that restart MADMIN keep their result on disk. Every command runs on the instance under an allowlist and Pydantic validation (unknown fields are rejected). Each command is written to the local audit log as `manager:<operator>`, method `MANAGER`, path `manager://<name>`.
 
+All the commands below are at version 1.
+
 | name | args | result |
 |---|---|---|
 | `agent.ping` | – | `pong` |
 | `inventory.refresh` | – | `facts` |
 | `backup.run` | – | `backup_id`, `size`, `sha256` (upload to `/agent/backups`) |
 | `backup.restore` | `backup_id` | `users_imported`, `warnings`, `restart` (persistent result) |
-| `support.ui.open` | `minutes` 5–480, `username`? (new ticket) | `username`, `ticket`, `ticket_ttl`, `expires_at`, `login_path` |
+| `support.ui.open` | `minutes` 5–1440, `username`? (new ticket) | `username`, `ticket`, `ticket_ttl`, `expires_at`, `login_path` |
 | `support.ui.close` | `username`? | `closed` [usernames] |
-| `support.ssh.grant` | `minutes` 5–480 | `user`, `principal`, `expires_at` |
+| `support.ssh.grant` | `minutes` 5–1440 | `user`, `principal`, `expires_at` |
 | `support.ssh.revoke` | – | – |
 | `tunnel.open` | `conn_id`, `target` `ui`\|`ssh` | – (not persisted, not audited) |
 | `license.install` | `token` | `license_id`, `feature`, `exp` |
@@ -112,6 +137,23 @@ The manager persists commands with these states: queued → sent → done | fail
 | `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
 
 Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}.
+
+### Errors
+
+A failed command answers `{"ok": false, "error": {"code": "...", "message": "..."}}`. The manager acts on the code only; the message is for the operator (in Italian) and is stored with the command.
+
+| code | meaning | manager HTTP status (synchronous calls) |
+|---|---|---|
+| `unsupported` | the agent does not implement the command | 409 |
+| `invalid_args` | the arguments were refused by the command's model | 502 |
+| `expired` | received after its `exp` | 504 |
+| `busy` | a limit is reached (for example too many tunnels): retry later | 409 |
+| `timeout` | the execution took longer than the command allows | 504 |
+| `precondition` | the instance is not in a state where the command makes sense (not enrolled, no open support access, …) | 409 |
+| `failed` | attempted and did not succeed (see the message) | 502 |
+| `internal` | unexpected error on the agent | 502 |
+
+An unknown code is treated as `failed`.
 
 ## Support tunnels
 

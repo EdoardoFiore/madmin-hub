@@ -37,6 +37,11 @@ class SystemSettings(SQLModel, table=True):
     registration_ttl_days: int = Field(default=14)
     registration_max_pending: int = Field(default=100)
 
+    # Agent tuning, pushed in hello_ack.config (ranges: protocol.CONFIG_LIMITS)
+    agent_heartbeat_interval: int = Field(default=60)
+    agent_facts_interval: int = Field(default=300)
+    agent_backoff_max: int = Field(default=60)
+
     updated_at: Optional[str] = Field(default=None)
 
 
@@ -56,6 +61,9 @@ class SystemSettingsUpdate(SQLModel):
     registration_allowed_cidrs: Optional[str] = None
     registration_ttl_days: Optional[int] = None
     registration_max_pending: Optional[int] = None
+    agent_heartbeat_interval: Optional[int] = None
+    agent_facts_interval: Optional[int] = None
+    agent_backoff_max: Optional[int] = None
 
     @field_validator("registration_allowed_cidrs")
     @classmethod
@@ -136,4 +144,13 @@ class SystemSettingsUpdate(SQLModel):
     def _validity(cls, v):
         if v is not None and not 3 <= v <= 365:
             raise ValueError("Valore fuori intervallo (3-365)")
+        return v
+
+    @field_validator("agent_heartbeat_interval", "agent_facts_interval", "agent_backoff_max")
+    @classmethod
+    def _agent_config(cls, v, info):
+        from manager.agents.protocol import CONFIG_LIMITS
+        lo, hi, _ = CONFIG_LIMITS[info.field_name.removeprefix("agent_")]
+        if v is not None and not lo <= v <= hi:
+            raise ValueError(f"Valore fuori intervallo ({lo}-{hi})")
         return v

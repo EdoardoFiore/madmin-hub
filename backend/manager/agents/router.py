@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from starlette.websockets import WebSocketDisconnect
 
+from config import MANAGER_VERSION
 from core.auth.rate_limiter import login_rate_limiter
 from core.database import async_session_maker, get_session
 from core.http import get_client_ip
@@ -249,6 +250,21 @@ async def download_backup(backup_id: str, agent=Depends(require_agent),
 
 # --- Control channel ---
 
+# Abilities of this manager that are not commands (hello_ack.features)
+FEATURES: list = []
+
+
+def _capabilities(raw) -> dict:
+    """hello.capabilities: {command: version}; malformed entries are dropped."""
+    if not isinstance(raw, dict):
+        return {}
+    caps = {}
+    for name, version in list(raw.items())[:200]:
+        if isinstance(version, int) and not isinstance(version, bool) and version >= 1:
+            caps[str(name)[:50]] = version
+    return caps
+
+
 async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> AgentConnection:
     raw = await asyncio.wait_for(ws.receive_text(), _HELLO_TIMEOUT)
     msg = protocol.parse(raw)
@@ -257,13 +273,28 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
     p = msg["payload"]
     if p.get("instance_id") != instance_id:
         raise protocol.ProtocolError("instance_id does not match the certificate")
-    caps = p.get("capabilities") if isinstance(p.get("capabilities"), list) else []
-    caps = {str(c)[:50] for c in caps[:200]}
+    revision = protocol.negotiate_revision(p.get("revision_min"), p.get("revision_max"))
+    if revision is None:
+        raise protocol.ProtocolError(
+            f"no common revision (agent {p.get('revision_min')!r}-{p.get('revision_max')!r}, "
+            f"manager {protocol.PROTOCOL_REVISION_MIN}-{protocol.PROTOCOL_REVISION})")
+    caps = _capabilities(p.get("capabilities"))
+    features = p.get("features") if isinstance(p.get("features"), list) else []
+    features = {str(f)[:50] for f in features[:200]}
     facts = p.get("facts") if isinstance(p.get("facts"), dict) else None
     async with async_session_maker() as session:
+        from core.settings.router import get_system_settings
+        settings = await get_system_settings(session)
+        config = {
+            "heartbeat_interval": settings.agent_heartbeat_interval,
+            "facts_interval": settings.agent_facts_interval,
+            "backoff_max": settings.agent_backoff_max,
+        }
         instance = await session.get(Instance, instance_id)
-        instance.capabilities_json = json.dumps(sorted(caps))
-        instance.protocol = int(p.get("protocol") or 0)
+        instance.capabilities_json = json.dumps(caps, sort_keys=True)
+        instance.features_json = json.dumps(sorted(features))
+        instance.protocol = protocol.PROTOCOL_VERSION
+        instance.protocol_revision = revision
         instance.last_seen_at = datetime.utcnow()
         if facts is not None:
             apply_facts(instance, facts)
@@ -271,10 +302,15 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         session.add(instance)
         await session.commit()
     await ws.send_text(protocol.frame(protocol.HELLO_ACK, {
-        "instance_id": instance_id, "server_time": int(datetime.utcnow().timestamp()),
+        "instance_id": instance_id,
+        "server_time": int(datetime.utcnow().timestamp()),
+        "revision": revision,
+        "features": FEATURES,
+        "config": config,
+        "manager_version": MANAGER_VERSION,
     }))
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
-                           capabilities=caps, protocol=int(p.get("protocol") or 0))
+                           capabilities=caps, features=features, revision=revision)
 
 
 async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
@@ -295,9 +331,13 @@ async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
 
 
 async def _handle_event(conn: AgentConnection, payload: dict) -> None:
-    if payload.get("name") == protocol.EVENT_SUPPORT_EXPIRED:
+    name = payload.get("name")
+    if name == protocol.EVENT_SUPPORT_EXPIRED:
         from manager.support.service import on_instance_expired
         await on_instance_expired(conn.instance_id, payload.get("data") or {})
+    else:
+        # A newer agent may send events this manager does not know
+        logger.info("Instance %s: ignored event %r", conn.instance_id, str(name)[:50])
 
 
 async def _writer(conn: AgentConnection) -> None:
@@ -344,6 +384,8 @@ async def control_channel(ws: WebSocket):
                     await dispatcher.handle_result(instance.id, msg["id"], msg["payload"])
                 elif msg["type"] == protocol.EVENT:
                     await _handle_event(conn, msg["payload"])
+                else:
+                    logger.debug("Instance %s: ignored frame %s", instance.id, msg["type"])
             except Exception:
                 logger.exception("Instance %s: error handling %s", instance.id, msg["type"])
     except WebSocketDisconnect:

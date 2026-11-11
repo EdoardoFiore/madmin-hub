@@ -24,6 +24,11 @@ const FIELDS = [
         ['registration_ttl_days', 'Scadenza delle richieste (giorni)', 'number'],
         ['registration_max_pending', 'Massimo richieste in attesa', 'number'],
     ]],
+    ['Agent delle istanze (applicato alla connessione successiva)', [
+        ['agent_heartbeat_interval', 'Heartbeat ogni (secondi, 30-600)', 'number'],
+        ['agent_facts_interval', 'Controllo dei dati dell\'istanza ogni (secondi, 60-3600)', 'number'],
+        ['agent_backoff_max', 'Attesa massima tra due riconnessioni (secondi, 30-900)', 'number'],
+    ]],
     ['Backup e licenze', [
         ['backup_interval_hours', 'Backup pianificati ogni (ore, 0 = disattivati)', 'number'],
         ['backup_retention', 'Backup conservati per istanza', 'number'],

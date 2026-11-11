@@ -877,7 +877,8 @@ async function commands(el, i) {
         <tbody>${rows.map(c => `<tr>
             <td>${fmtDate(c.created_at)}</td><td class="font-monospace">${escapeHtml(c.name)}</td>
             <td>${escapeHtml(c.operator)}</td><td>${commandStatusBadge(c.status)}</td>
-            <td class="small text-muted">${escapeHtml(c.error || (c.result ? JSON.stringify(c.result).slice(0, 200) : ''))}</td>
+            <td class="small text-muted">${escapeHtml(c.error ? `${c.error_code ? `[${c.error_code}] ` : ''}${c.error}`
+                : (c.result ? JSON.stringify(c.result).slice(0, 200) : ''))}</td>
         </tr>`).join('') || '<tr><td colspan="5" class="text-muted">Nessun comando</td></tr>'}
         </tbody></table></div>`;
 }
@@ -889,8 +890,8 @@ const reloadDetail = (tab) => {
 };
 
 function minutesField(def = 60) {
-    return `<div class="mb-3"><label class="form-label">Durata (minuti)</label>
-        <input name="minutes" type="number" class="form-control" min="5" max="480" value="${def}" required></div>`;
+    return `<div class="mb-3"><label class="form-label">Durata (minuti, massimo 1440 = 1 giorno)</label>
+        <input name="minutes" type="number" class="form-control" min="5" max="1440" value="${def}" required></div>`;
 }
 
 const reasonField = `<div class="mb-3"><label class="form-label">Motivo (ticket, richiesta)</label>

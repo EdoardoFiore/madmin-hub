@@ -63,9 +63,11 @@ class Instance(SQLModel, table=True):
     machine_id: str = Field(default="", max_length=64, index=True)
     madmin_version: str = Field(default="", max_length=30)
     os: str = Field(default="", max_length=100)
-    protocol: int = Field(default=0)
+    protocol: int = Field(default=0)              # major (frame `v`)
+    protocol_revision: int = Field(default=0)     # negotiated in the last hello
     facts_json: str = Field(default="{}")
-    capabilities_json: str = Field(default="[]")
+    capabilities_json: str = Field(default="{}")  # {command: version} from the last hello
+    features_json: str = Field(default="[]")      # agent features from the last hello
     stats_json: str = Field(default="{}")
 
     # Passphrase the instance encrypts its manager backups with (encrypted here
@@ -200,6 +202,7 @@ class Command(SQLModel, table=True):
     finished_at: Optional[datetime] = Field(default=None)
     expires_at: datetime
     result_json: Optional[str] = Field(default=None)
+    error_code: Optional[str] = Field(default=None, max_length=30)   # protocol.ERR_*
     error: Optional[str] = Field(default=None, max_length=1000)
 
 

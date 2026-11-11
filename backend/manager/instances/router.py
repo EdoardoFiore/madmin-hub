@@ -49,9 +49,11 @@ def instance_out(i: Instance, detail: bool = False) -> dict:
         "connected_at": conn.connected_at.isoformat() if conn else None,
         "last_seen_at": i.last_seen_at.isoformat() if i.last_seen_at else None,
         "last_ip": i.last_ip, "hostname": i.hostname, "madmin_version": i.madmin_version,
-        "os": i.os, "protocol": i.protocol, "enrolled_at": i.enrolled_at.isoformat(),
+        "os": i.os, "protocol": i.protocol, "protocol_revision": i.protocol_revision,
+        "enrolled_at": i.enrolled_at.isoformat(),
         "backup_enabled": i.backup_enabled,
-        "capabilities": sorted(conn.capabilities) if conn else _json(i.capabilities_json, []),
+        "capabilities": dict(conn.capabilities) if conn else _json(i.capabilities_json, {}),
+        "features": sorted(conn.features) if conn else _json(i.features_json, []),
         "stats": _json(i.stats_json, {}),
     }
     if detail:
@@ -162,7 +164,8 @@ async def dashboard(session: AsyncSession = Depends(get_session),
             .order_by(Command.created_at.desc()).limit(DASHBOARD_LIST)
         )).scalars().all()
         failed_recent = [{"id": c.id, "instance_id": c.instance_id, "instance_name": names.get(c.instance_id, ""),
-                          "name": c.name, "status": c.status, "error": (c.error or "")[:200],
+                          "name": c.name, "status": c.status, "error_code": c.error_code,
+                          "error": (c.error or "")[:200],
                           "created_at": _iso(c.created_at)} for c in cmds]
 
     out = {
@@ -340,7 +343,7 @@ async def stats_history(instance_id: str, hours: int = Query(default=1, ge=1, le
     except asyncio.TimeoutError:
         return {"available": False, "reason": "timeout"}
     if not result.get("ok"):
-        return {"available": False, "reason": "error", "error": str(result.get("error", ""))[:300]}
+        return {"available": False, "reason": "error", "error": protocol.error_parts(result)[1][:300]}
     return {"available": True, **(result.get("data") or {})}
 
 

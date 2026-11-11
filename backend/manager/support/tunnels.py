@@ -133,7 +133,7 @@ async def _serve_connection(listener: Listener, reader: asyncio.StreamReader,
             logger.warning("%s: no answer to tunnel.open within %ds", where, ATTACH_TIMEOUT)
             return
         if not result.get("ok"):
-            logger.warning("%s refused by the instance: %s", where, result.get("error"))
+            logger.warning("%s refused by the instance: %s", where, protocol.error_parts(result)[1])
             return
         try:
             ws = await asyncio.wait_for(pending.attached, ATTACH_TIMEOUT)

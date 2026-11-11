@@ -39,11 +39,22 @@ def _frame(cmd_id: str, name: str, args: dict, operator: str, expires_at: dateti
     }, cmd_id)
 
 
-def check_capability(instance_id: str, name: str) -> None:
-    """409 when the connected agent does not implement `name` (an older or
-    newer MADMIN): better than a command that waits until it expires."""
+# HTTP status for a failed command, by protocol error code
+_HTTP_STATUS = {
+    protocol.ERR_UNSUPPORTED: 409,
+    protocol.ERR_PRECONDITION: 409,
+    protocol.ERR_BUSY: 409,
+    protocol.ERR_EXPIRED: 504,
+    protocol.ERR_TIMEOUT: 504,
+}
+
+
+def check_capability(instance_id: str, name: str, min_version: int = 1) -> None:
+    """409 when the connected agent does not implement `name`, or implements
+    an older version of it (an older MADMIN): better than a command that
+    waits until it expires."""
     conn = registry.get(instance_id)
-    if conn is not None and name not in conn.capabilities:
+    if conn is not None and not conn.supports(name, min_version):
         raise HTTPException(409, f"L'istanza non supporta il comando {name} (aggiornare MADMIN)")
 
 
@@ -103,7 +114,8 @@ async def run_command(session, instance_id: str, name: str, args: Optional[dict]
         registry.drop_waiter(cmd.id)
         raise HTTPException(504, "L'istanza non ha risposto in tempo")
     if not result.get("ok"):
-        raise HTTPException(502, f"Comando fallito sull'istanza: {result.get('error') or 'errore'}")
+        code, message = protocol.error_parts(result)
+        raise HTTPException(_HTTP_STATUS.get(code, 502), f"Comando fallito sull'istanza: {message or code}")
     return result.get("data") or {}
 
 
@@ -151,7 +163,9 @@ async def handle_result(instance_id: str, cmd_id: str, payload: dict) -> None:
         if ok:
             cmd.result_json = json.dumps(_redact(cmd.name, payload.get("data") or {}))[:100_000]
         else:
-            cmd.error = str(payload.get("error") or "errore")[:1000]
+            code, message = protocol.error_parts(payload)
+            cmd.error_code = code
+            cmd.error = (message or code)[:1000]
         session.add(cmd)
         await session.commit()
 

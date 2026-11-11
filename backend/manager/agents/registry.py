@@ -24,10 +24,14 @@ class AgentConnection:
     instance_id: str
     ws: WebSocket
     source_ip: str
-    capabilities: Set[str] = field(default_factory=set)
-    protocol: int = protocol.PROTOCOL_VERSION
+    capabilities: Dict[str, int] = field(default_factory=dict)   # command -> version
+    features: Set[str] = field(default_factory=set)
+    revision: int = protocol.PROTOCOL_REVISION
     connected_at: datetime = field(default_factory=datetime.utcnow)
     outbox: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
+
+    def supports(self, name: str, min_version: int = 1) -> bool:
+        return self.capabilities.get(name, 0) >= min_version
 
     def send(self, text: str) -> bool:
         try:

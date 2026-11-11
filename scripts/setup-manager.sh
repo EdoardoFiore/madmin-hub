@@ -19,6 +19,8 @@
 # support range 9100-9119 (operators; configurable in Settings).
 # =================================================================
 set -euo pipefail
+# Fixed modes whatever the caller's umask (nginx reads the frontend)
+umask 022
 
 log_info() { echo -e "\033[34m[INFO]\033[0m $1"; }
 log_success() { echo -e "\033[32m[SUCCESS]\033[0m $1"; }

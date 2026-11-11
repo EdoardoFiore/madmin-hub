@@ -1,5 +1,5 @@
 """
-MADMIN Hub - central management of MADMIN instances.
+MADMIN Manager - central management of MADMIN instances.
 
 One uvicorn process on 127.0.0.1:8000 behind nginx, which serves two sites:
 - the UI (:443): /api/* for logged-in users, the SPA;
@@ -19,22 +19,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from config import HUB_VERSION, get_settings
+from config import MANAGER_VERSION, get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("madmin_hub")
+logger = logging.getLogger("madmin_manager")
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("MADMIN Hub starting up...")
+    logger.info("MADMIN Manager starting up...")
     from core import sdnotify
     from core.auth.rate_limiter import login_rate_limiter
     from core.concurrency import spawn_background
     from core.database import async_session_maker, init_db
-    from hub import pki
+    from manager import pki
 
     sdnotify.init()
     watchdog_task = asyncio.create_task(sdnotify.watchdog_loop(), name="systemd-watchdog")
@@ -43,13 +43,13 @@ async def lifespan(app: FastAPI):
     async with async_session_maker() as session:
         await login_rate_limiter.load_from_db(session)
     if not pki.is_initialized():
-        logger.error("PKI not initialized: run 'python -m hub.pki init --host <hostname>'")
+        logger.error("PKI not initialized: run 'python -m manager.pki init --host <hostname>'")
 
-    from hub.agents.dispatcher import expire_task
-    from hub.backups.service import scheduler_task
-    from hub.licenses.service import renew_task
-    from hub.support.service import expiry_task, restore_listeners
-    from hub.support.tunnels import stop_all
+    from manager.agents.dispatcher import expire_task
+    from manager.backups.service import scheduler_task
+    from manager.licenses.service import renew_task
+    from manager.support.service import expiry_task, restore_listeners
+    from manager.support.tunnels import stop_all
 
     await restore_listeners()
 
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         spawn_background(audit_cleanup_task(), "audit-cleanup"),
     ]
 
-    logger.info("MADMIN Hub ready")
+    logger.info("MADMIN Manager ready")
     sdnotify.notify("READY=1")
     yield
 
@@ -97,8 +97,8 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="MADMIN Hub",
-        version=HUB_VERSION,
+        title="MADMIN Manager",
+        version=MANAGER_VERSION,
         lifespan=lifespan,
         docs_url="/api/docs" if settings.debug else None,
         redoc_url=None,
@@ -119,14 +119,14 @@ def create_app() -> FastAPI:
     from core.audit.router import router as audit_router
     from core.auth.router import router as auth_router
     from core.settings.router import router as settings_router
-    from hub.agents.router import router as agent_router
-    from hub.apikeys.router import router as apikeys_router
-    from hub.provisioning.router import router as provisioning_router
-    from hub.backups.router import router as backups_router
-    from hub.enrollment.router import router as enrollment_router
-    from hub.instances.router import router as instances_router
-    from hub.licenses.router import router as licenses_router
-    from hub.support.router import router as support_router
+    from manager.agents.router import router as agent_router
+    from manager.apikeys.router import router as apikeys_router
+    from manager.provisioning.router import router as provisioning_router
+    from manager.backups.router import router as backups_router
+    from manager.enrollment.router import router as enrollment_router
+    from manager.instances.router import router as instances_router
+    from manager.licenses.router import router as licenses_router
+    from manager.support.router import router as support_router
 
     for r in (auth_router, audit_router, settings_router, instances_router, enrollment_router,
               backups_router, licenses_router, support_router, apikeys_router,
@@ -143,12 +143,12 @@ def create_app() -> FastAPI:
                 # permission = capability (core.auth.models.CAPABILITIES)
                 {"label": "menu.dashboard", "icon": "home", "route": "#dashboard", "permission": "scope.view"},
                 {"label": "menu.instances", "icon": "server", "route": "#instances", "permission": "scope.view"},
-                {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "hub.view"},
+                {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "manager.view"},
                 {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "scope.view"},
-                {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "hub.view"},
+                {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "manager.view"},
                 {"label": "menu.users", "icon": "users", "route": "#users", "permission": "users.view"},
-                {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "hub.view"},
-                {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "hub.view"},
+                {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "manager.view"},
+                {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "manager.view"},
             ],
             "modules": [],
         }

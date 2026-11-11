@@ -1,5 +1,5 @@
 """
-MADMIN Hub Database Module
+MADMIN Manager Database Module
 
 Provides async PostgreSQL connection using SQLAlchemy 2.0 with asyncpg driver.
 Handles session management and database initialization.
@@ -66,7 +66,7 @@ async def init_db() -> None:
         from core.auth.models import User, LoginAttempt  # noqa: F401
         from core.settings.models import SystemSettings  # noqa: F401
         from core.audit.models import AuditLog  # noqa: F401
-        import hub.models  # noqa: F401
+        import manager.models  # noqa: F401
         
         await conn.run_sync(SQLModel.metadata.create_all)
         logger.info("Database tables created successfully")

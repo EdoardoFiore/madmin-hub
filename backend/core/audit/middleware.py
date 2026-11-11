@@ -1,5 +1,5 @@
 """
-MADMIN Hub Audit Log Middleware
+MADMIN Manager Audit Log Middleware
 
 Starlette middleware that intercepts API requests and logs:
 - Who (username from JWT)
@@ -102,7 +102,7 @@ def _extract_username(request: Request) -> str:
         return "anonymous"
 
     token = auth_header[7:]  # Strip "Bearer "
-    # Provisioning API key (hub.apikeys): the id, never the secret
+    # Provisioning API key (manager.apikeys): the id, never the secret
     if token.startswith("mhk_"):
         return f"api:{token[4:].split('_', 1)[0][:16]}"
 

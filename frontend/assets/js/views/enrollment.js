@@ -1,12 +1,12 @@
 /**
- * MADMIN Hub - Enrollment: tokens, registrations waiting for approval,
+ * MADMIN Manager - Enrollment: tokens, registrations waiting for approval,
  * API keys of the provisioning system (superusers).
  */
 import { apiGet, apiPost } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions, loadingSpinner } from '../utils.js';
 import { setPageActions, checkPermission } from '../app.js';
 import { fmtDate, formModal, secretModal, copyBlock, enrollTokenHelp, formData, groupPath, labelBadges,
-         registrationFieldsHtml, registrationFieldsValue } from './hub-common.js';
+         registrationFieldsHtml, registrationFieldsValue } from './manager-common.js';
 
 let containerEl = null;
 let manage = false;
@@ -19,12 +19,12 @@ const TABS = [['tokens', 'Token'], ['requests', 'In attesa'], ['apikeys', 'Chiav
 export async function render(container, params = []) {
     containerEl = container;
     tab = TABS.some(([t]) => t === params[0]) ? params[0] : 'tokens';
-    // The page needs hub.view; changing anything needs hub.manage (superuser rw)
-    manage = checkPermission('hub.manage');
+    // The page needs manager.view; changing anything needs manager.manage (superuser rw)
+    manage = checkPermission('manager.manage');
     const tabs = TABS;
 
-    const actions = { tokens: `<button class="btn btn-primary" ${actionAttrs('hubTokenNew')}><i class="ti ti-plus me-1"></i>Nuovo token</button>`,
-                      apikeys: `<button class="btn btn-primary" ${actionAttrs('hubKeyNew')}><i class="ti ti-plus me-1"></i>Nuova chiave API</button>` };
+    const actions = { tokens: `<button class="btn btn-primary" ${actionAttrs('managerTokenNew')}><i class="ti ti-plus me-1"></i>Nuovo token</button>`,
+                      apikeys: `<button class="btn btn-primary" ${actionAttrs('managerKeyNew')}><i class="ti ti-plus me-1"></i>Nuova chiave API</button>` };
     setPageActions(manage ? (actions[tab] || '') : '');
 
     const [info, g] = await Promise.all([apiGet('/enrollment/info'), apiGet('/groups').catch(() => [])]);
@@ -34,8 +34,8 @@ export async function render(container, params = []) {
         <div class="card mb-3"><div class="card-body small">
             <div>URL agent: <span class="font-monospace">${escapeHtml(info.agent_url || '-')}</span></div>
             <div>Fingerprint CA (sha256): <span class="font-monospace">${escapeHtml(info.ca_fingerprint || '-')}</span></div>
-            <div class="text-muted mt-1">Con token: <code>setup-madmin.sh ... --hub-token-file token.txt</code> ·
-                Senza token (approvazione qui): <code>setup-madmin.sh ... --hub-url ${escapeHtml(info.agent_url || 'https://hub:8443')} --hub-ca-sha256 ${escapeHtml(info.ca_fingerprint || '<fingerprint>')}</code>
+            <div class="text-muted mt-1">Con token: <code>setup-madmin.sh ... --manager-token-file token.txt</code> ·
+                Senza token (approvazione qui): <code>setup-madmin.sh ... --manager-url ${escapeHtml(info.agent_url || 'https://manager:8443')} --manager-ca-sha256 ${escapeHtml(info.ca_fingerprint || '<fingerprint>')}</code>
                 ${info.registration_enabled ? '' : '<span class="text-danger">(registrazione senza token disattivata nelle impostazioni)</span>'}</div>
         </div></div>
         <div class="card">
@@ -71,7 +71,7 @@ async function renderTokens(el) {
                 ${labelBadges(t.labels)}</td>
             <td>${t.reenroll_instance_id ? `<a href="#instances/${escapeHtml(t.reenroll_instance_id)}">re-enroll</a>` : 'nuova istanza'}</td>
             <td>${t.valid ? '<span class="badge bg-success-lt">valido</span>' : '<span class="badge bg-secondary-lt">non valido</span>'}</td>
-            <td class="text-end">${t.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubTokenRevoke', t.id)}>Revoca</button>` : ''}</td>
+            <td class="text-end">${t.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerTokenRevoke', t.id)}>Revoca</button>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="text-muted">Nessun token</td></tr>'}
         </tbody></table></div>`;
 }
@@ -107,8 +107,8 @@ function tokenModal() {
 async function renderRequests(el) {
     requests = await apiGet('/enrollment/requests?status=pending');
     el.innerHTML = `
-        <div class="card-body border-bottom text-muted small">Istanze installate con <code>--hub-url</code>: prima di approvare,
-            confronta il fingerprint della chiave con quello stampato dal setup dell'istanza (o da <code>python -m core.hub status</code>).</div>
+        <div class="card-body border-bottom text-muted small">Istanze installate con <code>--manager-url</code>: prima di approvare,
+            confronta il fingerprint della chiave con quello stampato dal setup dell'istanza (o da <code>python -m core.manager status</code>).</div>
         <div class="table-responsive"><table class="table card-table table-vcenter">
         <thead><tr><th>Hostname</th><th>IP sorgente</th><th>Versione</th><th>Fingerprint chiave</th><th>CA verificata</th><th>Richiesta</th><th></th></tr></thead>
         <tbody>${requests.map(r => `<tr>
@@ -120,8 +120,8 @@ async function renderRequests(el) {
             <td>${r.ca_pinned ? '<span class="badge bg-success-lt">sì</span>' : '<span class="badge bg-warning-lt">primo contatto</span>'}</td>
             <td>${fmtDate(r.created_at)}<div class="small text-muted">scade ${fmtDate(r.expires_at)}</div></td>
             <td class="text-end">${manage ? `<div class="btn-list justify-content-end">
-                <button class="btn btn-sm btn-primary" ${actionAttrs('hubRequestApprove', r.id)}>Approva</button>
-                <button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubRequestReject', r.id)}>Rifiuta</button>
+                <button class="btn btn-sm btn-primary" ${actionAttrs('managerRequestApprove', r.id)}>Approva</button>
+                <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerRequestReject', r.id)}>Rifiuta</button>
             </div>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Nessuna richiesta in attesa</td></tr>'}
         </tbody></table></div>`;
@@ -140,7 +140,7 @@ function approveModal(id) {
             <dt class="col-4">Interfacce</dt><dd class="col-8">${ifaces || '-'}</dd>
             <dt class="col-4">Fingerprint chiave</dt><dd class="col-8 font-monospace text-break">${escapeHtml(r.key_fingerprint)}</dd>
         </dl>
-        ${r.ca_pinned ? '' : '<div class="alert alert-warning small">L\'istanza ha accettato la CA della hub al primo contatto: verifica il fingerprint della chiave con chi ha installato l\'istanza.</div>'}
+        ${r.ca_pinned ? '' : '<div class="alert alert-warning small">L\'istanza ha accettato la CA del manager al primo contatto: verifica il fingerprint della chiave con chi ha installato l\'istanza.</div>'}
         ${r.matches.length ? `<div class="mb-3"><label class="form-label">Registrare di nuovo un'istanza esistente (reinstallazione)?</label>
             <select name="reenroll_instance_id" class="form-select"><option value="">No, nuova istanza</option>
             ${r.matches.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)} (mantiene identità, backup, licenze)</option>`).join('')}</select></div>` : ''}
@@ -172,7 +172,7 @@ async function renderKeys(el) {
             <td>${k.expires_at ? fmtDate(k.expires_at) : 'mai'}</td>
             <td>${fmtDate(k.last_used_at)}<div class="small text-muted">${escapeHtml(k.last_used_ip || '')}</div></td>
             <td>${k.valid ? '<span class="badge bg-success-lt">attiva</span>' : '<span class="badge bg-secondary-lt">non valida</span>'}</td>
-            <td class="text-end">${k.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubKeyRevoke', k.id)}>Revoca</button>` : ''}</td>
+            <td class="text-end">${k.valid && manage ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerKeyRevoke', k.id)}>Revoca</button>` : ''}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="text-muted">Nessuna chiave</td></tr>'}
         </tbody></table></div>`;
 }
@@ -202,26 +202,26 @@ async function keyModal() {
             <h4 class="mb-1">Uso</h4>
             <p class="mb-2">In ogni richiesta, come header:</p>
             ${copyBlock(`Authorization: Bearer ${res.key}`)}
-            <p class="text-muted small mb-0">Documentazione: <code>docs/API.md</code> nel repository dell'hub.</p>`,
+            <p class="text-muted small mb-0">Documentazione: <code>docs/API.md</code> nel repository del manager.</p>`,
             res.key);
         reload();
     }, { submitText: 'Crea', size: 'lg' });
 }
 
 registerActions({
-    hubTokenNew: tokenModal,
-    hubTokenRevoke: async (id) => {
+    managerTokenNew: tokenModal,
+    managerTokenRevoke: async (id) => {
         if (!await confirmDialog('Revoca token', 'Il token non potrà più essere usato.', 'Revoca')) return;
         try { await apiPost(`/enrollment/tokens/${id}/revoke`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
-    hubRequestApprove: approveModal,
-    hubRequestReject: async (id) => {
+    managerRequestApprove: approveModal,
+    managerRequestReject: async (id) => {
         if (!await confirmDialog('Rifiuta registrazione', 'L\'istanza smette di chiedere la registrazione; potrà riprovare solo con un nuovo comando register.', 'Rifiuta')) return;
         try { await apiPost(`/enrollment/requests/${id}/reject`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
-    hubKeyNew: keyModal,
-    hubKeyRevoke: async (id) => {
-        if (!await confirmDialog('Revoca chiave API', 'Il sistema che la usa non potrà più chiamare la hub.', 'Revoca')) return;
+    managerKeyNew: keyModal,
+    managerKeyRevoke: async (id) => {
+        if (!await confirmDialog('Revoca chiave API', 'Il sistema che la usa non potrà più chiamare il manager.', 'Revoca')) return;
         try { await apiPost(`/apikeys/${id}/revoke`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
 });

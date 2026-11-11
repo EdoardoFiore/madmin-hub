@@ -135,11 +135,11 @@ def require_permission(permission_slug: str) -> Callable:
     derived from the user's role and access level.
 
     It says nothing about *which* instances or users: routes in the scope
-    (scope.*, users.*) must also filter with hub.scope.
+    (scope.*, users.*) must also filter with manager.scope.
 
     Usage:
         @router.get("/protected")
-        async def protected_route(user: User = Depends(require_permission("hub.manage"))):
+        async def protected_route(user: User = Depends(require_permission("manager.manage"))):
             ...
     """
     async def permission_checker(

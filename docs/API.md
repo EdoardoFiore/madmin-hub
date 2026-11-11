@@ -1,6 +1,6 @@
-# MADMIN Hub — Provisioning API
+# MADMIN Manager — Provisioning API
 
-This API is for the system that creates the instances, for example FAE/Fulcrum or another orchestrator. Every endpoint is under `https://<hub>/api/provisioning/` and is authenticated with an **API key**. A UI session cannot be used.
+This API is for the system that creates the instances, for example FAE/Fulcrum or another orchestrator. Every endpoint is under `https://<manager>/api/provisioning/` and is authenticated with an **API key**. A UI session cannot be used.
 
 ## Keys
 
@@ -10,9 +10,9 @@ Keys are created by a superuser in **Enrollment → API keys**. A key looks like
 Authorization: Bearer mhk_3f9a1c2b4d5e_...
 ```
 
-A key works only for the scopes it has been given, and only from the networks set on it. It also stops working when it expires or is revoked. The hub audit log records each call as `api:<id>`.
+A key works only for the scopes it has been given, and only from the networks set on it. It also stops working when it expires or is revoked. The manager audit log records each call as `api:<id>`.
 
-**Never put a key on an instance.** Only the provisioning system holds it. The system asks the hub for a single-use token and passes that token to the instance.
+**Never put a key on an instance.** Only the provisioning system holds it. The system asks the manager for a single-use token and passes that token to the instance.
 
 | Scope | Allows |
 |---|---|
@@ -31,10 +31,10 @@ Errors:
 
 ## Groups
 
-The hub has its own customers directly under it. It can also have partners, each with its own customers:
+The manager has its own customers directly under it. It can also have partners, each with its own customers:
 
 ```
-(hub) ── customer
+(manager) ── customer
       └─ partner ── customer
 ```
 
@@ -43,7 +43,7 @@ In the API, groups are given by name: `partner` and/or `customer`.
 | `partner` | `customer` | Group used |
 |---|---|---|
 | given | — | the partner |
-| — | given | a customer directly under the hub |
+| — | given | a customer directly under the manager |
 | given | given | the customer under that partner |
 
 Missing groups are created only with `create_groups: true`, which needs the `groups.create` scope. Without it, an unknown name returns `400`.
@@ -74,7 +74,7 @@ Response `201`:
 
 ```json
 {
-  "token": "MHUB1-eyJ1Ijoi...",
+  "token": "MMGR1-eyJ1Ijoi...",
   "token_id": "a1b2c3d4e5f60718",
   "expires_at": "2026-11-02T12:00:00",
   "ca_fingerprint": "5c1e...",
@@ -89,8 +89,8 @@ Response `201`:
 Then on the instance:
 
 ```bash
-MADMIN_HUB_TOKEN='MHUB1-...' sudo -E bash scripts/setup-madmin.sh -u admin ... 
-# or: --hub-token-file /path/token.txt
+MADMIN_MANAGER_TOKEN='MMGR1-...' sudo -E bash scripts/setup-madmin.sh -u admin ... 
+# or: --manager-token-file /path/token.txt
 ```
 
 ## Instances
@@ -107,4 +107,4 @@ MADMIN_HUB_TOKEN='MHUB1-...' sudo -E bash scripts/setup-madmin.sh -u admin ...
 
 ## Without a token
 
-The instance can also be installed with `--hub-url https://hub:8443 [--hub-ca-sha256 <fingerprint>]`. The request then waits in **Enrollment → In attesa**. When an operator approves it, they enter the same fields the token would have carried. This mode needs no API key.
+The instance can also be installed with `--manager-url https://manager:8443 [--manager-ca-sha256 <fingerprint>]`. The request then waits in **Enrollment → In attesa**. When an operator approves it, they enter the same fields the token would have carried. This mode needs no API key.

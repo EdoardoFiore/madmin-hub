@@ -1,5 +1,5 @@
 /**
- * MADMIN Hub - Support: every open support session. They are opened from
+ * MADMIN Manager - Support: every open support session. They are opened from
  * the instance page (Supporto tab).
  */
 import { apiGet } from '../api.js';

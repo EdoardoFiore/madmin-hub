@@ -1,5 +1,5 @@
 /**
- * MADMIN Hub - Dashboard: state of the fleet in the user's scope.
+ * MADMIN Manager - Dashboard: state of the fleet in the user's scope.
  *
  * Online state, versions, resources and groups come from /instances and
  * /groups (the same data as the instance tree); backups, licenses,
@@ -7,7 +7,7 @@
  */
 import { apiGet } from '../api.js';
 import { escapeHtml, formatBytes } from '../utils.js';
-import { fmtDate, relTime, commandStatusBadge, cmpVersion, meter } from './hub-common.js';
+import { fmtDate, relTime, commandStatusBadge, cmpVersion, meter } from './manager-common.js';
 
 const LIST = 8;            // rows per card before "e altre N"
 const RECENT_DAYS = 7;     // "registrate di recente"
@@ -51,7 +51,7 @@ async function load(container) {
     const [d, list, groups] = await Promise.all([
         apiGet('/dashboard'), apiGet('/instances'), apiGet('/groups').catch(() => []),
     ]);
-    const hub = d.open_support_sessions !== undefined;   // superusers only
+    const manager = d.open_support_sessions !== undefined;   // superusers only
     const active = list.filter(i => i.status === 'active');
     const online = active.filter(i => i.online);
     const offline = active.filter(i => !i.online)
@@ -76,7 +76,7 @@ async function load(container) {
         stat('Licenze attive', d.licenses.active, { icon: 'ti-certificate', href: '#licenses',
             sub: Object.keys(d.licenses.features).length ? `${Object.keys(d.licenses.features).length} feature` : '' }),
     ];
-    if (hub) {
+    if (manager) {
         stats.push(stat('Sessioni di supporto', d.open_support_sessions, { cls: d.open_support_sessions ? 'text-warning' : '',
             icon: 'ti-lifebuoy', href: '#support', sub: 'aperte ora' }));
         stats.push(stat('Enrollment in attesa', d.enrollment_pending, { cls: d.enrollment_pending ? 'text-warning' : '',
@@ -202,7 +202,7 @@ async function load(container) {
                     <tbody>${expiring.map(e => e.html).join('')}</tbody></table></div>`
                     : empty('Nessuna licenza o certificato in scadenza nei prossimi 30 giorni.')}`)}</div>
         </div>
-        ${hub ? `<div class="row row-deck row-cards">
+        ${manager ? `<div class="row row-deck row-cards">
             <div class="col-xl-6">${card('Sessioni di supporto aperte', d.support_sessions.length ? `
                 <div class="table-responsive"><table class="table card-table table-vcenter">
                     <thead><tr><th>Istanza</th><th>Tipo</th><th>Operatore</th><th class="text-end">Scade</th></tr></thead>

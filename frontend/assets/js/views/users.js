@@ -19,10 +19,10 @@ const ACCESS_LABELS = { rw: 'Lettura e scrittura', ro: 'Sola lettura' };
 
 /**
  * What a role and access level allow, shown under the selectors. Mirrors
- * core.auth.models.capabilities_for and the scope rules in hub/scope.py.
+ * core.auth.models.capabilities_for and the scope rules in manager/scope.py.
  */
 function accessSummary(role, access) {
-    const where = role === 'superuser' ? 'tutte le istanze dell\'hub'
+    const where = role === 'superuser' ? 'tutte le istanze del manager'
         : role === 'partner' ? 'le istanze del partner e dei suoi clienti'
         : 'le istanze del cliente';
     const items = [`Vede ${where}, con backup, licenze e storico.`];

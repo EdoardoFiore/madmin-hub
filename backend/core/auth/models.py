@@ -1,5 +1,5 @@
 """
-MADMIN Hub authentication models.
+MADMIN Manager authentication models.
 
 Access is a role, an access level and, for partners and customers, one group:
 
@@ -7,9 +7,9 @@ Access is a role, an access level and, for partners and customers, one group:
     access      rw | ro
     group_id    the partner or customer group (None for superusers)
 
-A superuser sees the whole hub; a partner its partner group and the customers
+A superuser sees the whole manager; a partner its partner group and the customers
 under it; a customer its own group. rw lets the user change what is in that
-scope (instances, backups, users); ro only lets it look. What only the hub
+scope (instances, backups, users); ro only lets it look. What only the manager
 operator does (support access, enrollment, licenses, groups, settings, API
 keys, logs, revoking instances) needs a superuser, rw to change it.
 
@@ -34,10 +34,10 @@ Access = Literal["rw", "ro"]
 #   scope.manage  edit instances, run/download/delete/restore backups in scope
 #   users.view    users in the scope (superusers: every user)
 #   users.manage  create and edit users in the scope, never above one's own level
-#   hub.view      hub-wide areas: support sessions, enrollment, licenses, groups,
+#   manager.view      manager-wide areas: support sessions, enrollment, licenses, groups,
 #                 settings, API keys, logs
-#   hub.manage    change them, revoke and delete instances
-CAPABILITIES = ("scope.view", "scope.manage", "users.view", "users.manage", "hub.view", "hub.manage")
+#   manager.manage    change them, revoke and delete instances
+CAPABILITIES = ("scope.view", "scope.manage", "users.view", "users.manage", "manager.view", "manager.manage")
 
 
 def capabilities_for(role: str, access: str) -> Set[str]:
@@ -45,9 +45,9 @@ def capabilities_for(role: str, access: str) -> Set[str]:
     if access == "rw":
         caps |= {"scope.manage", "users.view", "users.manage"}
     if role == "superuser":
-        caps |= {"hub.view", "users.view"}
+        caps |= {"manager.view", "users.view"}
         if access == "rw":
-            caps.add("hub.manage")
+            caps.add("manager.manage")
     return caps
 
 
@@ -97,7 +97,7 @@ class User(SQLModel, table=True):
 
     @property
     def is_superuser(self) -> bool:
-        """Hub-wide scope (read only too: writing also needs can_write)."""
+        """Manager-wide scope (read only too: writing also needs can_write)."""
         return self.role == "superuser"
 
     @property

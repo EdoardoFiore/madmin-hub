@@ -1,5 +1,5 @@
 /**
- * MADMIN Hub - Main Application Module
+ * MADMIN Manager - Main Application Module
  *
  * Handles routing, menu loading, and view rendering.
  * Uses ES modules for dynamic view loading.
@@ -34,7 +34,7 @@ let currentUser = null;
  * Initialize the application
  */
 async function init() {
-    console.log('MADMIN Hub initializing...');
+    console.log('MADMIN Manager initializing...');
 
     // Check authentication
     if (!isAuthenticated()) {
@@ -562,7 +562,7 @@ function createMenuItem(item) {
 
 /**
  * Check if the current user has a capability (scope.view, scope.manage,
- * users.view, users.manage, hub.view, hub.manage). The server derives them
+ * users.view, users.manage, manager.view, manager.manage). The server derives them
  * from role and access level and sends them in /me as `permissions`.
  * Accepts a slug, or an array of slugs meaning "any of these".
  */

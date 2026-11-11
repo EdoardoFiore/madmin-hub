@@ -186,7 +186,7 @@ async def get_system_logs(lines: int = 200, search: Optional[str] = None) -> Lis
     """
     lines = min(lines, 1000)
     
-    cmd = ["journalctl", "-u", "madmin-hub", "--no-pager", "-n", str(lines), "--output=cat"]
+    cmd = ["journalctl", "-u", "madmin-manager", "--no-pager", "-n", str(lines), "--output=cat"]
     
     proc = await asyncio.create_subprocess_exec(
         *cmd,

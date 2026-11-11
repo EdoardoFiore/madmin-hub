@@ -100,7 +100,7 @@ def _user_response(user: User, group_paths: Optional[Dict[str, str]] = None) -> 
 
 
 async def _group_paths(session: AsyncSession) -> Dict[str, str]:
-    from hub.groups import all_groups, paths
+    from manager.groups import all_groups, paths
     return paths(await all_groups(session))
 
 
@@ -114,7 +114,7 @@ def _not_found() -> HTTPException:
 
 def _visible_in(actor: User, target: User, ids) -> bool:
     """
-    Whether actor may see target, given actor's scope (hub.scope.group_ids).
+    Whether actor may see target, given actor's scope (manager.scope.group_ids).
     Superusers see everyone; partners and customers see themselves and the
     partner/customer users of their scope, never a superuser.
     """
@@ -126,7 +126,7 @@ def _visible_in(actor: User, target: User, ids) -> bool:
 
 
 async def _visible(session: AsyncSession, actor: User, target: User) -> bool:
-    from hub import scope
+    from manager import scope
     return _visible_in(actor, target, await scope.group_ids(session, actor))
 
 
@@ -152,7 +152,7 @@ async def _check_assignment(session: AsyncSession, actor: User, role: str, group
     if not group_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Un utente partner o cliente richiede un gruppo")
-    from hub import scope
+    from manager import scope
     group = await scope.check_group(session, actor, group_id)
     if group.kind != role:
         raise HTTPException(
@@ -585,7 +585,7 @@ async def list_users(
     session: AsyncSession = Depends(get_session)
 ):
     """Users the caller may see (superusers: everyone; others: their scope)."""
-    from hub import scope
+    from manager import scope
     users = await service.get_all_users(session)
     group_paths = await _group_paths(session)
     ids = await scope.group_ids(session, current_user)

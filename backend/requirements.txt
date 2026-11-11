@@ -4,7 +4,7 @@ uvicorn[standard]>=0.27.0
 
 # Database
 # <0.0.45: 0.0.45 maps every datetime field to a timezone-aware type that rejects
-# naive values, and the hub stores naive UTC (datetime.utcnow()) everywhere.
+# naive values, and the manager stores naive UTC (datetime.utcnow()) everywhere.
 sqlmodel>=0.0.14,<0.0.45
 asyncpg>=0.29.0
 sqlalchemy[asyncio]>=2.0.25

@@ -746,7 +746,7 @@ tr.fw-row-flash > td {
     max-width: 320px;
 }
 
-/* == Hub instances: tree of groups and instances == */
+/* == Manager instances: tree of groups and instances == */
 /* Fixed-width panel on the left, the rest to the page (the view is container-fluid) */
 .inst-layout {
     display: grid;

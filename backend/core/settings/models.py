@@ -1,5 +1,5 @@
 """
-Hub settings: one row (id=1).
+Manager settings: one row (id=1).
 """
 import re
 from typing import Optional
@@ -13,7 +13,7 @@ class SystemSettings(SQLModel, table=True):
     __tablename__ = "system_settings"
 
     id: int = Field(default=1, primary_key=True)
-    company_name: str = Field(default="MADMIN Hub", max_length=100)
+    company_name: str = Field(default="MADMIN Manager", max_length=100)
     primary_color: str = Field(default="#206bc4", max_length=7)
     default_language: str = Field(default="it", max_length=5)
     password_max_age_days: int = Field(default=0)
@@ -61,7 +61,7 @@ class SystemSettingsUpdate(SQLModel):
     @classmethod
     def _cidrs(cls, v):
         if v:
-            from hub.netutil import parse_cidrs
+            from manager.netutil import parse_cidrs
             v = ",".join(str(n) for n in parse_cidrs(v))
         return v
 

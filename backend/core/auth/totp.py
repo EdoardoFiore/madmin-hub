@@ -42,7 +42,7 @@ def hash_backup_codes(codes: List[str]) -> List[dict]:
     return [{"hash": get_password_hash(code.upper()), "used": False} for code in codes]
 
 
-def get_provisioning_uri(secret: str, username: str, issuer: str = "MADMIN Hub") -> str:
+def get_provisioning_uri(secret: str, username: str, issuer: str = "MADMIN Manager") -> str:
     """
     Generate a provisioning URI for authenticator app setup.
 

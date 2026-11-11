@@ -261,7 +261,7 @@ async def create_user(session: AsyncSession, user_data: UserCreate) -> User:
         hashed_password=get_password_hash(user_data.password),
         role=user_data.role,
         access=user_data.access,
-        # Superusers have no group: their scope is the whole hub
+        # Superusers have no group: their scope is the whole manager
         group_id=None if user_data.role == "superuser" else user_data.group_id,
         totp_enforced=user_data.totp_enforced,
         must_change_password=user_data.must_change_password,

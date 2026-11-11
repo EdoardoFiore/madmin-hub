@@ -1,5 +1,5 @@
 /**
- * MADMIN Hub - Instances: tree of groups and instances on the left, and on the
+ * MADMIN Manager - Instances: tree of groups and instances on the left, and on the
  * right the overview of the fleet (#instances), of a group (#instances/group/<id>)
  * or the detail of an instance (#instances/<id>/<tab>).
  */
@@ -9,14 +9,14 @@ import { escapeHtml, showToast, confirmDialog, loadingSpinner, formatBytes,
 import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
-         cmpVersion, meter } from './hub-common.js';
+         cmpVersion, meter } from './manager-common.js';
 
 const TABS = [
     ['overview', 'Panoramica', 'scope.view'],
     ['addresses', 'Indirizzi', 'scope.view'],
     ['backups', 'Backup', 'scope.view'],
     ['licenses', 'Licenze', 'scope.view'],
-    ['support', 'Supporto', 'hub.view'],
+    ['support', 'Supporto', 'manager.view'],
     ['commands', 'Comandi', 'scope.view'],
 ];
 
@@ -31,7 +31,7 @@ let mainEl = null;    // right pane: overview or detail
 
 const CACHE_MS = 15000;
 const REFRESH_MS = 30000;
-const COLLAPSED_KEY = 'hub.treeCollapsed';
+const COLLAPSED_KEY = 'manager.treeCollapsed';
 
 let instances = [];   // every instance in scope, any status
 let fetchedAt = 0;
@@ -302,12 +302,12 @@ function statCard(label, value, cls = '', sub = '') {
 function renderGroup(el, groupId) {
     const { byId, top, children } = hierarchy();
     const g = groupId ? byId[groupId] : null;
-    const hub = checkPermission('hub.manage');
+    const manager = checkPermission('manager.manage');
     const actions = [];
-    if (hub) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroups')}><i class="ti ti-folders me-1"></i>Gruppi</button>`);
-    if (hub && g) {
-        actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubGroupEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
-        actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('hubGroupDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
+    if (manager) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerGroups')}><i class="ti ti-folders me-1"></i>Gruppi</button>`);
+    if (manager && g) {
+        actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerGroupEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
+        actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerGroupDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
     }
     setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
     if (groupId && !g) {
@@ -345,7 +345,7 @@ function renderGroup(el, groupId) {
         if (isOutdated(i, latest)) issues.push([i, 'ti-arrow-up-circle text-warning', `MADMIN ${escapeHtml(i.madmin_version)}, ultima ${escapeHtml(latest)}`]);
     }
     const issueRows = issues.slice(0, ISSUES_SHOWN).map(([i, icon, text]) => `
-        <tr class="cursor-pointer" ${actionAttrs('hubOpenInstance', i.id)}>
+        <tr class="cursor-pointer" ${actionAttrs('managerOpenInstance', i.id)}>
             <td style="width: 1%"><i class="ti ${icon}"></i></td>
             <td><strong>${escapeHtml(i.name)}</strong></td><td class="text-muted">${text}</td></tr>`).join('');
 
@@ -428,7 +428,7 @@ function renderOverviewTable() {
                 <tbody>${rows.map(i => {
                     const st = i.stats || {};
                     return `
-                    <tr class="cursor-pointer" ${actionAttrs('hubOpenInstance', i.id)}>
+                    <tr class="cursor-pointer" ${actionAttrs('managerOpenInstance', i.id)}>
                         <td>${onlineBadge(i)}</td>
                         <td><strong>${escapeHtml(i.name)}</strong>
                             ${i.hostname && i.hostname !== i.name ? `<div class="small text-muted">${escapeHtml(i.hostname)}</div>` : ''}
@@ -447,7 +447,7 @@ function renderOverviewTable() {
             </table>
         </div>`
         : `<div class="card-body text-muted">${all.length ? 'Nessuna istanza corrisponde ai filtri.'
-            : 'Nessuna istanza. Crea un token in Enrollment e installa MADMIN con --hub-token-file.'}</div>`;
+            : 'Nessuna istanza. Crea un token in Enrollment e installa MADMIN con --manager-token-file.'}</div>`;
 }
 
 function groupsModal() {
@@ -508,11 +508,11 @@ async function renderDetail(container, id, tab) {
     if (!tabs.some(([t]) => t === tab)) tab = 'overview';
 
     const actions = [];
-    if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('hubRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
-    if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
-    if (checkPermission('hub.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('hubReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
-    if (checkPermission('hub.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('hubRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
-    if (checkPermission('hub.manage') && i.status !== 'active') actions.push(`<button class="btn btn-danger" ${actionAttrs('hubDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
+    if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
+    if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
+    if (checkPermission('manager.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
+    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
+    if (checkPermission('manager.manage') && i.status !== 'active') actions.push(`<button class="btn btn-danger" ${actionAttrs('managerDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
     setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
 
     container.innerHTML = `
@@ -618,7 +618,7 @@ async function overview(el, i) {
 }
 
 // ============== RESOURCE AND TRAFFIC GRAPHS (overview) ==============
-// The instance keeps 24 h of samples (one a minute); the hub asks for them
+// The instance keeps 24 h of samples (one a minute); the manager asks for them
 // when the page opens (GET /instances/<id>/stats) and stores nothing.
 
 let statsHours = 1;
@@ -790,7 +790,7 @@ async function backups(el, i) {
     const canRestore = checkPermission('scope.manage') && i.status === 'active';
     el.innerHTML = `
         ${manage && i.status === 'active' ? `<div class="card-body border-bottom">
-            <button class="btn btn-primary" ${actionAttrs('hubBackupRun')}><i class="ti ti-database-export me-1"></i>Esegui backup ora</button>
+            <button class="btn btn-primary" ${actionAttrs('managerBackupRun')}><i class="ti ti-database-export me-1"></i>Esegui backup ora</button>
             <span class="text-muted ms-2 small">${i.online ? '' : "L'istanza è offline: il backup partirà alla riconnessione (entro 1 ora)."}</span>
         </div>` : ''}
         <div class="table-responsive"><table class="table card-table table-vcenter">
@@ -800,18 +800,18 @@ async function backups(el, i) {
                 <td>${escapeHtml(b.madmin_version || '-')}</td>
                 <td>${b.trigger === 'scheduled' ? 'Pianificato' : escapeHtml(b.created_by || 'manuale')}</td>
                 <td class="text-end"><div class="btn-list justify-content-end">
-                    ${manage ? `<button class="btn btn-sm btn-outline-secondary" ${actionAttrs('hubBackupDownload', b.id)}><i class="ti ti-download"></i></button>` : ''}
-                    ${canRestore ? `<button class="btn btn-sm btn-outline-warning" ${actionAttrs('hubBackupRestore', b.id, b.created_at)}>Ripristina</button>` : ''}
-                    ${manage ? `<button class="btn btn-sm btn-ghost-danger" ${actionAttrs('hubBackupDelete', b.id)}><i class="ti ti-trash"></i></button>` : ''}
+                    ${manage ? `<button class="btn btn-sm btn-outline-secondary" ${actionAttrs('managerBackupDownload', b.id)}><i class="ti ti-download"></i></button>` : ''}
+                    ${canRestore ? `<button class="btn btn-sm btn-outline-warning" ${actionAttrs('managerBackupRestore', b.id, b.created_at)}>Ripristina</button>` : ''}
+                    ${manage ? `<button class="btn btn-sm btn-ghost-danger" ${actionAttrs('managerBackupDelete', b.id)}><i class="ti ti-trash"></i></button>` : ''}
                 </div></td></tr>`).join('') || '<tr><td colspan="5" class="text-muted">Nessun backup</td></tr>'}
             </tbody></table></div>`;
 }
 
 async function licenses(el, i) {
     const rows = await apiGet(`/licenses?instance_id=${i.id}`);
-    const manage = checkPermission('hub.manage') && i.status === 'active';
+    const manage = checkPermission('manager.manage') && i.status === 'active';
     el.innerHTML = `
-        ${manage ? `<div class="card-body border-bottom"><button class="btn btn-primary" ${actionAttrs('hubLicenseNew')}>
+        ${manage ? `<div class="card-body border-bottom"><button class="btn btn-primary" ${actionAttrs('managerLicenseNew')}>
             <i class="ti ti-certificate me-1"></i>Emetti licenza</button></div>` : ''}
         ${licenseTable(rows, manage)}`;
 }
@@ -827,7 +827,7 @@ export function licenseTable(rows, manage, showInstance = false) {
             <td>${l.valid_until ? fmtDate(l.valid_until) : 'fino a revoca'}</td>
             <td>${fmtDate(l.token_expires_at)}</td>
             <td class="text-muted">${escapeHtml(l.notes)}</td>
-            <td class="text-end">${manage && l.active ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubLicenseRevoke', l.id)}>Revoca</button>` : ''}</td>
+            <td class="text-end">${manage && l.active ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerLicenseRevoke', l.id)}>Revoca</button>` : ''}</td>
         </tr>`).join('') || `<tr><td colspan="${showInstance ? 7 : 6}" class="text-muted">Nessuna licenza</td></tr>`}
         </tbody></table></div>`;
 }
@@ -835,18 +835,18 @@ export function licenseTable(rows, manage, showInstance = false) {
 async function support(el, i) {
     const rows = await apiGet(`/instances/${i.id}/support`);
     const can = i.status === 'active' && i.online;
-    if (!checkPermission('hub.manage')) {
+    if (!checkPermission('manager.manage')) {
         el.innerHTML = sessionTable(rows);
         return;
     }
     el.innerHTML = `
         <div class="card-body border-bottom">
             <div class="btn-list">
-                <button class="btn btn-primary" ${can ? '' : 'disabled'} ${actionAttrs('hubSupportUi')}><i class="ti ti-browser me-1"></i>Accesso UI superuser</button>
-                <button class="btn btn-primary" ${can ? '' : 'disabled'} ${actionAttrs('hubSupportSsh')}><i class="ti ti-terminal-2 me-1"></i>Accesso SSH root</button>
+                <button class="btn btn-primary" ${can ? '' : 'disabled'} ${actionAttrs('managerSupportUi')}><i class="ti ti-browser me-1"></i>Accesso UI superuser</button>
+                <button class="btn btn-primary" ${can ? '' : 'disabled'} ${actionAttrs('managerSupportSsh')}><i class="ti ti-terminal-2 me-1"></i>Accesso SSH root</button>
             </div>
             ${can ? '' : '<div class="text-muted small mt-2">L\'istanza deve essere online.</div>'}
-            <div class="text-muted small mt-2">Ogni accesso è temporaneo, raggiungibile solo dal tuo IP e registrato nell'audit log dell'istanza come hub:&lt;operatore&gt;.</div>
+            <div class="text-muted small mt-2">Ogni accesso è temporaneo, raggiungibile solo dal tuo IP e registrato nell'audit log dell'istanza come manager:&lt;operatore&gt;.</div>
         </div>
         ${sessionTable(rows)}`;
 }
@@ -863,9 +863,9 @@ export function sessionTable(rows, showInstance = false) {
             <td class="text-muted">${escapeHtml(s.reason)}</td><td>${s.port}</td>
             <td class="font-monospace">${escapeHtml(s.allowed_ip)}</td><td>${fmtDate(s.expires_at)}</td>
             <td>${s.status === 'open' ? '<span class="badge bg-warning-lt">aperta</span>' : `<span class="badge bg-secondary-lt">${escapeHtml(SESSION_STATUS[s.status] || s.status)}</span>`}</td>
-            <td class="text-end"><div class="btn-list justify-content-end">${s.status === 'open' && checkPermission('hub.manage') ? `
-                ${s.kind === 'ui' ? `<button class="btn btn-sm btn-outline-primary" ${actionAttrs('hubSupportTicket', s.id)}>Nuovo link</button>` : ''}
-                <button class="btn btn-sm btn-outline-danger" ${actionAttrs('hubSupportClose', s.id)}>Chiudi</button>` : ''}</div></td>
+            <td class="text-end"><div class="btn-list justify-content-end">${s.status === 'open' && checkPermission('manager.manage') ? `
+                ${s.kind === 'ui' ? `<button class="btn btn-sm btn-outline-primary" ${actionAttrs('managerSupportTicket', s.id)}>Nuovo link</button>` : ''}
+                <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerSupportClose', s.id)}>Chiudi</button>` : ''}</div></td>
         </tr>`).join('') || `<tr><td colspan="${showInstance ? 9 : 8}" class="text-muted">Nessuna sessione</td></tr>`}
         </tbody></table></div>`;
 }
@@ -917,7 +917,7 @@ export function licenseModal(instanceId, onDone) {
     }, { submitText: 'Emetti' });
 }
 
-const SSH_OS_KEY = 'hub.sshOs';
+const SSH_OS_KEY = 'manager.sshOs';
 const SSH_OS = [['windows', 'Windows', 'ti-brand-windows'], ['macos', 'macOS', 'ti-brand-apple'], ['linux', 'Linux', 'ti-brand-ubuntu']];
 
 function sshSessionModal(res) {
@@ -990,7 +990,7 @@ function sshSessionModal(res) {
         <p class="text-muted mb-3">
             Valido fino a <strong>${escapeHtml(fmtDate(s.expires_at))}</strong>,
             solo dall'IP <strong class="font-monospace">${escapeHtml(s.allowed_ip || '')}</strong>
-            e solo attraverso la porta <strong>${escapeHtml(String(s.port ?? ''))}</strong> dell'hub.
+            e solo attraverso la porta <strong>${escapeHtml(String(s.port ?? ''))}</strong> del manager.
         </p>
 
         <div class="btn-group w-100 mb-4" role="group" aria-label="Sistema operativo">
@@ -1030,9 +1030,9 @@ export function uiLinkModal(res) {
 }
 
 registerActions({
-    hubOpenInstance: (id) => { location.hash = `#instances/${id}`; },
-    hubGroups: groupsModal,
-    hubGroupEdit: () => {
+    managerOpenInstance: (id) => { location.hash = `#instances/${id}`; },
+    managerGroups: groupsModal,
+    managerGroupEdit: () => {
         const g = hierarchy().byId[selected.id];
         if (!g) return;
         formModal(g.kind === 'partner' ? 'Modifica partner' : 'Modifica cliente', `
@@ -1047,7 +1047,7 @@ registerActions({
             renderGroup(mainEl, g.id);
         });
     },
-    hubGroupDelete: async () => {
+    managerGroupDelete: async () => {
         const g = hierarchy().byId[selected.id];
         if (!g) return;
         if (!await confirmDialog('Elimina gruppo', `Eliminare ${g.kind === 'partner' ? 'il partner' : 'il cliente'} ${g.name}? Deve essere vuoto: senza istanze, clienti e utenti.`, 'Elimina')) return;
@@ -1057,50 +1057,50 @@ registerActions({
             location.hash = g.parent_id ? `#instances/group/${g.parent_id}` : '#instances';
         } catch (e) { showToast(e.message, 'error'); }
     },
-    hubRefresh: async () => {
+    managerRefresh: async () => {
         try { await apiPost(`/instances/${current.id}/refresh`, {}); showToast('Dati aggiornati', 'success'); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
     },
-    hubEdit: () => {
+    managerEdit: () => {
         const i = current;
         // Partners and customers: their own groups only, no external reference
-        const hub = checkPermission('hub.manage');
+        const manager = checkPermission('manager.manage');
         formModal('Modifica istanza', `
             <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(i.name)}" required maxlength="100"></div>
             <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(i.description)}" maxlength="500"></div>
             <div class="mb-3"><label class="form-label">Gruppo</label><select name="group_id" class="form-select">
-                ${groupOptions(groups, i.group_id || '', { none: hub ? 'Nessuno (sito principale)' : null })}
+                ${groupOptions(groups, i.group_id || '', { none: manager ? 'Nessuno (sito principale)' : null })}
             </select></div>
             <div class="mb-3"><label class="form-label">Etichette (una per riga, chiave=valore)</label>
                 <textarea name="labels" class="form-control font-monospace" rows="3">${escapeHtml(labelsToText(i.labels))}</textarea></div>
             <div class="mb-3"><label class="form-label">Riferimento esterno</label>
-                <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(i.external_ref || '')}" ${hub ? '' : 'readonly'}>
-                ${hub ? '' : '<div class="form-hint">Lo imposta il sistema di provisioning o un superuser.</div>'}</div>
+                <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(i.external_ref || '')}" ${manager ? '' : 'readonly'}>
+                ${manager ? '' : '<div class="form-hint">Lo imposta il sistema di provisioning o un superuser.</div>'}</div>
             <label class="form-check"><input type="checkbox" name="backup_enabled" class="form-check-input" ${i.backup_enabled ? 'checked' : ''}>
                 <span class="form-check-label">Backup pianificati</span></label>`,
         async (form) => {
             const d = formData(form);
             const body = { name: d.name, description: d.description, group_id: d.group_id,
                            backup_enabled: form.backup_enabled.checked, labels: textToLabels(d.labels) };
-            if (hub) body.external_ref = d.external_ref;
+            if (manager) body.external_ref = d.external_ref;
             await apiPatch(`/instances/${i.id}`, body);
             reloadDetail('overview');
         });
     },
-    hubReenroll: async () => {
-        if (!await confirmDialog('Token re-enroll', 'Il token (monouso, 72 ore) registra di nuovo questa istanza mantenendo la stessa identità, backup e licenze: da usare con setup-madmin.sh --hub-token-file dopo una reinstallazione. Il certificato attuale viene revocato al suo utilizzo.', 'Genera', 'btn-primary')) return;
+    managerReenroll: async () => {
+        if (!await confirmDialog('Token re-enroll', 'Il token (monouso, 72 ore) registra di nuovo questa istanza mantenendo la stessa identità, backup e licenze: da usare con setup-madmin.sh --manager-token-file dopo una reinstallazione. Il certificato attuale viene revocato al suo utilizzo.', 'Genera', 'btn-primary')) return;
         try {
             const res = await apiPost(`/enrollment/instances/${current.id}/reenroll`, {});
             secretModal('Token re-enroll',
                 enrollTokenHelp(res.token, { expiresAt: res.expires_at, reenroll: true }), res.token);
         } catch (e) { showToast(e.message, 'error'); }
     },
-    hubRevoke: async () => {
+    managerRevoke: async () => {
         if (!await confirmDialog('Revoca istanza', `L'istanza ${current.name} viene disconnessa e il suo certificato revocato: non potrà riconnettersi senza un nuovo enrollment. Le sessioni di supporto aperte vengono chiuse.`, 'Revoca')) return;
         try { await apiPost(`/instances/${current.id}/revoke`, {}); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
     },
-    hubDelete: async () => {
+    managerDelete: async () => {
         if (!await confirmDialog('Elimina istanza', `Eliminare ${current.name} con backup, licenze e storico? Operazione irreversibile.`, 'Elimina')) return;
         try {
             await apiDelete(`/instances/${current.id}`);
@@ -1109,11 +1109,11 @@ registerActions({
         }
         catch (e) { showToast(e.message, 'error'); }
     },
-    hubBackupRun: async () => {
+    managerBackupRun: async () => {
         try { await apiPost(`/instances/${current.id}/backups`, {}); showToast('Backup richiesto: compare qui al termine', 'success'); setTimeout(() => reloadDetail('backups'), 5000); }
         catch (e) { showToast(e.message, 'error'); }
     },
-    hubBackupDownload: async (id) => {
+    managerBackupDownload: async (id) => {
         try {
             const r = await fetch(`/api/backups/${id}/download`, { headers: { Authorization: `Bearer ${getToken()}` } });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1123,11 +1123,11 @@ registerActions({
             URL.revokeObjectURL(url);
         } catch (e) { showToast(e.message, 'error'); }
     },
-    hubBackupDelete: async (id) => {
+    managerBackupDelete: async (id) => {
         if (!await confirmDialog('Elimina backup', 'Eliminare questo backup?', 'Elimina')) return;
         try { await apiDelete(`/backups/${id}`); reloadDetail('backups'); } catch (e) { showToast(e.message, 'error'); }
     },
-    hubBackupRestore: (id, created) => {
+    managerBackupRestore: (id, created) => {
         formModal('Ripristina configurazione', `
             <div class="alert alert-danger">Il ripristino sovrascrive tutta la configurazione di <strong>${escapeHtml(current.name)}</strong>
                 (utenti compresi) con il backup del ${fmtDate(created)}, poi riavvia MADMIN.</div>
@@ -1141,13 +1141,13 @@ registerActions({
             reloadDetail('commands');
         }, { submitText: 'Ripristina', submitClass: 'btn-danger' });
     },
-    hubLicenseNew: () => licenseModal(current.id, () => reloadDetail('licenses')),
-    hubLicenseRevoke: async (id) => {
+    managerLicenseNew: () => licenseModal(current.id, () => reloadDetail('licenses')),
+    managerLicenseRevoke: async (id) => {
         if (!await confirmDialog('Revoca licenza', 'Il modulo non sarà più attivabile e, al prossimo riavvio dell\'istanza, non verrà caricato (i suoi dati restano).', 'Revoca')) return;
         try { await apiPost(`/licenses/${id}/revoke`, {}); location.hash.startsWith('#licenses') ? location.reload() : reloadDetail('licenses'); }
         catch (e) { showToast(e.message, 'error'); }
     },
-    hubSupportUi: () => {
+    managerSupportUi: () => {
         formModal('Accesso UI superuser temporaneo', `${minutesField()}${reasonField}${ipField}`, async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ui`, {
@@ -1156,7 +1156,7 @@ registerActions({
             reloadDetail('support');
         }, { submitText: 'Apri sessione' });
     },
-    hubSupportSsh: async () => {
+    managerSupportSsh: async () => {
         // The instance has one SSH grant: a new session replaces the open one
         let open = [];
         try {
@@ -1188,10 +1188,10 @@ registerActions({
             ? { submitText: 'Chiudi la sessione attuale e apri', submitClass: 'btn-warning', size: 'lg' }
             : { submitText: 'Apri sessione', size: 'lg' });
     },
-    hubSupportTicket: async (id) => {
+    managerSupportTicket: async (id) => {
         try { uiLinkModal(await apiPost(`/support/${id}/ticket`, {})); } catch (e) { showToast(e.message, 'error'); }
     },
-    hubSupportClose: async (id) => {
+    managerSupportClose: async (id) => {
         try {
             await apiPost(`/support/${id}/close`, {});
             location.hash.startsWith('#support') ? location.reload() : reloadDetail('support');

@@ -1,5 +1,5 @@
 """
-MADMIN Hub configuration (environment / .env, Pydantic Settings).
+MADMIN Manager configuration (environment / .env, Pydantic Settings).
 """
 from functools import lru_cache
 from typing import List
@@ -7,11 +7,11 @@ from typing import List
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
-HUB_VERSION = "1.0.0"
+MANAGER_VERSION = "1.0.0"
 
 
 class Settings(BaseSettings):
-    database_url: str = Field(default="postgresql+asyncpg://madmin_hub:madmin_hub@localhost:5432/madmin_hub")
+    database_url: str = Field(default="postgresql+asyncpg://madmin_manager:madmin_manager@localhost:5432/madmin_manager")
 
     # Signs the UI JWTs and, through HKDF, encrypts the secrets at rest
     # (TOTP, the CA and license private keys, the backup passphrases).
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False)
     allowed_origins: str = Field(default="*")
 
-    data_dir: str = Field(default="/opt/madmin-hub/data")
+    data_dir: str = Field(default="/opt/madmin-manager/data")
 
     # Addresses the support listeners bind to (one port per open session)
     support_bind: str = Field(default="0.0.0.0")

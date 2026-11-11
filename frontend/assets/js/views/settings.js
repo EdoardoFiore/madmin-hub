@@ -1,5 +1,5 @@
 /**
- * MADMIN Hub - Settings.
+ * MADMIN Manager - Settings.
  */
 import { apiGet, apiPatch } from '../api.js';
 import { escapeHtml, showToast } from '../utils.js';
@@ -33,9 +33,9 @@ const FIELDS = [
 
 export async function render(container) {
     const s = await apiGet('/settings/system');
-    const ro = !checkPermission('hub.manage');
+    const ro = !checkPermission('manager.manage');
     container.innerHTML = `
-        <form id="hub-settings" class="row row-cards">
+        <form id="manager-settings" class="row row-cards">
             ${FIELDS.map(([title, fields]) => `
                 <div class="col-lg-6 col-xl-3"><div class="card"><div class="card-header"><h3 class="card-title">${title}</h3></div>
                 <div class="card-body">${fields.map(([k, label, type]) => type === 'checkbox' ? `
@@ -46,7 +46,7 @@ export async function render(container) {
                 </div></div></div>`).join('')}
             ${ro ? '' : '<div class="col-12"><button class="btn btn-primary">Salva</button></div>'}
         </form>`;
-    container.querySelector('#hub-settings').addEventListener('submit', async (e) => {
+    container.querySelector('#manager-settings').addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = {};
         for (const [, fields] of FIELDS) {

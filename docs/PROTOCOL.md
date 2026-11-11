@@ -164,7 +164,7 @@ All the commands below are at version 1.
 
 `manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
 
-Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}.
+Events: `support.expired` {`ui`: [usernames]} | {`ssh`: true}; `ca.updated` {`ca`: [fingerprints]} when the trusted CAs change after the hello (a bundle accepted from `hello_ack` or at a renewal).
 
 ### Errors
 

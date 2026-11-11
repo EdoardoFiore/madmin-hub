@@ -356,6 +356,14 @@ async def _handle_event(conn: AgentConnection, payload: dict) -> None:
     if name == protocol.EVENT_SUPPORT_EXPIRED:
         from manager.support.service import on_instance_expired
         await on_instance_expired(conn.instance_id, payload.get("data") or {})
+    elif name == protocol.EVENT_CA_UPDATED:
+        trusted = (payload.get("data") or {}).get("ca")
+        if isinstance(trusted, list):
+            async with async_session_maker() as session:
+                instance = await session.get(Instance, conn.instance_id)
+                instance.trusted_ca_json = json.dumps(sorted(str(f)[:64] for f in trusted[:10]))
+                session.add(instance)
+                await session.commit()
     else:
         # A newer agent may send events this manager does not know
         logger.info("Instance %s: ignored event %r", conn.instance_id, str(name)[:50])

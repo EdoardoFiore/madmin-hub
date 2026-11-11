@@ -91,6 +91,7 @@ SUPPORT_MINUTES_MAX = 1440
 
 # --- Events (agent -> manager) ---
 EVENT_SUPPORT_EXPIRED = "support.expired"
+EVENT_CA_UPDATED = "ca.updated"   # {"ca": [fingerprints]}: the trusted CAs changed
 
 # --- Errors: cmd_result {"ok": false, "error": {"code", "message"}} ---
 # The manager acts on the code only; the message is for the operator.

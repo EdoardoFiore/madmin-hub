@@ -70,6 +70,7 @@ class Instance(SQLModel, table=True):
     facts_json: str = Field(default="{}")
     capabilities_json: str = Field(default="{}")  # {command: version} from the last hello
     features_json: str = Field(default="[]")      # agent features from the last hello
+    trusted_ca_json: str = Field(default="[]")    # CA fingerprints the agent trusts (hello.state.ca)
     stats_json: str = Field(default="{}")
 
     # Passphrase the instance encrypts its manager backups with (encrypted here

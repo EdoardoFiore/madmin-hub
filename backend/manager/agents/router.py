@@ -178,7 +178,11 @@ async def renew(body: RenewRequest, agent=Depends(require_agent_or_suspended), s
     session.add(AgentCertificate(instance_id=instance.id, fingerprint=fp, serial=serial,
                                  not_before=nb.replace(tzinfo=None), not_after=na.replace(tzinfo=None)))
     await session.commit()
-    return {"cert_pem": cert_pem.decode()}
+    out = {"cert_pem": cert_pem.decode()}
+    bundle = pki.ca_bundle()   # during a CA rotation only
+    if bundle:
+        out["ca_bundle"] = bundle
+    return out
 
 
 @router.post("/unenroll")
@@ -304,20 +308,27 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         instance.features_json = json.dumps(sorted(features))
         instance.protocol = protocol.PROTOCOL_VERSION
         instance.protocol_revision = revision
+        trusted = (p.get("state") or {}).get("ca") if isinstance(p.get("state"), dict) else None
+        if isinstance(trusted, list):
+            instance.trusted_ca_json = json.dumps(sorted(str(f)[:64] for f in trusted[:10]))
         instance.last_seen_at = datetime.utcnow()
         if facts is not None:
             apply_facts(instance, facts)
         await record_addresses(session, instance, source_ip, facts)
         session.add(instance)
         await session.commit()
-    await ws.send_text(protocol.frame(protocol.HELLO_ACK, {
+    ack = {
         "instance_id": instance_id,
         "server_time": int(datetime.utcnow().timestamp()),
         "revision": revision,
         "features": FEATURES,
         "config": config,
         "manager_version": MANAGER_VERSION,
-    }))
+    }
+    bundle = pki.ca_bundle()   # during a CA rotation only
+    if bundle:
+        ack["ca_bundle"] = bundle
+    await ws.send_text(protocol.frame(protocol.HELLO_ACK, ack))
     state = p.get("state") if isinstance(p.get("state"), dict) else {}
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
                            capabilities=caps, features=features, revision=revision, hello_state=state)

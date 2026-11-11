@@ -192,7 +192,7 @@ Steps:
 Steps:
 
 - [x] `manager.relocate` command with the verify-then-commit sequence (`POST /api/instances/{id}/relocate`, `POST /api/instances/relocate` for every active instance; "Cambia indirizzo" in the instance page).
-- [ ] `ca_bundle` in the renew response; agent trust store with several CAs; `python -m manager.pki rotate-ca`.
+- [x] `ca_bundle` in `hello_ack` and in the renew response; agent trust store with several CAs (cross-signed only); `python -m manager.pki rotate-ca status|prepare|activate|retire`.
 
 ### 5.10 Identity facts (G5)
 

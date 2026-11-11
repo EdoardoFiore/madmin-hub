@@ -139,6 +139,9 @@ if [ -f "$DATA_DIR/pki/ca.pem" ]; then
 else
     sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m manager.pki init "${PKI_ARGS[@]}"
 fi
+# CAs nginx accepts client certificates from (written by init, rewritten here
+# for installs older than the CA rotation)
+sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m manager.pki trust-bundle
 CA_FP="$(sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m manager.pki fingerprint)"
 cd - >/dev/null
 
@@ -230,7 +233,7 @@ server {
     ssl_certificate $DATA_DIR/pki/server.pem;
     ssl_certificate_key $DATA_DIR/pki/server.key;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_client_certificate $DATA_DIR/pki/ca.pem;
+    ssl_client_certificate $DATA_DIR/pki/ca_trust.pem;
     ssl_verify_client optional;
     ssl_verify_depth 1;
     server_tokens off;

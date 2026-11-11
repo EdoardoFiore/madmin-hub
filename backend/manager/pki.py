@@ -8,6 +8,23 @@ Manager key material, in DATA_DIR/pki/ (0700, files 0600):
                                    chain included. The key is in clear: nginx reads it.
     ssh_ca.pub / ssh_ca.key.enc    OpenSSH user CA (Ed25519) for support SSH.
     license.pub / license.key.enc  Ed25519 key that signs module licenses.
+    ca_trust.pem                   CAs nginx accepts client certificates from
+                                   (ca.pem, plus ca_previous.pem during a rotation).
+
+CA rotation (rotate-ca), in three steps, none of which cuts an instance off:
+
+    prepare   ca_next.pem / ca_next.key.enc and ca_next_cross.pem (the next CA's
+              key and subject, issued by the current CA). The manager offers both
+              in hello_ack and in the renewal answer; an agent trusts the next CA
+              only because the current one vouches for it. Nothing else changes.
+    activate  once every instance reports the next CA: it becomes ca.pem (new
+              agent certificates, new server certificate, new tokens), the old
+              one ca_previous.pem (nginx still accepts the client certificates it
+              signed), the cross certificate ca_cross.pem (for latecomers).
+    retire    once no valid agent certificate of the old CA is left (at most
+              90 days, the renewals replace them): ca_previous.pem goes.
+
+After activate and retire: reload nginx and restart madmin-manager.
 
 Private keys other than the server's are encrypted with the data key derived
 from SECRET_KEY (core.secrets). The sha256 of ca.pem goes into every
@@ -16,6 +33,8 @@ enrollment token: instances pin it on first contact.
     python -m manager.pki init --host manager.example.com [--ip 10.0.0.5] [--force]
     python -m manager.pki server-cert --host ... [--ip ...]   (re-issue, same CA)
     python -m manager.pki fingerprint
+    python -m manager.pki trust-bundle                        (write ca_trust.pem)
+    python -m manager.pki rotate-ca status|prepare|activate|retire [--force]
 """
 import base64
 import hashlib
@@ -60,6 +79,17 @@ def _write(name: str, data: bytes) -> None:
         os.fchmod(f.fileno(), 0o600)
         f.write(data)
     os.replace(tmp, _path(name))
+
+
+def _remove(name: str) -> None:
+    try:
+        os.unlink(_path(name))
+    except FileNotFoundError:
+        pass
+
+
+def _exists(name: str) -> bool:
+    return os.path.exists(_path(name))
 
 
 def _read(name: str) -> bytes:
@@ -138,32 +168,43 @@ def is_initialized() -> bool:
 
 # --- Initialization ---
 
-def init(hosts: List[str], ips: List[str], force: bool = False) -> None:
-    if is_initialized() and not force:
-        raise PKIError("PKI già inizializzata (--force per rigenerarla: invalida TUTTE le istanze)")
+def _ca_builder(subject: x509.Name, issuer: x509.Name, public_key, not_after: datetime) -> x509.CertificateBuilder:
     now = datetime.now(timezone.utc)
-    ca_key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "MADMIN Manager"),
-        x509.NameAttribute(NameOID.COMMON_NAME, f"MADMIN Manager Agent CA {pysecrets.token_hex(4)}"),
-    ])
-    ca_cert = (
+    return (
         x509.CertificateBuilder()
-        .subject_name(name).issuer_name(name)
-        .public_key(ca_key.public_key())
+        .subject_name(subject).issuer_name(issuer)
+        .public_key(public_key)
         .serial_number(_serial())
         .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(days=CA_DAYS))
+        .not_valid_after(not_after)
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(x509.KeyUsage(
             digital_signature=True, key_cert_sign=True, crl_sign=True, content_commitment=False,
             key_encipherment=False, data_encipherment=False, key_agreement=False,
             encipher_only=False, decipher_only=False), critical=True)
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
-        .sign(ca_key, hashes.SHA256())
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
     )
+
+
+def _new_ca() -> Tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "MADMIN Manager"),
+        x509.NameAttribute(NameOID.COMMON_NAME, f"MADMIN Manager Agent CA {pysecrets.token_hex(4)}"),
+    ])
+    not_after = datetime.now(timezone.utc) + timedelta(days=CA_DAYS)
+    return _ca_builder(name, name, key.public_key(), not_after).sign(key, hashes.SHA256()), key
+
+
+def init(hosts: List[str], ips: List[str], force: bool = False) -> None:
+    if is_initialized() and not force:
+        raise PKIError("PKI già inizializzata (--force per rigenerarla: invalida TUTTE le istanze)")
+    ca_cert, ca_key = _new_ca()
     _write("ca.pem", ca_cert.public_bytes(serialization.Encoding.PEM))
     _write_secret("ca.key.enc", _pem_key(ca_key))
+    for name in ("ca_next.pem", "ca_next.key.enc", "ca_next_cross.pem", "ca_previous.pem", "ca_cross.pem"):
+        _remove(name)
+    write_trust_bundle()
 
     ssh_key = ed25519.Ed25519PrivateKey.generate()
     _write_secret("ssh_ca.key.enc", _pem_key(ssh_key))
@@ -216,6 +257,115 @@ def issue_server_cert(hosts: List[str], ips: List[str]) -> None:
     _write("server.key", _pem_key(key))
     _write("server.pem", cert.public_bytes(serialization.Encoding.PEM) + ca_cert.public_bytes(serialization.Encoding.PEM))
     _write("server.json", json.dumps({"hosts": hosts, "ips": ips}).encode())
+
+
+# --- CA rotation (see the module docstring) ---
+
+def _fingerprint(cert: x509.Certificate) -> str:
+    return hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
+
+
+def write_trust_bundle() -> None:
+    """ca_trust.pem: the CAs nginx accepts client certificates from."""
+    pem = _read("ca.pem")
+    if _exists("ca_previous.pem"):
+        pem += _read("ca_previous.pem")
+    _write("ca_trust.pem", pem)
+
+
+def rotation_stage() -> str:
+    """none | prepared | activated"""
+    if _exists("ca_next.pem"):
+        return "prepared"
+    if _exists("ca_previous.pem"):
+        return "activated"
+    return "none"
+
+
+def next_ca_fingerprint() -> Optional[str]:
+    """The CA instances must trust before activate (None when not rotating)."""
+    if rotation_stage() != "prepared":
+        return None
+    return _fingerprint(x509.load_pem_x509_certificate(_read("ca_next.pem")))
+
+
+def ca_bundle() -> Optional[str]:
+    """What hello_ack and the renewal answer offer during a rotation: the CA
+    to add and its cross certificate from a CA the instance trusts."""
+    stage = rotation_stage()
+    if stage == "prepared":
+        return (_read("ca_next.pem") + _read("ca_next_cross.pem")).decode()
+    if stage == "activated" and _exists("ca_cross.pem"):
+        return (_read("ca.pem") + _read("ca_cross.pem")).decode()
+    return None
+
+
+def rotate_prepare() -> str:
+    if rotation_stage() != "none":
+        raise PKIError("Una rotazione è già in corso (rotate-ca status)")
+    cur_cert, cur_key = _ca()
+    nxt_cert, nxt_key = _new_ca()
+    # Same subject and key as the next CA, issued by the current one, valid
+    # no longer than the current CA
+    not_after = min(nxt_cert.not_valid_after_utc, cur_cert.not_valid_after_utc)
+    cross = (
+        _ca_builder(nxt_cert.subject, cur_cert.subject, nxt_key.public_key(), not_after)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(cur_key.public_key()), critical=False)
+        .sign(cur_key, hashes.SHA256())
+    )
+    _write_secret("ca_next.key.enc", _pem_key(nxt_key))
+    _write("ca_next_cross.pem", cross.public_bytes(serialization.Encoding.PEM))
+    _write("ca_next.pem", nxt_cert.public_bytes(serialization.Encoding.PEM))
+    return _fingerprint(nxt_cert)
+
+
+def rotate_activate() -> str:
+    if rotation_stage() != "prepared":
+        raise PKIError("Nessuna CA preparata (rotate-ca prepare)")
+    server = json.loads(_read("server.json"))
+    _write("ca_previous.pem", _read("ca.pem"))
+    _write("ca_cross.pem", _read("ca_next_cross.pem"))
+    _write_secret("ca.key.enc", _read_secret("ca_next.key.enc"))
+    _write("ca.pem", _read("ca_next.pem"))
+    for name in ("ca_next.pem", "ca_next.key.enc", "ca_next_cross.pem"):
+        _remove(name)
+    _write("ca_rotation.json", json.dumps({"activated_at": datetime.now(timezone.utc).isoformat()}).encode())
+    _clear_cache()
+    write_trust_bundle()
+    issue_server_cert(server.get("hosts") or [], server.get("ips") or [])
+    return ca_fingerprint()
+
+
+def rotate_retire() -> None:
+    if rotation_stage() != "activated":
+        raise PKIError("Nessuna CA precedente da ritirare")
+    _remove("ca_previous.pem")
+    _remove("ca_cross.pem")
+    _remove("ca_rotation.json")
+    write_trust_bundle()
+
+
+async def _rotation_blockers(stage: str) -> List[str]:
+    """What still depends on the old CA: instances that do not report the next
+    CA (before activate), or valid agent certificates it signed (before retire)."""
+    from core.database import async_session_maker
+    from sqlmodel import select
+    from manager.models import AgentCertificate, Instance
+    async with async_session_maker() as session:
+        if stage == "prepared":
+            fp = next_ca_fingerprint()
+            rows = (await session.execute(select(Instance).where(
+                Instance.status.in_(("active", "suspended"))))).scalars().all()
+            return [f"{i.name} ({i.id})" for i in rows if fp not in json.loads(i.trusted_ca_json or "[]")]
+        activated = datetime.fromisoformat(json.loads(_read("ca_rotation.json"))["activated_at"])
+        rows = (await session.execute(
+            select(AgentCertificate, Instance.name).join(Instance, Instance.id == AgentCertificate.instance_id)
+            .where(AgentCertificate.revoked == False,  # noqa: E712
+                   AgentCertificate.not_after > datetime.utcnow(),
+                   AgentCertificate.not_before < activated.replace(tzinfo=None),
+                   Instance.status.in_(("active", "suspended")))
+        )).all()
+        return [f"{name} (certificato fino al {c.not_after:%Y-%m-%d})" for c, name in rows]
 
 
 # --- Agent certificates ---
@@ -319,6 +469,41 @@ def sign_license(payload: dict) -> str:
     return body + "." + _b64u(_license_key().sign(body.encode()))
 
 
+def _rotate_cli(action: str, force: bool) -> None:
+    import asyncio
+    import sys
+    stage = rotation_stage()
+    if action == "status":
+        print(f"Fase: {stage}. CA attuale: {ca_fingerprint()}")
+        if stage == "prepared":
+            print(f"CA successiva: {next_ca_fingerprint()}")
+        if stage != "none":
+            blockers = asyncio.run(_rotation_blockers(stage))
+            what = "senza la CA successiva" if stage == "prepared" else "con certificati della CA precedente"
+            print(f"Istanze {what}: {len(blockers)}")
+            for b in blockers:
+                print(f"  {b}")
+        return
+    if action == "prepare":
+        fp = rotate_prepare()
+        print(f"CA successiva preparata: {fp}. Le istanze la ricevono alla prossima connessione; "
+              "riavviare madmin-manager, poi 'rotate-ca status' finché nessuna manca.")
+        return
+    if action in ("activate", "retire"):
+        blockers = asyncio.run(_rotation_blockers(stage)) if stage in ("prepared", "activated") else []
+        if blockers and not force:
+            print("Istanze non pronte (resterebbero tagliate fuori):", file=sys.stderr)
+            for b in blockers:
+                print(f"  {b}", file=sys.stderr)
+            sys.exit("Interrotto: ripetere più tardi, oppure --force")
+        if action == "activate":
+            print(f"Nuova CA attiva: {rotate_activate()}")
+        else:
+            rotate_retire()
+            print("CA precedente ritirata.")
+        print("Ora: systemctl reload nginx && systemctl restart madmin-manager")
+
+
 def _main() -> None:
     import argparse
     import sys
@@ -331,6 +516,10 @@ def _main() -> None:
         if name == "init":
             p.add_argument("--force", action="store_true")
     sub.add_parser("fingerprint")
+    sub.add_parser("trust-bundle")
+    p = sub.add_parser("rotate-ca")
+    p.add_argument("action", choices=("status", "prepare", "activate", "retire"))
+    p.add_argument("--force", action="store_true", help="anche con istanze non pronte (le taglia fuori)")
     args = parser.parse_args()
     try:
         if args.cmd == "init":
@@ -339,6 +528,10 @@ def _main() -> None:
         elif args.cmd == "server-cert":
             issue_server_cert(args.host, args.ip)
             print("Certificato server rigenerato: ricaricare nginx")
+        elif args.cmd == "trust-bundle":
+            write_trust_bundle()
+        elif args.cmd == "rotate-ca":
+            _rotate_cli(args.action, args.force)
         else:
             print(ca_fingerprint())
     except PKIError as e:

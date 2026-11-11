@@ -26,7 +26,7 @@ Instances are updated after the manager and can stay on an older release for a l
 | `POST /agent/enroll` | no | token + CSR → certificate (rate limited) |
 | `POST /agent/register` | no | CSR + facts (+ `ca_pinned`) → `request_id`, `request_secret`, `key_fingerprint`, `poll_interval` |
 | `GET /agent/register/{id}` | no (`X-Request-Secret`) | `status` pending \| approved \| rejected \| expired; when approved, the same fields as the enroll response |
-| `POST /agent/renew` | yes | CSR → new certificate (at 2/3 of the lifetime) |
+| `POST /agent/renew` | yes (a suspended instance too) | CSR → `cert_pem` (at 2/3 of the lifetime), `ca_bundle`? during a CA rotation |
 | `POST /agent/unenroll` | yes | instance decommissioned |
 | `WSS /agent/ws` | yes | control channel |
 | `WSS /agent/tunnel/{conn_id}` | yes | one support tunnel (binary frames) |
@@ -83,7 +83,7 @@ The maximum frame size is 1 MB.
 | type | direction | payload |
 |---|---|---|
 | `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts`, `state` |
-| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version` |
+| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version`, `ca_bundle`? (PEM, during a CA rotation) |
 | `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
 | `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix), `timeout`? (seconds) |
 | `cmd_progress` | agent → manager, same `id` as the cmd | `state` (`running`), `step`?, `percent`? (0–100), `message`? |
@@ -96,12 +96,14 @@ The maximum frame size is 1 MB.
 "state": {
   "support": {"ui": ["mgr-..."], "ssh": {"open": true, "expires_at": 1730000000}},
   "licenses": ["<license id>"],
-  "commands": {"running": ["<cmd id>"], "finished": ["<cmd id>"]}
+  "commands": {"running": ["<cmd id>"], "finished": ["<cmd id>"]},
+  "ca": ["<sha256 of a trusted CA>"]
 }
 ```
 
 - `support`: open sessions the instance no longer has are closed as expired.
 - `licenses`: the licenses installed and valid now; an active license missing there gets a fresh token (unless an install is already pending).
+- `ca`: the CAs the agent trusts, stored by the manager (readiness of a CA rotation).
 - `commands`: the ones running are marked running; `finished` are those whose result the agent still has (it answers them when they are re-sent).
 - A missing section means "unknown": the manager does nothing for it. Later sections (the outcome of an update, Phase 1) are additions.
 
@@ -191,6 +193,19 @@ An unknown code is treated as `failed`.
 
 - UI access: a hidden temporary superuser, entered with a one-time ticket (`/login.html#manager-ticket=…` → `POST /api/auth/token/manager-ticket`).
 - SSH access: an OpenSSH user certificate from the manager SSH CA with principal `madmin-support-<instance_id>`, `source-address=127.0.0.1` and validity equal to the session. The instance lists the principal for root only while the grant is open (`expiry-time`, `from="127.0.0.1"`).
+
+## CA rotation
+
+The agent trusts every CA in its `ca.pem`: usually one, two during a rotation. It adds a CA only from a `ca_bundle` (in `hello_ack` or in the renewal answer) that holds the new CA, self-signed, together with a cross certificate for the same subject and key issued by a CA it already trusts. A manager therefore cannot make an instance trust a CA the current one did not vouch for. Expired CAs are dropped, never the last valid one. The agent reports its CAs in `hello.state.ca`.
+
+On the manager, `python -m manager.pki rotate-ca`:
+
+1. `prepare`: the next CA and its cross certificate are created and offered in every `hello_ack`. Nothing else changes.
+2. `status`: the instances that do not report the next CA yet.
+3. `activate` (refused while some instance is not ready, unless `--force`): the next CA signs new agent certificates, the server certificate and the tokens; nginx keeps accepting client certificates of the previous CA (`ca_trust.pem`). The bundle stays offered for latecomers.
+4. `retire` (refused while a valid agent certificate of the previous CA exists, at most 90 days): the previous CA goes.
+
+After `activate` and `retire`: `systemctl reload nginx && systemctl restart madmin-manager`.
 
 ## Licenses
 

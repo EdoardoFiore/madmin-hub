@@ -362,7 +362,7 @@ async def _rotation_blockers(stage: str) -> List[str]:
         rows = (await session.execute(
             select(AgentCertificate, Instance.name).join(Instance, Instance.id == AgentCertificate.instance_id)
             .where(AgentCertificate.revoked == False,  # noqa: E712
-                   AgentCertificate.not_after > datetime.utcnow(),
+                   AgentCertificate.not_after > datetime.now(timezone.utc).replace(tzinfo=None),
                    Instance.status.in_(("active", "suspended")))
         )).all()
         # An instance is ready once it holds a certificate of the new CA, issued

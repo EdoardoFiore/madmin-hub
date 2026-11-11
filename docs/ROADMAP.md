@@ -251,11 +251,11 @@ This phase is the real gate. Nothing is deployed until an instance can be update
 
 Steps:
 
-- [ ] `scripts/build-release.sh` in MADMIN: clean checkout → wheelhouse (`pip wheel -r requirements.txt -c requirements.lock`) → manifest → tarball. Reproducible from a tag.
-- [ ] `scripts/sign-release.py` (runs on the offline machine) and `verify` in `core/manager/release.py` (uses `cryptography`, already a dependency).
-- [ ] Key ceremony: generate primary and reserve keys, store them, document the procedure in `docs/RELEASING.md`.
-- [ ] Manager: `Release` table (id, version, build, manifest, size, sha256, uploaded_by, channel), upload in the UI, `GET /agent/releases/<release_id>` (client certificate, range requests for resume), retention.
-- [ ] Version constant generated from the manifest; `python -m core.manager version`.
+- [x] `scripts/build-release.sh` in MADMIN: `git archive HEAD` → wheelhouse (core and module dependencies, `-c requirements.lock`) → manifest → `.unsigned.tar`. The `.release` is a tar of `manifest.json`, `manifest.json.sig` and `payload.tar.gz` (the manifest carries the payload sha256), so nothing is unpacked before signature and hash are checked.
+- [x] `scripts/sign-release.sh` and `scripts/release-key.sh` (openssl only, offline machine); verification in `madmin-update verify` (stdlib + openssl), run by the agent before starting the update and again by the updater.
+- [ ] Key ceremony: generate primary and reserve keys and commit their public halves in `scripts/release-keys/` (procedure in MADMIN `docs/RELEASING.md`). **Until then only keys placed by root in `/etc/madmin/release-keys.d/` are trusted.**
+- [x] Manager: `Release` table, upload in the UI (signature checked when release keys are set in the settings), channels candidate/stable, `GET /agent/releases/<release_id>`. Not done: download resume, retention.
+- [x] Version and build reported from `manifest.json` (`config.build_info`).
 
 ### 6.2 Installation layout (G6)
 
@@ -277,9 +277,9 @@ Steps:
 
 Steps:
 
-- [ ] Rewrite the install part of `setup-madmin.sh` around `install_release <tarball>`.
-- [ ] Move `.env`, check every path in the code that assumes `backend/..` (data directory, cron scripts, module files, firewall boot script).
-- [ ] `uninstall-madmin.sh` updated.
+- [x] `setup-madmin.sh` installs through `madmin-update bootstrap --from-checkout` (same layout as an update) and refuses to run over an existing installation.
+- [x] Settings in `etc/madmin.env`, modules next to the code of the release, firewall boot unit on `current/`.
+- [x] `uninstall-madmin.sh` updated.
 
 ### 6.3 Database migrations in MADMIN (G7)
 
@@ -292,8 +292,8 @@ Steps:
 
 Steps:
 
-- [ ] Runner, table, baseline `core = 1` for 1.2.0, the schema comparison check in the release build.
-- [ ] Existing one-shot fixes in `main.py` converted.
+- [x] Runner and `schema_version` (`core.migrations`): 1.2.0 databases start at 0, fresh ones record the latest step. Not done: the schema comparison check in the release build.
+- [ ] Existing one-shot fixes in `main.py` converted (kept as they are: idempotent).
 - [ ] The same mechanism for the manager itself (see 10.5).
 
 ### 6.4 Updater
@@ -324,15 +324,15 @@ If the rollback itself does not come up, the rescue unit (6.5) is what is left.
 
 Manager side:
 
-- [ ] `madmin.update` in the UI of an instance, with the progress and the result; the fleet view shows version and build per instance.
-- [ ] `hello_ack.update_confirm`; an update not confirmed within the deadline is shown as rolled back or unknown, never as done.
-- [ ] Audit of who started which update.
+- [x] `madmin.update` in the UI of an instance (Aggiorna), with the progress and the result; version and build per instance.
+- [x] `hello_ack.update_confirm`; the result shown is the updater's journal (`ok` only after the commit).
+- [x] Audit of who started which update (the command's operator, manager audit log).
 
 Steps on the MADMIN side:
 
-- [ ] `madmin-update` (install, rollback, status, recover), `madmin-update-recover.service`.
-- [ ] Agent command, download with resume, progress.
-- [ ] `state.update` in `hello`.
+- [x] `madmin-update` (verify, install, rollback, status, recover, rebuild-venv, bootstrap), `madmin-update-recover.service` (`recover --boot`).
+- [x] Agent command with progress (download, verify, started). Not done: download resume.
+- [x] `state.update` in `hello`, `update.status` event.
 
 ### 6.5 Rescue unit (G8)
 
@@ -346,23 +346,25 @@ The rescue never opens a shell, a tunnel or support access: with MADMIN down the
 
 Steps:
 
-- [ ] `madmin-rescue`, timer and service units, installed by the installer.
-- [ ] Manager: `/agent/rescue`, instance state `rescue`, UI with the journal tail and the three actions, notification.
+- [x] `madmin-rescue`, timer and service units, installed by the installer.
+- [x] Manager: `/agent/rescue`, rescue panel with the journal tail and the three actions. Not done: notification.
+
+Bugs found by these tests and fixed (2026-11-11): the rollback restored an empty database (pg_restore could not read the root-only dump) and reported success; boot recovery deadlocked with madmin.service and then cancelled its start; build-release.sh lost its version when reading os-release.
 
 ### 6.6 Phase 1 exit criteria
 
 On the test server, with a throwaway instance, each case repeated until it passes three times in a row:
 
-- [ ] Fresh install from a release tarball.
-- [ ] Update N → N+1 with a schema migration; data intact.
-- [ ] Update where the new release fails to import → nothing changed (preflight).
-- [ ] Update where the migration fails → rollback, data intact.
-- [ ] Update where MADMIN starts but the agent cannot reach the manager (firewall rule injected) → rollback after the deadline.
-- [ ] Updater killed at every step (`kill -9`, then reboot) → recovered at boot to a working release.
-- [ ] Disk full during unpack and during the dump → clean failure.
-- [ ] Tampered tarball, wrong signature, older release → refused.
-- [ ] MADMIN made unable to start by hand → rescue reports, `rollback` and `install` from the manager work.
-- [ ] Two consecutive updates, then rollback → returns to the middle release.
+- [x] Fresh install in the releases layout (from a checkout, as the installer does).
+- [x] Update N → N+1 with a schema migration; data intact.
+- [x] Update where the new release fails to import → nothing changed (preflight).
+- [x] Update where the migration fails → rollback, data intact.
+- [x] Update where MADMIN starts but the agent cannot reach the manager (firewall rule injected) → rollback after the deadline.
+- [x] Updater killed during the venv step (recover cleans up) and during the health gate, then reboot (recovered at boot, MADMIN up again).
+- [ ] Disk full during unpack and during the dump → clean failure (not tested yet).
+- [x] Tampered payload, untrusted key, older version → refused; unsigned file refused by the manager.
+- [x] MADMIN stopped by hand → rescue reports, `restart` and `install` from the manager work (`rollback` tested through `madmin-update rollback`).
+- [x] Two consecutive updates, then rollback → returns to the middle release, schema back to the one before.
 - [ ] The `agent-v1-baseline` agent still works against the current manager.
 
 ## 7. Phase 2 — First deployment

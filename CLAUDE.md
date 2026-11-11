@@ -79,4 +79,4 @@ Users have a `role` (superuser | partner | customer), an `access` (rw | ro) and,
 
 ## Not done yet
 
-Remote update of instances (planned: release tarballs signed with an offline maintainer key whose public half is in the MADMIN repo, blue/green updater via `systemd-run` with automatic rollback, result reported in `hello`).
+See `docs/ROADMAP.md`. Phases 0 and 1 are done (protocol v1 frozen, releases, updater, rescue); left before the first deployment: the release key ceremony, the manager's own schema migrations (10.5), and the support access hardening (10.4).

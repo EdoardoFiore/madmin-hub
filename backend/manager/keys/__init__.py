@@ -8,7 +8,7 @@ single superuser on the manager it is approved from the root CLI
 (python -m manager.keys approve <user> <fingerprint>). A change of the
 owner's role, access or group sends every key back to pending.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import delete, update
@@ -47,7 +47,7 @@ async def list_all(session, status: Optional[str] = None) -> list:
 async def approve(session, key: UserSshKey, approver: str) -> None:
     key.status = "approved"
     key.approved_by = approver[:100]
-    key.approved_at = datetime.utcnow()
+    key.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(key)
 
 

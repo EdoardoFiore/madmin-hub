@@ -432,7 +432,7 @@ A router that reboots is an outage for the customer, and the firewall is fail-cl
 
 Steps:
 
-- [ ] `GRUB_DEFAULT=saved` and the boot-check unit in the Phase 1 installer (inactive until used).
+- [x] `GRUB_DEFAULT=saved` in the installer (`/etc/default/grub.d/99-madmin.cfg`). The boot-check unit needs no installer change: units ship in the release (`scripts/systemd/`) and `madmin-update` installs them at the switch, restoring the old ones on rollback.
 - [ ] The four commands, with progress.
 - [ ] Manager: actions in the instance UI (superuser only), confirmation dialogs that state the outage.
 - [ ] Tested on throwaway Ubuntu 24.04 instances, including a kernel that deliberately fails to boot.
@@ -500,8 +500,8 @@ Today a stolen superuser `rw` account can open a superuser UI session and root S
 
 **Step-up at every opening.** Opening a support session (UI or SSH) asks for a fresh TOTP code, whatever the age of the login session. A code is accepted once: the last accepted time step is stored per user, so a code seen over the operator's shoulder or replayed from a stolen session is refused. A user without TOTP cannot open support.
 
-- [ ] `POST` of a support session takes `totp`; check and replay guard in `core/auth`; UI prompt.
-- [ ] Failures count toward the existing lockout.
+- [x] `POST` of a support session takes `totp`; check and replay guard in `core/auth` (`require_step_up`); UI prompt. Backup codes are not accepted.
+- [x] Failures count toward the existing lockout (5 → 2FA locked, sessions revoked).
 
 **SSH only to the user's registered public key.** Each user stores SSH public keys (only the public half; several, each with a name and last use). A support SSH session signs the certificate for one of the user's **approved** keys; a key can no longer be pasted when the session is opened. The key id in the certificate names the user, so the instance's sshd log says who connected.
 
@@ -509,26 +509,27 @@ Today a stolen superuser `rw` account can open a superuser UI session and root S
 - With a single superuser on the manager there is nobody to approve: the key is approved from the manager's root CLI (`python -m manager.keys approve <user> <fingerprint>`), like the other bootstrap operations.
 - An approval is revoked when the user's role or group changes.
 
-- [ ] Table `UserSshKey` (user, name, public key, fingerprint, status pending | approved, approved_by, approved_at, last_used_at); UI in the user profile and an approval list for superusers; CLI.
-- [ ] `support/service.py`: the SSH grant takes a key id, refuses anything not approved and not the caller's.
-- [ ] Audit of add, approve, remove, use.
+- [x] Table `UserSshKey` (user, name, public key, fingerprint, status pending | approved, approved_by, approved_at, last_used_at); UI on the Support page (own keys, approval list); CLI `python -m manager.keys list|approve`.
+- [x] `support/service.py`: the SSH grant takes a key id, refuses anything not approved and not the caller's. The certificate key id is `<user> <fingerprint> <instance>` (in the instance's sshd log); the session stores the fingerprint.
+- [x] Audit of add, approve, remove (audit middleware; the CLI writes its own entry), use (`last_used_at`, session row).
+- [ ] Notification of a new key to the owner and the superusers: with 10.2 (for now, the badge on the Support page).
 
 **Limits.** At most **4 open support sessions per user** at the same time (UI and SSH together, across all instances); a fifth is refused until one is closed or expires. No limit on how many are opened over time. Every session has the expiry chosen when it is opened, **1 day at most**.
 
-- [ ] Count of open sessions per user in `support/service.py` (409 with the list of the open ones).
-- [ ] The duration range becomes 5–1440 minutes. `support.ui.open` and `support.ssh.grant` validate `minutes` on the instance (5–480 today), so the new range is set in **Phase 0**, before the protocol freeze (5.11).
+- [x] Count of open sessions per user in `support/service.py` (409 with the list of the open ones; checked before the TOTP code, which is then not consumed; replacing one's own SSH session on the same instance does not count twice).
+- [x] The duration range becomes 5–1440 minutes. `support.ui.open` and `support.ssh.grant` validate `minutes` on the instance (5–480 today), so the new range is set in **Phase 0**, before the protocol freeze (5.11).
 
 **Source addresses.** The manager UI is reachable only from known source addresses. This is enforced in front of the application (nginx `allow`/`deny` on the UI server, written by the setup script from a list, plus the network firewall), not by the application, so a bug in the application cannot open it. The agent port stays open to the instances.
 
-- [ ] `setup-manager.sh --ui-allow <cidr,...>` and a documented way to change the list later.
+- [x] `setup-manager.sh --ui-allow <cidr,...>` (`/etc/nginx/snippets/madmin-manager-ui-allow.conf`; a reinstall without the option keeps it; edit + `systemctl reload nginx` to change it).
 - [ ] Listed among the Phase 2 requirements for the production manager.
 
 Not adopted for now: a separate permission for support, notification of every opening, approval by a second superuser for root SSH, consent on the instance side. The last one is the only measure that also holds against a fully compromised manager (which owns the SSH CA); it is additive on the agent and can be delivered later by an update.
 
 ### 10.5 Migrations and backup of the manager itself
 
-- [ ] The same numbered migrations as 6.3 for the manager database: with real data in production, `create_all` is no longer enough. `CLAUDE.md` is updated when this lands.
-- [ ] A documented backup and restore of the manager (database, `DATA_DIR/pki`, `DATA_DIR/backups`, `SECRET_KEY`), tested by restoring onto a second machine and reconnecting an instance.
+- [x] The same numbered migrations as 6.3 for the manager database (`backend/core/migrations/`, component `manager` in `schema_version`). `CLAUDE.md` updated.
+- [x] Backup and restore of the manager: `scripts/manager-backup.sh` (encrypted archive: database, `DATA_DIR`, `SECRET_KEY`) and `scripts/manager-restore.sh` (onto a freshly installed manager, through a staging database). Tested on the test manager: backup → uninstall → fresh install → restore (schema step 0001 applied to the old database) → the instance reconnected by itself. A restore onto a *second* machine is the same procedure with the same address.
 
 ## 11. Compatibility policy (from Phase 2 on)
 

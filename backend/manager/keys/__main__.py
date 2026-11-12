@@ -9,7 +9,7 @@ Run as the service user from the backend directory, like manager.pki.
 import argparse
 import asyncio
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import select
 
@@ -39,7 +39,7 @@ async def _approve(username: str, fingerprint: str) -> None:
             print("Chiave già approvata")
             return
         await approve(session, key, "root-cli")
-        session.add(AuditLog(timestamp=datetime.utcnow(), username="root-cli", method="CLI",
+        session.add(AuditLog(timestamp=datetime.now(timezone.utc).replace(tzinfo=None), username="root-cli", method="CLI",
                              path=f"manager.keys approve {username} {fingerprint}", status_code=200,
                              duration_ms=0, category="write"))
         await session.commit()

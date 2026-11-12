@@ -12,7 +12,7 @@ The previous attempt is in `../madmin-hub-legacy` (reference only, do not copy f
 
 - **No test commands are run locally.** Tested on a separate test server.
 - **Claude may commit and push** (Conventional Commits, one logical change per commit). Work on a feature branch, never directly on `main`.
-- No DB migrations: `init_db()` only runs `create_all`; a new column needs a model default.
+- DB schema: `init_db()` runs `create_all` (new tables), then the numbered steps in `backend/core/migrations/NNNN_<name>.py` (any change to an existing table: column, type, index). A new column needs both the model field and a step (`ADD COLUMN IF NOT EXISTS ...`); steps are forward only and idempotent.
 
 ```bash
 sudo MADMIN_MANAGER_ADMIN_PASSWORD='...' bash scripts/setup-manager.sh --host manager.example.com [--ip 10.0.0.5]
@@ -37,12 +37,17 @@ backend/
     registration.py  optional fields (name, group, labels, external_ref) applied at enrollment
     enrollment/      tokens, shared identity issuing (service.py), token-less requests (requests.py)
     apikeys/         provisioning API keys (scoped, CIDR, hashed); provisioning/ = /api/provisioning/*
-    instances/ backups/ licenses/ support/ (tunnels.py: listeners + /agent/tunnel)
+    instances/ backups/ licenses/ support/ (tunnels.py: listeners + /agent/tunnel;
+                     opening asks a fresh TOTP code, max 4 open sessions per user)
+    keys/            users' SSH public keys for support, approved by another superuser (CLI python -m manager.keys)
+    releases/        signed MADMIN releases, instance updates, rescue
 frontend/            MADMIN SPA shell; views: dashboard, instances (detail tabs), support, licenses,
                      enrollment, users, logs, settings; views/manager-common.js
 docs/PROTOCOL.md     wire protocol (the contract with MADMIN)
 docs/API.md          provisioning API (for the system that creates instances)
-scripts/setup-manager.sh
+scripts/setup-manager.sh        install (--ui-allow: nginx source filter on the UI)
+scripts/manager-backup.sh       encrypted backup of the manager (DB, DATA_DIR, SECRET_KEY)
+scripts/manager-restore.sh      restore onto a freshly installed manager
 ```
 
 ## Design rules (do not regress)

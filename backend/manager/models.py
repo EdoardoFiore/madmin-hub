@@ -1,8 +1,8 @@
 """
 MADMIN Manager database models.
 
-No migrations (same rule as MADMIN): init_db only creates missing tables, so
-a column added later must have a default.
+init_db creates missing tables; a change to an existing table (a new column,
+a type) also needs a numbered step in core/migrations (see its docstring).
 
 The identity of an instance is its id (UUID, the CN of its client
 certificate). Hostname and addresses are facts that change: the addresses
@@ -264,6 +264,7 @@ class SupportSession(SQLModel, table=True):
     allowed_ip: str = Field(max_length=45)
     username: str = Field(default="", max_length=60)    # ui: account on the instance
     principal: str = Field(default="", max_length=100)  # ssh: certificate principal
+    key_fingerprint: str = Field(default="", max_length=100)  # ssh: the operator's key signed
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
     closed_at: Optional[datetime] = Field(default=None)
@@ -289,3 +290,23 @@ class Release(SQLModel, table=True):
     uploaded_by: str = Field(default="", max_length=100)
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+
+class UserSshKey(SQLModel, table=True):
+    """A public key a user may get support SSH certificates for. Added (or
+    re-approved after a change of role, access or group) as pending; only
+    another superuser rw, or the root CLI (python -m manager.keys), approves
+    it. Only the public half is ever stored."""
+    __tablename__ = "user_ssh_key"
+    __table_args__ = (Index("ix_user_ssh_key_user_fp", "user_id", "fingerprint", unique=True),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    user_id: uuid.UUID = Field(foreign_key="user.id", index=True)
+    name: str = Field(max_length=100)
+    public_key: str = Field(max_length=16384)
+    fingerprint: str = Field(max_length=100)        # SHA256:... as ssh-keygen -lf prints it
+    status: str = Field(default="pending", max_length=10, index=True)   # pending | approved
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_by: str = Field(default="", max_length=100)
+    approved_at: Optional[datetime] = Field(default=None)
+    last_used_at: Optional[datetime] = Field(default=None)

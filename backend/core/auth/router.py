@@ -47,6 +47,36 @@ _2fa_attempts: Dict[str, int] = {}  # str(user_id) → attempt count
 _2FA_MAX_ATTEMPTS = 5
 
 
+async def require_step_up(session: AsyncSession, user: User, code: Optional[str]) -> None:
+    """
+    A fresh TOTP code for a sensitive action (support access), whatever the
+    age of the login session. Authenticator codes only, never backup codes; a
+    code already used is refused (check_totp). Failures count with the login
+    2FA failures: at the limit the 2FA is locked and every session revoked.
+    The caller commits on success (the consumed step is stored on the user).
+    """
+    if not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(403, "Attivare la 2FA nel profilo per aprire sessioni di supporto")
+    if user.totp_locked:
+        raise HTTPException(403, "2FA bloccata: contattare un amministratore")
+    plain_secret = service.decrypt_totp_secret(user.totp_secret)
+    if code and check_totp(user, plain_secret, code.strip()):
+        _2fa_attempts.pop(str(user.id), None)
+        session.add(user)
+        return
+    user_id_str = str(user.id)
+    attempts = _2fa_attempts.get(user_id_str, 0) + 1
+    _2fa_attempts[user_id_str] = attempts
+    if attempts >= _2FA_MAX_ATTEMPTS:
+        user.totp_locked = True
+        session.add(user)
+        service.revoke_sessions(user)
+        await session.commit()
+        _2fa_attempts.pop(user_id_str, None)
+        raise HTTPException(401, f"Troppi codici 2FA errati ({_2FA_MAX_ATTEMPTS}): 2FA bloccata e sessioni chiuse")
+    raise HTTPException(403, f"Codice 2FA non valido o già usato ({attempts}/{_2FA_MAX_ATTEMPTS})")
+
+
 # --- Pydantic models for 2FA ---
 
 class ChangePasswordRequest(BaseModel):
@@ -655,6 +685,10 @@ async def update_user(
         if user_data.is_active is False or user_data.password is not None or \
                 (updated_user.role, updated_user.access, updated_user.group_id) != before:
             service.revoke_sessions(updated_user)
+        if (updated_user.role, updated_user.access, updated_user.group_id) != before:
+            # Support SSH keys are approved for a role: approved again by another superuser
+            from manager.keys import reset_approvals
+            await reset_approvals(session, updated_user.id)
         await session.commit()
 
         updated_user = await service.get_user_by_username(session, username)
@@ -686,6 +720,8 @@ async def delete_user(
             detail="The system first user cannot be deleted"
         )
 
+    from manager.keys import delete_for_user
+    await delete_for_user(session, user.id)
     await service.delete_user(session, user.id)
     await session.commit()
 

@@ -6,8 +6,13 @@ UI:  support.ui.open creates a hidden superuser on the instance (expiring
      https://<support_host>:<port>/login.html#manager-ticket=<ticket>. The ticket
      is handed to the operator who asked and never stored here.
 SSH: support.ssh.grant lets the instance accept the support principal for
-     root until the expiry; the manager signs the operator's public key for that
-     principal, valid from 127.0.0.1 only (the tunnel end) and until then.
+     root until the expiry; the manager signs one of the operator's approved
+     keys (manager.keys) for that principal, valid from 127.0.0.1 only (the
+     tunnel end) and until then. The key id of the certificate names the
+     operator and the key, so the sshd log of the instance says who it was.
+
+Opening a session asks for a fresh TOTP code (router), and a user has at most
+MAX_OPEN_PER_USER sessions open at once, UI and SSH together.
 
 Each session has its own port, open only to the operator's IP (the address
 the request came from, unless given). Sessions expire by themselves on both
@@ -29,12 +34,38 @@ from core.settings.router import get_system_settings
 from manager import pki
 from manager.agents import protocol
 from manager.agents.dispatcher import queue_command, run_command
-from manager.models import Instance, SupportSession
+from manager.models import Instance, SupportSession, UserSshKey
 from . import tunnels
 
 logger = logging.getLogger("madmin_manager.support")
 
 EXPIRY_INTERVAL = 30
+MAX_OPEN_PER_USER = 4
+
+
+async def check_limit(session, operator: str, replacing_on: Optional[str] = None) -> None:
+    """At most MAX_OPEN_PER_USER open sessions per user. An SSH session that
+    replaces the caller's own one on the same instance does not count twice."""
+    rows = (await session.execute(
+        select(SupportSession, Instance.name).join(Instance, Instance.id == SupportSession.instance_id)
+        .where(SupportSession.operator == operator, SupportSession.status == "open")
+        .order_by(SupportSession.created_at)
+    )).all()
+    counted = [(r, n) for r, n in rows
+               if not (replacing_on and r.kind == "ssh" and r.instance_id == replacing_on)]
+    if len(counted) >= MAX_OPEN_PER_USER:
+        listed = ", ".join(f"{r.kind.upper()} su {n} (scade {r.expires_at:%d/%m %H:%M} UTC)" for r, n in counted)
+        raise HTTPException(409, f"Hai già {len(counted)} sessioni di supporto aperte (massimo "
+                                 f"{MAX_OPEN_PER_USER}): chiuderne una. Aperte: {listed}")
+
+
+async def approved_key(session, user, key_id: str) -> UserSshKey:
+    key = await session.get(UserSshKey, key_id)
+    if key is None or key.user_id != user.id:
+        raise HTTPException(404, "Chiave SSH non trovata tra le tue")
+    if key.status != "approved":
+        raise HTTPException(409, "Chiave SSH non ancora approvata da un altro superuser")
+    return key
 
 
 def stop_listener(session_id: str) -> None:
@@ -103,8 +134,9 @@ async def new_ticket(session, row: SupportSession, operator: str) -> dict:
 
 
 async def open_ssh(session, instance: Instance, operator: str, minutes: int,
-                   allowed_ip: str, reason: str, public_key: str, replace: bool = False) -> dict:
+                   allowed_ip: str, reason: str, key: UserSshKey, replace: bool = False) -> dict:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    public_key = key.public_key
     # Validated before anything changes on the instance
     try:
         pki.load_ssh_public_key(public_key)
@@ -130,12 +162,14 @@ async def open_ssh(session, instance: Instance, operator: str, minutes: int,
     for p in previous:
         await close(session, p, by=operator, status="replaced")
     principal = str(data.get("principal", ""))
-    cert = pki.sign_ssh_user_cert(public_key, principal, f"{operator}@{instance.id}", expires_at)
+    cert = pki.sign_ssh_user_cert(public_key, principal, f"{operator} {key.fingerprint} {instance.id}", expires_at)
     row = SupportSession(
         instance_id=instance.id, kind="ssh", operator=operator, reason=reason, port=port,
-        allowed_ip=allowed_ip, principal=principal[:100],
+        allowed_ip=allowed_ip, principal=principal[:100], key_fingerprint=key.fingerprint,
         expires_at=expires_at.replace(tzinfo=None),
     )
+    key.last_used_at = datetime.utcnow()
+    session.add(key)
     session.add(row)
     await session.commit()
     try:

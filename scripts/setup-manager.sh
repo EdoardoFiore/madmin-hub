@@ -11,7 +11,15 @@
 #
 # Usage:
 #   sudo MADMIN_MANAGER_ADMIN_PASSWORD='...' bash setup-manager.sh --host manager.example.com [--ip 10.0.0.5]
-#        [-u admin] [--ui-port 443] [--agent-port 8443]
+#        [-u admin] [--ui-port 443] [--agent-port 8443] [--ui-allow 10.0.0.0/24,192.0.2.10]
+#
+# --ui-allow: source addresses (CIDR, comma separated) allowed on the UI port;
+# everything else gets 403 from nginx. Written to
+# /etc/nginx/snippets/madmin-manager-ui-allow.conf: a reinstall without the
+# option keeps the current list; to change it later, rerun with --ui-allow or
+# edit the file and `nginx -t && systemctl reload nginx`. Without it the UI is
+# open to every address (not for production, see docs/ROADMAP.md 10.4). The
+# agent port stays open to the instances; support ports check their own IP.
 #
 # --host / --ip: the name and/or address instances use to reach the manager.
 # They go into the agent endpoint certificate and into every enrollment token.
@@ -33,6 +41,7 @@ MANAGER_HOSTS=()
 MANAGER_IPS=()
 UI_PORT=443
 AGENT_PORT=8443
+UI_ALLOW=""
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -42,6 +51,7 @@ while [[ "$#" -gt 0 ]]; do
         --ip) MANAGER_IPS+=("$2"); shift ;;
         --ui-port) UI_PORT="$2"; shift ;;
         --agent-port) AGENT_PORT="$2"; shift ;;
+        --ui-allow) UI_ALLOW="$2"; shift ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
     esac
     shift
@@ -155,6 +165,28 @@ add_header X-Content-Type-Options "nosniff" always;
 add_header Referrer-Policy "no-referrer" always;
 EOF
 
+# Who may reach the UI (enforced here, not by the application)
+UI_ALLOW_FILE=/etc/nginx/snippets/madmin-manager-ui-allow.conf
+if [ -n "$UI_ALLOW" ]; then
+    {
+        echo "# Source addresses allowed on the MADMIN Manager UI (setup-manager.sh --ui-allow)"
+        IFS=',' read -ra CIDRS <<< "$UI_ALLOW"
+        for c in "${CIDRS[@]}"; do
+            c="$(echo "$c" | tr -d ' ')"
+            [ -n "$c" ] || continue
+            if ! python3 -c "import ipaddress,sys; ipaddress.ip_network(sys.argv[1], strict=False)" "$c" 2>/dev/null; then
+                log_error "--ui-allow: not an address or CIDR: $c"; exit 1
+            fi
+            echo "allow $c;"
+        done
+        echo "allow 127.0.0.1;"
+        echo "deny all;"
+    } > "$UI_ALLOW_FILE"
+elif [ ! -f "$UI_ALLOW_FILE" ]; then
+    echo "# Source addresses allowed on the MADMIN Manager UI: none set, open to all (setup-manager.sh --ui-allow)" > "$UI_ALLOW_FILE"
+    log_warning "UI open to every source address: use --ui-allow in production"
+fi
+
 # Every proxied UI request: the agent certificate headers are blanked, so
 # they can only ever come from the agent server below
 cat > /etc/nginx/snippets/madmin-manager-proxy.conf << 'EOF'
@@ -191,6 +223,7 @@ server {
     client_max_body_size 4m;
     server_tokens off;
     include snippets/madmin-manager-headers.conf;
+    include snippets/madmin-manager-ui-allow.conf;
     root $INSTALL_DIR/frontend;
 
     location /agent/ { return 404; }

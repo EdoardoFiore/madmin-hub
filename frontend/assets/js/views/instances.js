@@ -867,7 +867,8 @@ export function sessionTable(rows, showInstance = false) {
             <th>IP ammesso</th><th>Scade</th><th>Stato</th><th></th></tr></thead>
         <tbody>${rows.map(s => `<tr>
             ${showInstance ? `<td><a href="#instances/${escapeHtml(s.instance_id)}/support">${escapeHtml(s.instance_name)}</a></td>` : ''}
-            <td>${s.kind === 'ui' ? 'UI' : 'SSH'}</td><td>${escapeHtml(s.operator)}</td>
+            <td>${s.kind === 'ui' ? 'UI' : 'SSH'}</td><td>${escapeHtml(s.operator)}${s.key_fingerprint
+                ? `<div class="small text-muted font-monospace">${escapeHtml(s.key_fingerprint)}</div>` : ''}</td>
             <td class="text-muted">${escapeHtml(s.reason)}</td><td>${s.port}</td>
             <td class="font-monospace">${escapeHtml(s.allowed_ip)}</td><td>${fmtDate(s.expires_at)}</td>
             <td>${s.status === 'open' ? '<span class="badge bg-warning-lt">aperta</span>' : `<span class="badge bg-secondary-lt">${escapeHtml(SESSION_STATUS[s.status] || s.status)}</span>`}</td>
@@ -951,6 +952,11 @@ const reasonField = `<div class="mb-3"><label class="form-label">Motivo (ticket,
     <input name="reason" class="form-control" minlength="3" maxlength="500" required></div>`;
 const ipField = `<div class="mb-3"><label class="form-label">IP ammesso (vuoto = il tuo IP attuale)</label>
     <input name="allowed_ip" class="form-control" maxlength="45"></div>`;
+// Step-up: a fresh code at every opening (a code is accepted once)
+const totpField = `<div class="mb-3"><label class="form-label">Codice 2FA (app di autenticazione)</label>
+    <input name="totp" class="form-control font-monospace" inputmode="numeric" autocomplete="one-time-code"
+        pattern="[0-9]{6}" maxlength="6" required>
+    <div class="form-hint">Richiesto a ogni apertura; i codici di recupero non sono accettati.</div></div>`;
 
 export function licenseModal(instanceId, onDone) {
     formModal('Emetti licenza', `
@@ -1002,7 +1008,7 @@ function sshSessionModal(res) {
 
         <h4 class="mt-4 mb-1">Requisiti</h4>
         <ul class="mb-3">
-            <li>La chiave privata della chiave pubblica che hai indicato deve essere in <code>${keyDir}</code>
+            <li>La chiave privata della chiave scelta deve essere in <code>${keyDir}</code>
                 con un nome standard (<code>id_ed25519</code>, <code>id_rsa</code>, …) oppure caricata in ${agent}.
                 Altrimenti aggiungi al comando <code>-i ${keyDir}&lt;tua_chiave&gt;</code>.</li>
             <li>Il certificato va salvato esattamente in <code>${escapeHtml(path)}</code>:
@@ -1014,8 +1020,8 @@ function sshSessionModal(res) {
             <p class="mt-2 mb-2">Il certificato non è stato usato. Cerca nell'output (o ripeti il comando con <code>-v</code>):</p>
             <ul class="mb-2">
                 <li><code>Load key "…-cert.pub": invalid format</code>: il certificato è stato letto, ma non c'è
-                    la chiave privata corrispondente (ssh ripiega sul file del certificato). La chiave pubblica
-                    indicata non è tra quelle in <code>${keyDir}</code> con nome standard né in ssh-agent:
+                    la chiave privata corrispondente (ssh ripiega sul file del certificato). La chiave
+                    scelta non è tra quelle in <code>${keyDir}</code> con nome standard né in ssh-agent:
                     usa <code>-i ${keyDir}&lt;tua_chiave&gt;</code> o apri una nuova sessione con la chiave giusta.
                     Confronta l'impronta in <code>ssh-keygen -L -f ${escapeHtml(path)}</code> (riga <code>Public key</code>)
                     con <code>ssh-keygen -lf ${keyDir}&lt;tua_chiave&gt;.pub</code>.</li>
@@ -1278,10 +1284,10 @@ registerActions({
         catch (e) { showToast(e.message, 'error'); }
     },
     managerSupportUi: () => {
-        formModal('Accesso UI superuser temporaneo', `${minutesField()}${reasonField}${ipField}`, async (form) => {
+        formModal('Accesso UI superuser temporaneo', `${minutesField()}${reasonField}${ipField}${totpField}`, async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ui`, {
-                minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null });
+                minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null, totp: d.totp });
             uiLinkModal(res);
             reloadDetail('support');
         }, { submitText: 'Apri sessione' });
@@ -1289,10 +1295,18 @@ registerActions({
     managerSupportSsh: async () => {
         // The instance has one SSH grant: a new session replaces the open one
         let open = [];
+        let keys = [];
         try {
             open = (await apiGet(`/instances/${current.id}/support`))
                 .filter(s => s.kind === 'ssh' && s.status === 'open');
+            keys = (await apiGet('/me/ssh-keys')).filter(k => k.status === 'approved');
         } catch (e) { showToast(e.message, 'error'); return; }
+        if (!keys.length) {
+            secretModal('Nessuna chiave SSH approvata', `
+                <p>L'accesso SSH di supporto firma solo una delle tue chiavi pubbliche, approvata da un altro superuser.</p>
+                <p>Aggiungila in <a href="#support" data-bs-dismiss="modal">Supporto → Le mie chiavi SSH</a> e chiedi a un altro superuser di approvarla.</p>`);
+            return;
+        }
         const warning = open.length ? `
             <div class="alert alert-warning mb-3">
                 <h4 class="alert-title">Una sessione SSH è già attiva su questa istanza</h4>
@@ -1305,13 +1319,15 @@ registerActions({
                     viene <strong>chiusa</strong> e chi è collegato viene disconnesso.</div>
             </div>` : '';
         formModal('Accesso SSH root temporaneo', `${warning}${minutesField()}${reasonField}${ipField}
-            <div class="mb-3"><label class="form-label">La tua chiave pubblica SSH (ed25519 consigliata)</label>
-                <textarea name="public_key" class="form-control font-monospace" rows="3" required placeholder="ssh-ed25519 AAAA..."></textarea></div>`,
+            <div class="mb-3"><label class="form-label">Chiave SSH</label>
+                <select name="key_id" class="form-select">${keys.map(k => `
+                    <option value="${escapeHtml(k.id)}">${escapeHtml(k.name)} (${escapeHtml(k.fingerprint)})</option>`).join('')}
+                </select></div>${totpField}`,
         async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ssh`, {
                 minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null,
-                public_key: d.public_key, replace: open.length > 0 });
+                key_id: d.key_id, totp: d.totp, replace: open.length > 0 });
             sshSessionModal(res);
             reloadDetail('support');
         }, open.length

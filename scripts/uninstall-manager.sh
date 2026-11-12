@@ -14,7 +14,8 @@ systemctl disable --now madmin-manager.service 2>/dev/null || true
 rm -f /etc/systemd/system/madmin-manager.service
 systemctl daemon-reload
 rm -f /etc/nginx/sites-enabled/madmin-manager.conf /etc/nginx/sites-available/madmin-manager.conf \
-      /etc/nginx/snippets/madmin-manager-headers.conf /etc/nginx/snippets/madmin-manager-proxy.conf
+      /etc/nginx/snippets/madmin-manager-headers.conf /etc/nginx/snippets/madmin-manager-proxy.conf \
+      /etc/nginx/snippets/madmin-manager-ui-allow.conf
 nginx -t >/dev/null 2>&1 && systemctl reload nginx
 if [ "$KEEP_DB" != "true" ] && command -v psql >/dev/null; then
     sudo -u postgres psql -c "DROP DATABASE IF EXISTS madmin_manager;" >/dev/null 2>&1

@@ -439,6 +439,14 @@ def load_ssh_public_key(public_key_line: str):
     return pub
 
 
+def ssh_fingerprint(public_key_line: str) -> str:
+    """SHA256:<base64> of the key, as ssh-keygen -lf prints it."""
+    pub = load_ssh_public_key(public_key_line)
+    blob = pub.public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).split()[1]
+    digest = hashlib.sha256(base64.b64decode(blob)).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
 def sign_ssh_user_cert(public_key_line: str, principal: str, key_id: str,
                        valid_before: datetime) -> str:
     """OpenSSH user certificate for `principal`, usable only from 127.0.0.1

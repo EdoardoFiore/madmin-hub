@@ -12,6 +12,7 @@ from sqlmodel import select
 
 from core.auth.dependencies import require_permission
 from core.auth.models import User
+from core.auth.router import require_step_up
 from core.database import get_session
 from core.http import get_client_ip
 
@@ -33,6 +34,8 @@ def session_out(row: SupportSession, instance_name: str = "") -> dict:
 class _OpenBase(BaseModel):
     minutes: int = Field(default=60, ge=protocol.SUPPORT_MINUTES_MIN, le=protocol.SUPPORT_MINUTES_MAX)
     reason: str = Field(min_length=3, max_length=500)
+    # A fresh TOTP code at every opening (step-up, ROADMAP 10.4)
+    totp: str = Field(default="", max_length=12)
     # IP allowed on the support port; default: the address of this request
     allowed_ip: Optional[str] = Field(default=None, max_length=45)
 
@@ -49,7 +52,8 @@ class UiOpen(_OpenBase):
 
 
 class SshOpen(_OpenBase):
-    public_key: str = Field(min_length=20, max_length=16384)
+    # One of the caller's approved keys (/api/me/ssh-keys)
+    key_id: str = Field(min_length=1, max_length=36)
     # The instance has one SSH grant: an open SSH session is closed and
     # replaced only when asked (the UI warns first); otherwise 409
     replace: bool = False
@@ -88,6 +92,9 @@ async def open_ui(instance_id: str, body: UiOpen, request: Request,
                   user: User = Depends(require_permission("manager.manage"))):
     instance = await _active_instance(session, instance_id, user)
     check_capability(instance.id, protocol.CMD_SUPPORT_UI_OPEN)
+    await service.check_limit(session, user.username)
+    await require_step_up(session, user, body.totp)
+    await session.commit()
     res = await service.open_ui(session, instance, user.username, body.minutes,
                                 body.allowed_ip or get_client_ip(request), body.reason)
     return {"session": session_out(res["session"], instance.name), "url": res["url"],
@@ -100,8 +107,12 @@ async def open_ssh(instance_id: str, body: SshOpen, request: Request,
                    user: User = Depends(require_permission("manager.manage"))):
     instance = await _active_instance(session, instance_id, user)
     check_capability(instance.id, protocol.CMD_SUPPORT_SSH_GRANT)
+    key = await service.approved_key(session, user, body.key_id)
+    await service.check_limit(session, user.username, replacing_on=instance.id if body.replace else None)
+    await require_step_up(session, user, body.totp)
+    await session.commit()
     res = await service.open_ssh(session, instance, user.username, body.minutes,
-                                 body.allowed_ip or get_client_ip(request), body.reason, body.public_key,
+                                 body.allowed_ip or get_client_ip(request), body.reason, key,
                                  replace=body.replace)
     return {"session": session_out(res["session"], instance.name),
             "certificate": res["certificate"], "command": res["command"]}

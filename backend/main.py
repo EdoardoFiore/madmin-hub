@@ -132,10 +132,11 @@ def create_app() -> FastAPI:
     from manager.releases.router import router as releases_router
     from manager.keys.router import router as keys_router
     from manager.inventory.router import router as inventory_router
+    from manager.osactions.router import router as osactions_router
 
     for r in (auth_router, audit_router, settings_router, instances_router, enrollment_router,
-              backups_router, licenses_router, support_router, releases_router, keys_router, inventory_router, apikeys_router,
-              provisioning_router, agent_router):
+              backups_router, licenses_router, support_router, releases_router, keys_router,
+              inventory_router, osactions_router, apikeys_router, provisioning_router, agent_router):
         app.include_router(r)
 
     from core.auth.dependencies import get_current_user

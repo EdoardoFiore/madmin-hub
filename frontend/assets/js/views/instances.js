@@ -17,7 +17,7 @@ const TABS = [
     ['addresses', 'Indirizzi', 'scope.view'],
     ['backups', 'Backup', 'scope.view'],
     ['licenses', 'Licenze', 'scope.view'],
-    ['packages', 'Pacchetti', 'scope.view'],
+    ['packages', 'Sistema', 'scope.view'],
     ['support', 'Supporto', 'manager.view'],
     ['commands', 'Comandi', 'scope.view'],
 ];
@@ -889,11 +889,26 @@ async function packages(el, i) {
     const sec = inv.sections || {};
     const secInfo = (n) => sec[n] ? `${sec[n].count} · ${sec[n].updated_at ? relTime(sec[n].updated_at) : 'mai'}${sec[n].pending ? ' · <span class="text-warning">aggiornamento in corso</span>' : ''}` : 'non ancora ricevuto';
     const top = findings.filter(f => ['critical', 'high'].includes(f.severity));
+    const trial = st.kernel_trial;
+    const TRIAL = { pending: ['bg-warning-lt', 'in prova'], confirmed: ['bg-success-lt', 'confermato'], failed: ['bg-danger-lt', 'fallito'] };
+    const osManage = checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1;
+    const osActions = osManage ? `<div class="btn-list mb-3">
+        <button class="btn btn-sm btn-outline-secondary" ${actionAttrs('managerOsRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna liste</button>
+        <button class="btn btn-sm btn-outline-primary" ${actionAttrs('managerOsUpgrade', 'security')}><i class="ti ti-shield-check me-1"></i>Aggiornamenti di sicurezza</button>
+        <button class="btn btn-sm btn-outline-primary" ${actionAttrs('managerOsUpgrade', 'all')}><i class="ti ti-package me-1"></i>Aggiorna tutto</button>
+        <button class="btn btn-sm btn-outline-warning" ${actionAttrs('managerOsReboot')}><i class="ti ti-power me-1"></i>Riavvia</button>
+        ${st.reboot_scheduled_at ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerOsRebootCancel')}><i class="ti ti-x me-1"></i>Annulla riavvio</button>` : ''}
+    </div>` : '';
     const rest = findings.length - top.length;
     el.innerHTML = `<div class="card-body">
+        ${osActions}
         <div class="row g-3">
             <div class="col-lg-5">${kv([
                 ['Sistema', escapeHtml(inv.os || '-')],
+                ...(st.reboot_scheduled_at ? [['Riavvio programmato', `<span class="badge bg-warning-lt">${fmtDate(new Date(st.reboot_scheduled_at * 1000).toISOString())}</span>`]] : []),
+                ...(trial ? [['Kernel in prova', `<span class="font-monospace">${escapeHtml(trial.kernel)}</span>
+                    <span class="badge ${(TRIAL[trial.result] || TRIAL.pending)[0]}">${(TRIAL[trial.result] || [, trial.result])[1]}</span>
+                    ${trial.detail ? `<div class="small text-muted">${escapeHtml(trial.detail)}</div>` : ''}`]] : []),
                 ['Kernel in esecuzione', `<span class="font-monospace">${escapeHtml(st.running_kernel || inv.kernel || '-')}</span>`],
                 ['Kernel più recente', `<span class="font-monospace">${escapeHtml(st.newest_kernel || '-')}</span>`],
                 ['Riavvio richiesto', st.reboot_required
@@ -1273,6 +1288,55 @@ registerActions({
             showToast(`Aggiornamento a ${res.release_id} inviato: avanzamento in Comandi e in Panoramica`, 'success');
             reloadDetail('commands');
         }, { submitText: 'Aggiorna', submitClass: 'btn-primary' });
+    },
+    managerOsRefresh: async () => {
+        try {
+            await apiPost(`/instances/${current.id}/os/refresh`, {});
+            showToast('Aggiornamento delle liste inviato: esito in Comandi', 'success');
+            reloadDetail('packages');
+        } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerOsUpgrade: async (scope) => {
+        const what = scope === 'security'
+            ? 'solo gli aggiornamenti di sicurezza (unattended-upgrade, il canale security di Ubuntu)'
+            : 'tutti gli aggiornamenti disponibili (i pacchetti bloccati con hold restano invariati)';
+        if (!await confirmDialog('Aggiorna pacchetti', `Su ${escapeHtml(current.name)} vengono installati ${what}.
+            Alcuni servizi possono riavviarsi (MADMIN compreso, per pochi secondi); un nuovo kernel si attiva solo
+            con un riavvio, che non è automatico.`, 'Aggiorna', 'btn-primary')) return;
+        try {
+            await apiPost(`/instances/${current.id}/os/upgrade`, { scope });
+            showToast('Aggiornamento inviato: avanzamento in Comandi', 'success');
+            reloadDetail('commands');
+        } catch (e) { showToast(e.message, 'error'); }
+    },
+    managerOsReboot: () => {
+        formModal('Riavvia istanza', `
+            <div class="alert alert-warning">Il riavvio interrompe il servizio del router per <strong>${escapeHtml(current.name)}</strong>
+                (in genere 1–3 minuti). All'avvio il firewall blocca tutto finché MADMIN non riparte: se MADMIN non riparte,
+                l'istanza resta raggiungibile solo dalla console dell'hypervisor.</div>
+            <div class="text-muted small mb-3">Se è installato un kernel più recente di quello in uso, parte una volta sola
+                in prova: diventa predefinito quando l'istanza torna collegata al manager; altrimenti dopo 15 minuti
+                l'istanza si riavvia da sola con il kernel precedente.</div>
+            <div class="mb-3"><label class="form-label">Tra quanti minuti (0 = subito, massimo 1440)</label>
+                <input name="delay_minutes" type="number" class="form-control" min="0" max="1440" value="0" required></div>
+            <div class="mb-3"><label class="form-label">Motivo</label>
+                <input name="reason" class="form-control" minlength="3" maxlength="200" required></div>
+            <div class="mb-3"><label class="form-label">Scrivi il nome dell'istanza per confermare</label>
+                <input name="confirm_name" class="form-control" required></div>`,
+        async (form) => {
+            const d = formData(form);
+            if (d.confirm_name !== current.name) throw new Error('Il nome non corrisponde');
+            await apiPost(`/instances/${current.id}/os/reboot`, { delay_minutes: Number(d.delay_minutes), reason: d.reason });
+            showToast('Riavvio inviato: esito in Comandi', 'success');
+            reloadDetail('commands');
+        }, { submitText: 'Riavvia', submitClass: 'btn-warning' });
+    },
+    managerOsRebootCancel: async () => {
+        try {
+            await apiPost(`/instances/${current.id}/os/reboot/cancel`, {});
+            showToast('Annullamento del riavvio inviato', 'success');
+            reloadDetail('packages');
+        } catch (e) { showToast(e.message, 'error'); }
     },
     managerRelocate: () => {
         formModal('Cambia indirizzo del manager', `

@@ -85,7 +85,7 @@ The maximum frame size is 1 MB.
 | type | direction | payload |
 |---|---|---|
 | `hello` | agent → manager (first frame) | `protocol` (major), `revision_min`, `revision_max`, `instance_id`, `capabilities` {command: version}, `features` [names], `facts`, `state` |
-| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version`, `ca_bundle`? (PEM, during a CA rotation), `update_confirm`? (release id) |
+| `hello_ack` | manager → agent | `instance_id`, `server_time`, `revision`, `features` [names], `config` {key: value}, `manager_version`, `ca_bundle`? (PEM, during a CA rotation), `update_confirm`? (release id), `kernel_confirm`? (kernel release) |
 | `heartbeat` | agent → manager (every `heartbeat_interval`) | `stats` {cpu_percent, mem_percent, disk_percent}, `facts` only when they changed |
 | `cmd` | manager → agent | `name`, `args`, `operator`, `exp` (unix), `timeout`? (seconds) |
 | `cmd_progress` | agent → manager, same `id` as the cmd | `state` (`running`), `step`?, `percent`? (0–100), `message`? |
@@ -109,6 +109,7 @@ The maximum frame size is 1 MB.
 - `support`: open sessions the instance no longer has are closed as expired.
 - `licenses`: the licenses installed and valid now; an active license missing there gets a fresh token (unless an install is already pending).
 - `ca`: the CAs the agent trusts, stored by the manager (readiness of a CA rotation).
+- `kernel`: the kernel trial (`/opt/madmin/state/kernel-trial.json`): `kernel`, `previous`, `result` (`pending` | `confirmed` | `failed`), `detail`, `started_at`, `confirmed_at`, `failed_at`, `reason`. When `result` is `pending` and `facts.kernel` is the trial kernel, the manager answers `hello_ack.kernel_confirm` with it: the agent makes it the GRUB default (`madmin-update kernel-confirm`). Without a confirmation within 15 minutes of the boot, `madmin-boot-check.timer` reboots into the previous kernel.
 - `update`: the journal of the updater (`/opt/madmin/state/update.json`). When `result` is `verifying` the manager answers `hello_ack.update_confirm` with the `release_id`: the agent writes it to `state/update-confirm` and the updater's health gate can pass. A new release that cannot reach the manager is therefore rolled back.
 - `commands`: the ones running are marked running; `finished` are those whose result the agent still has (it answers them when they are re-sent).
 - A missing section means "unknown": the manager does nothing for it. Later sections (the outcome of an update, Phase 1) are additions.
@@ -170,9 +171,15 @@ All the commands below are at version 1.
 | `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
 | `manager.relocate` | `url` (https://host:port) | `url`, `changed` |
 | `madmin.update` | `release_id`, `sha256` (of the .release file), `deadline`? 60–3600 s | `release_id`, `unit`, `started` (persistent result; the outcome is `state.update` / `update.status`) |
+| `os.refresh` | – | `os_status` (`apt-get update`; long command) |
+| `os.upgrade` | `scope` `security`\|`all` | `scope`, `changed`, `changes` [{name, from, to}], `new_kernels`, `reboot_required`, `reboot_packages`, `started_at`, `finished_at` (long command, persistent result) |
+| `os.reboot` | `delay_minutes` 0–1440, `reason` | `delay_minutes`, `at` (epoch), `kernel_trial` (kernel booted on trial, or null), `kernel` (running now) — persistent result |
+| `os.reboot.cancel` | – | `cancelled` |
 | `inventory.get` | `section` `packages`\|`python` | `section`, `digest`, `items`: packages [{name, version, arch, source, source_version}] (installed only, `source` = Debian source package), python [{name, version}] (the venv MADMIN runs in) — not audited |
 
 `manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
+
+The OS actions name a category, never a package or a command line, and need the updater (layout 1, else `precondition`). `os.upgrade` runs `madmin-update os-upgrade` in a transient systemd unit (a package upgrade may restart MADMIN, the upgrade goes on) and follows its job file `state/os-<command id>.json`; a re-sent command attaches to it. `security` runs `unattended-upgrade` (the security pocket, as configured on the instance), `all` runs `apt-get upgrade --with-new-pkgs` (held packages untouched, local configuration files kept). It takes the updater's lock: `busy` while a MADMIN update runs, and vice versa. `os.reboot` is refused (`precondition`) while an update or a restore runs. With a kernel newer than the running one installed it boots once on trial (`grub-reboot`, the running kernel stays the default with `grub-set-default`), see `state.kernel`. The instance's facts carry `os_status.reboot_scheduled_at` and `os_status.kernel_trial`.
 
 `madmin.update` is refused (`precondition`) on an installation without the updater (layout 0) and when the release is already installed, (`busy`) while an update runs. The agent downloads `/agent/releases/<release_id>` from its own manager, checks the sha256 and runs `madmin-update verify` (signature by a key the instance trusts, OS, layout, `min_from`, no downgrade, schema), then starts `madmin-update install` in a transient systemd unit and answers. See the MADMIN repository, `scripts/madmin-update` and `docs/RELEASING.md`.
 

@@ -386,6 +386,12 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
     if isinstance(update, dict) and update.get("result") == "verifying" and update.get("release_id"):
         ack["update_confirm"] = str(update["release_id"])[:80]
         logger.info("Instance %s: update to %s confirmed", instance_id, ack["update_confirm"])
+    # Same for a kernel booted on trial: it came up and reached the manager
+    kernel = (p.get("state") or {}).get("kernel") if isinstance(p.get("state"), dict) else None
+    if isinstance(kernel, dict) and kernel.get("result") == "pending" and facts \
+            and kernel.get("kernel") and facts.get("kernel") == kernel.get("kernel"):
+        ack["kernel_confirm"] = str(kernel["kernel"])[:100]
+        logger.info("Instance %s: kernel %s confirmed", instance_id, ack["kernel_confirm"])
     await ws.send_text(protocol.frame(protocol.HELLO_ACK, ack))
     state = p.get("state") if isinstance(p.get("state"), dict) else {}
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,

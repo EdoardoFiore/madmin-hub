@@ -117,6 +117,7 @@ def _user_response(user: User, group_paths: Optional[Dict[str, str]] = None) -> 
         access=user.access,
         group_id=user.group_id,
         group_path=(group_paths or {}).get(user.group_id or "", ""),
+        auth_source=user.auth_source,
         totp_enabled=user.totp_enabled,
         totp_enforced=user.totp_enforced,
         totp_locked=user.totp_locked,

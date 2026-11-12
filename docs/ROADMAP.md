@@ -361,7 +361,7 @@ On the test server, with a throwaway instance, each case repeated until it passe
 - [x] Update where the migration fails → rollback, data intact.
 - [x] Update where MADMIN starts but the agent cannot reach the manager (firewall rule injected) → rollback after the deadline.
 - [x] Updater killed during the venv step (recover cleans up) and during the health gate, then reboot (recovered at boot, MADMIN up again).
-- [ ] Disk full during unpack and during the dump → clean failure (not tested yet).
+- [x] Disk full: before the unpack (refused by the free-space check), during the venv (failed, nothing changed), during the dump (rolled back; the updater keeps a 16 MB reserve so the journal is still written, and drops the partial snapshot: this case had left the journal at "running" before the fix).
 - [x] Tampered payload, untrusted key, older version → refused; unsigned file refused by the manager.
 - [x] MADMIN stopped by hand → rescue reports, `restart` and `install` from the manager work (`rollback` tested through `madmin-update rollback`).
 - [x] Two consecutive updates, then rollback → returns to the middle release, schema back to the one before.

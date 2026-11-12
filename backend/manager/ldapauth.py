@@ -193,6 +193,8 @@ async def login(session, username: str, password: str):
         return None
     user.totp_enforced = True
     await _apply(session, user, mapping, res["mail"])
+    # Now: the request's own commit runs after the response is sent
+    await session.commit()
     return user
 
 

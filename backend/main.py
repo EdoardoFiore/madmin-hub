@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
     from manager.licenses.service import renew_task
     from manager.support.service import expiry_task, restore_listeners
     from manager.support.tunnels import stop_all
+    from manager.inventory.osv import scan_task
 
     await restore_listeners()
 
@@ -72,6 +73,7 @@ async def lifespan(app: FastAPI):
         spawn_background(renew_task(), "license-renewal"),
         spawn_background(expiry_task(), "support-expiry"),
         spawn_background(audit_cleanup_task(), "audit-cleanup"),
+        spawn_background(scan_task(), "vulnerability-scan"),
     ]
 
     logger.info("MADMIN Manager ready")
@@ -129,9 +131,10 @@ def create_app() -> FastAPI:
     from manager.support.router import router as support_router
     from manager.releases.router import router as releases_router
     from manager.keys.router import router as keys_router
+    from manager.inventory.router import router as inventory_router
 
     for r in (auth_router, audit_router, settings_router, instances_router, enrollment_router,
-              backups_router, licenses_router, support_router, releases_router, keys_router, apikeys_router,
+              backups_router, licenses_router, support_router, releases_router, keys_router, inventory_router, apikeys_router,
               provisioning_router, agent_router):
         app.include_router(r)
 
@@ -146,6 +149,7 @@ def create_app() -> FastAPI:
                 {"label": "menu.dashboard", "icon": "home", "route": "#dashboard", "permission": "scope.view"},
                 {"label": "menu.instances", "icon": "server", "route": "#instances", "permission": "scope.view"},
                 {"label": "menu.support", "icon": "lifebuoy", "route": "#support", "permission": "manager.view"},
+                {"label": "menu.vulnerabilities", "icon": "shield-exclamation", "route": "#vulnerabilities", "permission": "scope.view"},
                 {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "scope.view"},
                 {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "manager.view"},
                 {"label": "menu.releases", "icon": "package", "route": "#releases", "permission": "manager.view"},

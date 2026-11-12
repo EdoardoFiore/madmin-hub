@@ -81,6 +81,17 @@ CMD_LICENSE_REVOKE = "license.revoke"
 CMD_STATS_HISTORY = "stats.history"   # read only: resource and traffic history
 CMD_MANAGER_RELOCATE = "manager.relocate"   # move to another address of the same manager (same CA)
 CMD_UPDATE = "madmin.update"   # install a signed release the manager holds (madmin-update)
+CMD_INVENTORY_GET = "inventory.get"   # one heavy section of the facts (facts.sections has its digest)
+# OS actions (categories only: the manager never names a package or a command)
+CMD_OS_REFRESH = "os.refresh"           # apt-get update, then new facts
+CMD_OS_UPGRADE = "os.upgrade"           # {"scope": "security" | "all"}
+CMD_OS_REBOOT = "os.reboot"             # {"delay_minutes", "reason"}; a new kernel boots once on trial
+CMD_OS_REBOOT_CANCEL = "os.reboot.cancel"
+
+# Heavy sections of the facts, sent by digest and fetched with inventory.get
+INVENTORY_SECTIONS = ("packages", "python")
+OS_UPGRADE_SCOPES = ("security", "all")
+REBOOT_DELAY_MAX = 1440
 
 # Symbolic tunnel targets: the agent maps them to local endpoints, the manager can
 # never name a host or port

@@ -30,6 +30,7 @@ from manager import pki
 from manager.enrollment import service as enrollment_service
 from manager.models import AgentCertificate, Backup, Command, EnrollmentToken, Instance
 from manager.instances.service import apply_facts, record_addresses, revoke_instance
+from manager.inventory import service as inventory_service
 from . import dispatcher, protocol
 from .auth import authenticate
 from .reconcile import reconcile
@@ -365,6 +366,9 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         await record_addresses(session, instance, source_ip, facts)
         session.add(instance)
         await session.commit()
+        if facts is not None and protocol.CMD_INVENTORY_GET in caps:
+            # Queued now, sent with the pending commands once connected
+            await inventory_service.sections_announced(session, instance_id, facts.get("sections"))
     ack = {
         "instance_id": instance_id,
         "server_time": int(datetime.utcnow().timestamp()),
@@ -403,6 +407,8 @@ async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
             await record_addresses(session, instance, None, facts)
         session.add(instance)
         await session.commit()
+        if isinstance(facts, dict) and conn.supports(protocol.CMD_INVENTORY_GET):
+            await inventory_service.sections_announced(session, conn.instance_id, facts.get("sections"))
 
 
 async def _handle_event(conn: AgentConnection, payload: dict) -> None:

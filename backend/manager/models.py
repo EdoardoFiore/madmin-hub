@@ -310,3 +310,74 @@ class UserSshKey(SQLModel, table=True):
     approved_by: str = Field(default="", max_length=100)
     approved_at: Optional[datetime] = Field(default=None)
     last_used_at: Optional[datetime] = Field(default=None)
+
+
+# --- Inventory and vulnerabilities (ROADMAP 8) ---
+
+class InstanceInventory(SQLModel, table=True):
+    """A heavy section of an instance's facts (packages, python), fetched with
+    inventory.get when the digest in its facts changes."""
+    __tablename__ = "instance_inventory"
+
+    instance_id: str = Field(foreign_key="instance.id", primary_key=True, max_length=36)
+    section: str = Field(primary_key=True, max_length=20)
+    digest: str = Field(default="", max_length=64)
+    items_json: str = Field(default="[]")
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Digest announced in the facts and not fetched yet ("" = up to date)
+    wanted_digest: str = Field(default="", max_length=64)
+
+
+class InventoryChange(SQLModel, table=True):
+    """What changed in a section between two fetches (the history)."""
+    __tablename__ = "inventory_change"
+    __table_args__ = (Index("ix_inventory_change_instance_at", "instance_id", "at"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    instance_id: str = Field(foreign_key="instance.id", max_length=36)
+    section: str = Field(max_length=20)
+    at: datetime = Field(default_factory=datetime.utcnow)
+    # [{"name", "from", "to"}]: from "" = installed, to "" = removed
+    changes_json: str = Field(default="[]")
+
+
+class Advisory(SQLModel, table=True):
+    """A vulnerability record from OSV (Ubuntu security data, PyPI advisories)."""
+    __tablename__ = "advisory"
+
+    id: str = Field(primary_key=True, max_length=100)        # UBUNTU-CVE-..., GHSA-..., PYSEC-...
+    summary: str = Field(default="", max_length=500)
+    aliases_json: str = Field(default="[]")                  # CVE ids
+    severity: str = Field(default="unknown", max_length=10, index=True)  # critical|high|medium|low|negligible|unknown
+    published: Optional[datetime] = Field(default=None)
+    modified: Optional[datetime] = Field(default=None)
+    # {"<ecosystem>|<package>": "<fixed version>" or ""}
+    fixed_json: str = Field(default="{}")
+    url: str = Field(default="", max_length=300)
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OsvQuery(SQLModel, table=True):
+    """Cache of OSV answers: which advisories affect one package version."""
+    __tablename__ = "osv_query"
+
+    key: str = Field(primary_key=True, max_length=300)       # <ecosystem>|<name>|<version>
+    vulns_json: str = Field(default="[]")                    # [[id, modified]]
+    queried_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class Finding(SQLModel, table=True):
+    """An advisory that affects an instance now. Recomputed after every scan;
+    first_seen survives the recomputation."""
+    __tablename__ = "finding"
+    __table_args__ = (Index("ix_finding_unique", "instance_id", "advisory_id", "package", unique=True),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    instance_id: str = Field(foreign_key="instance.id", index=True, max_length=36)
+    advisory_id: str = Field(max_length=100, index=True)
+    kind: str = Field(max_length=10)                         # os | python
+    package: str = Field(max_length=200)                     # source package (os) or distribution (python)
+    installed_version: str = Field(default="", max_length=200)
+    fixed_version: str = Field(default="", max_length=200)   # "" = no fix published yet
+    severity: str = Field(default="unknown", max_length=10, index=True)
+    first_seen: datetime = Field(default_factory=datetime.utcnow)

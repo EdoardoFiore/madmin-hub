@@ -24,8 +24,9 @@ from core.settings.router import get_system_settings
 from manager.agents import protocol
 from manager.agents.dispatcher import check_capability, queue_command, run_command, send_ephemeral
 from manager.agents.registry import registry
-from manager.models import (AgentCertificate, Backup, Command, EnrollmentRequest, EnrollmentToken, Instance,
-                        InstanceAddress, InstanceGroup, License, SupportSession)
+from manager.models import (AgentCertificate, Backup, Command, EnrollmentRequest, EnrollmentToken, Finding,
+                        Instance, InstanceAddress, InstanceGroup, InstanceInventory, InventoryChange, License,
+                        SupportSession)
 from manager import groups as manager_groups, scope
 from manager.registration import check_external_ref, check_labels, instance_by_ref
 from .service import apply_facts, clone_suspects, resume_instance, revoke_instance, suspend_instance
@@ -444,7 +445,8 @@ async def delete_instance(instance_id: str, session: AsyncSession = Depends(get_
     await delete_instance_backups(session, instance.id)
     # Every table with a foreign key to instance.id (enrollment requests: the
     # approved one that created it, history only once the instance is gone)
-    for model in (InstanceAddress, AgentCertificate, Command, License, SupportSession, EnrollmentRequest):
+    for model in (InstanceAddress, AgentCertificate, Command, License, SupportSession, EnrollmentRequest,
+                  InstanceInventory, InventoryChange, Finding):
         await session.execute(delete(model).where(model.instance_id == instance.id))
     await session.execute(delete(EnrollmentToken).where(EnrollmentToken.reenroll_instance_id == instance.id))
     await session.delete(instance)

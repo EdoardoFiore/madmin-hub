@@ -104,7 +104,8 @@
         "support": "Supporto",
         "licenses": "Licenze",
         "enrollment": "Enrollment",
-        "releases": "Release"
+        "releases": "Release",
+        "vulnerabilities": "Vulnerabilità"
     },
     "app": {
         "pageNotFound": "Pagina non trovata",

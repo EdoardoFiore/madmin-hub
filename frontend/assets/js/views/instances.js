@@ -10,12 +10,14 @@ import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
          cmpVersion, meter, STATUS_LABELS } from './manager-common.js';
+import { severityBadge, advisoryLink } from './vulnerabilities.js';
 
 const TABS = [
     ['overview', 'Panoramica', 'scope.view'],
     ['addresses', 'Indirizzi', 'scope.view'],
     ['backups', 'Backup', 'scope.view'],
     ['licenses', 'Licenze', 'scope.view'],
+    ['packages', 'Pacchetti', 'scope.view'],
     ['support', 'Supporto', 'manager.view'],
     ['commands', 'Comandi', 'scope.view'],
 ];
@@ -540,7 +542,7 @@ async function renderDetail(container, id, tab) {
             <div id="inst-tab">${loadingSpinner()}</div>
         </div>`;
     const el = container.querySelector('#inst-tab');
-    const renderers = { overview, addresses, backups, licenses, support, commands };
+    const renderers = { overview, addresses, backups, licenses, packages, support, commands };
     try {
         await renderers[tab](el, i);
     } catch (e) {
@@ -877,6 +879,72 @@ export function sessionTable(rows, showInstance = false) {
                 <button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerSupportClose', s.id)}>Chiudi</button>` : ''}</div></td>
         </tr>`).join('') || `<tr><td colspan="${showInstance ? 9 : 8}" class="text-muted">Nessuna sessione</td></tr>`}
         </tbody></table></div>`;
+}
+
+async function packages(el, i) {
+    const [inv, findings, changes] = await Promise.all([
+        apiGet(`/instances/${i.id}/inventory`), apiGet(`/instances/${i.id}/findings`),
+        apiGet(`/instances/${i.id}/inventory/changes?limit=20`)]);
+    const st = inv.os_status || {};
+    const sec = inv.sections || {};
+    const secInfo = (n) => sec[n] ? `${sec[n].count} · ${sec[n].updated_at ? relTime(sec[n].updated_at) : 'mai'}${sec[n].pending ? ' · <span class="text-warning">aggiornamento in corso</span>' : ''}` : 'non ancora ricevuto';
+    const top = findings.filter(f => ['critical', 'high'].includes(f.severity));
+    const rest = findings.length - top.length;
+    el.innerHTML = `<div class="card-body">
+        <div class="row g-3">
+            <div class="col-lg-5">${kv([
+                ['Sistema', escapeHtml(inv.os || '-')],
+                ['Kernel in esecuzione', `<span class="font-monospace">${escapeHtml(st.running_kernel || inv.kernel || '-')}</span>`],
+                ['Kernel più recente', `<span class="font-monospace">${escapeHtml(st.newest_kernel || '-')}</span>`],
+                ['Riavvio richiesto', st.reboot_required
+                    ? `<span class="badge bg-warning-lt">sì</span> <span class="small text-muted">${escapeHtml((st.reboot_packages || []).join(', '))}</span>` : 'no'],
+                ['Aggiornamenti in sospeso', st.pending_updates == null ? '-' : `${st.pending_updates} (${st.pending_security || 0} di sicurezza)`],
+                ['Liste pacchetti', st.apt_updated_at ? relTime(new Date(st.apt_updated_at * 1000).toISOString()) : '-'],
+                ['Aggiornamenti automatici', st.unattended_upgrades == null ? '-' : st.unattended_upgrades ? 'attivi' : 'disattivi'],
+                ['Pacchetti OS', secInfo('packages')],
+                ['Pacchetti Python', secInfo('python')],
+            ])}</div>
+            <div class="col-lg-7">
+                <div class="mb-2">${Object.entries(inv.findings).filter(([, n]) => n).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' &nbsp; ') || '<span class="text-muted">Nessuna vulnerabilità nota</span>'}
+                    ${inv.fixable ? `<span class="ms-2 small text-muted">${inv.fixable} con correzione disponibile</span>` : ''}</div>
+                <div class="table-responsive"><table class="table table-sm table-vcenter">
+                    <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Corretto in</th></tr></thead>
+                    <tbody>${top.map(f => `<tr><td>${advisoryLink(f)}</td><td>${severityBadge(f.severity)}</td>
+                        <td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
+                        <td class="font-monospace small">${escapeHtml(f.installed_version)}</td>
+                        <td class="font-monospace small">${escapeHtml(f.fixed_version || 'non ancora')}</td></tr>`).join('')
+                        || '<tr><td colspan="5" class="text-muted">Nessuna vulnerabilità critica o alta</td></tr>'}</tbody>
+                </table></div>
+                ${rest ? `<div class="small text-muted">Altre ${rest} di gravità media o inferiore: <a href="#vulnerabilities">Vulnerabilità</a> o esportazione CSV.</div>` : ''}
+            </div>
+        </div>
+        <hr>
+        <div class="d-flex gap-2 align-items-center mb-2">
+            <select class="form-select form-select-sm w-auto" id="pkg-section"><option value="packages">Pacchetti OS</option><option value="python">Pacchetti Python</option></select>
+            <input class="form-control form-control-sm w-auto" id="pkg-q" placeholder="Cerca pacchetto">
+        </div>
+        <div id="pkg-list" class="table-responsive" style="max-height: 24rem; overflow-y: auto"></div>
+        <h4 class="mt-4">Modifiche recenti</h4>
+        ${changes.length ? changes.map(c => `<details class="mb-1"><summary>${fmtDate(c.at)} · ${c.section === 'packages' ? 'OS' : 'Python'} · ${c.changes.length} modifiche</summary>
+            <table class="table table-sm mb-2">${c.changes.slice(0, 200).map(x => `<tr><td class="small">${escapeHtml(x.name)}</td>
+                <td class="font-monospace small">${escapeHtml(x.from || '(nuovo)')}</td><td>→</td>
+                <td class="font-monospace small">${escapeHtml(x.to || '(rimosso)')}</td></tr>`).join('')}</table></details>`).join('')
+            : '<div class="text-muted small">Nessuna modifica registrata</div>'}
+    </div>`;
+    const listEl = el.querySelector('#pkg-list');
+    const load = async () => {
+        const section = el.querySelector('#pkg-section').value;
+        const q = el.querySelector('#pkg-q').value.trim();
+        const items = await apiGet(`/instances/${i.id}/inventory/${section}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+        listEl.innerHTML = `<table class="table table-sm"><thead><tr><th>Nome</th><th>Versione</th>${section === 'packages' ? '<th>Sorgente</th>' : ''}</tr></thead>
+            <tbody>${items.slice(0, 1000).map(p => `<tr><td>${escapeHtml(p.name)}${p.arch && p.arch !== 'all' ? ` <span class="text-muted small">${escapeHtml(p.arch)}</span>` : ''}</td>
+                <td class="font-monospace small">${escapeHtml(p.version)}</td>
+                ${section === 'packages' ? `<td class="small text-muted">${escapeHtml(p.source !== p.name ? p.source : '')}</td>` : ''}</tr>`).join('')
+                || '<tr><td class="text-muted">Nessun pacchetto</td></tr>'}</tbody></table>`;
+    };
+    el.querySelector('#pkg-section').addEventListener('change', load);
+    el.querySelector('#pkg-q').addEventListener('change', load);
+    await load();
 }
 
 async function commands(el, i) {

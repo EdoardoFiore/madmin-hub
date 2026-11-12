@@ -128,6 +128,8 @@ The maximum frame size is 1 MB.
 - `interfaces` [{name, mac, is_up, ipv4 ["a.b.c.d/mask"], ipv6}]
 - `ssh_ports`
 - `modules` [{id, version, enabled}]
+- `os_id` (`ubuntu-24.04`), `os_status` {`running_kernel`, `newest_kernel`, `kernels` [installed], `reboot_required`, `reboot_packages`, `unattended_upgrades`, `apt_updated_at` (epoch of the last `apt-get update`), `pending_updates`, `pending_security`}
+- `sections` {`packages`: sha256, `python`: sha256}: digests of the heavy sections. When one differs from the copy it holds, the manager asks for the section with `inventory.get` (persistent, re-sent until answered; a newer digest arriving meanwhile is fetched after it).
 
 ## Close codes
 
@@ -168,6 +170,7 @@ All the commands below are at version 1.
 | `stats.history` | `hours` 1–24 | `hours`, `system` {`t`, `cpu`, `ram`, `disk` (%), `ram_total`, `disk_total`}, `network` {iface: {`t`, `rx`, `tx` (bytes/s)}}; at most 240 points per series (averaged) — not persisted, not audited |
 | `manager.relocate` | `url` (https://host:port) | `url`, `changed` |
 | `madmin.update` | `release_id`, `sha256` (of the .release file), `deadline`? 60–3600 s | `release_id`, `unit`, `started` (persistent result; the outcome is `state.update` / `update.status`) |
+| `inventory.get` | `section` `packages`\|`python` | `section`, `digest`, `items`: packages [{name, version, arch, source, source_version}] (installed only, `source` = Debian source package), python [{name, version}] (the venv MADMIN runs in) — not audited |
 
 `manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
 

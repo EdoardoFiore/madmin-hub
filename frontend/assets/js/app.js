@@ -20,13 +20,14 @@ const views = {
     'licenses': () => import('./views/licenses.js'),
     'enrollment': () => import('./views/enrollment.js'),
     'releases': () => import('./views/releases.js'),
+    'vulnerabilities': () => import('./views/vulnerabilities.js'),
     'users': () => import('./views/users.js'),
     'settings': () => import('./views/settings.js'),
     'logs': () => import('./views/logs.js'),
 };
 
 // Views laid out edge to edge (container-fluid instead of container-xl)
-const WIDE_VIEWS = new Set(['dashboard', 'instances']);
+const WIDE_VIEWS = new Set(['dashboard', 'instances', 'vulnerabilities']);
 
 // Current user data
 let currentUser = null;
@@ -719,6 +720,7 @@ function getViewTitle(viewName) {
         'licenses': t('menu.licenses'),
         'enrollment': t('menu.enrollment'),
         'releases': t('menu.releases'),
+        'vulnerabilities': t('menu.vulnerabilities'),
         'users': t('menu.users'),
         'settings': t('menu.settings'),
         'logs': t('menu.logs'),

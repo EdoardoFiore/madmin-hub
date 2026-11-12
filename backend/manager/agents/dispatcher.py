@@ -29,6 +29,11 @@ from .registry import registry
 
 logger = logging.getLogger(__name__)
 
+# name -> async hook(instance_id, data) -> dict: called with the data of a
+# successful result; what it returns is stored instead (large results such as
+# inventory sections are kept by the hook, not in the command row)
+RESULT_HOOKS: dict = {}
+
 DEFAULT_TTL = timedelta(minutes=10)
 EXPIRE_INTERVAL = 60
 # A running command without its own timeout: the agent's limits are lower
@@ -191,10 +196,20 @@ async def handle_result(instance_id: str, cmd_id: str, payload: dict) -> None:
         if cmd is None:
             return  # ephemeral, or not this instance's
         # A late result still closes the command, even after it expired
+        if cmd.status in ("done", "failed"):
+            return   # a repeated result (re-sent after a reconnect)
         cmd.status = "done" if ok else "failed"
         cmd.finished_at = datetime.utcnow()
         if ok:
-            cmd.result_json = json.dumps(_redact(cmd.name, payload.get("data") or {}))[:100_000]
+            data = payload.get("data") or {}
+            hook = RESULT_HOOKS.get(cmd.name)
+            if hook is not None:
+                try:
+                    data = await hook(instance_id, data)
+                except Exception as e:
+                    logger.exception("Result hook of %s failed", cmd.name)
+                    data = {"error": str(e)[:200]}
+            cmd.result_json = json.dumps(_redact(cmd.name, data))[:100_000]
         else:
             code, message = protocol.error_parts(payload)
             cmd.error_code = code

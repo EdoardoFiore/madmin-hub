@@ -141,7 +141,7 @@ class SystemSettingsUpdate(SQLModel):
 
     @field_validator("smtp_port")
     @classmethod
-    def _port(cls, v):
+    def _smtp_port(cls, v):
         if v is not None and not 1 <= v <= 65535:
             raise ValueError("Porta non valida")
         return v

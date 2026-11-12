@@ -133,14 +133,29 @@ def _parse_time(v) -> Optional[datetime]:
         return None
 
 
+_KERNEL_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-\d+\.")
+
+
+def _old_kernel(source: str, version: str, running_abi: str) -> bool:
+    """A kernel package of a kernel that is installed but not running (kept
+    as the fallback): its advisories do not apply until it is booted."""
+    return bool(running_abi and source.startswith("linux") and _KERNEL_VERSION_RE.match(version)
+                and not version.startswith(running_abi + "."))
+
+
 def _targets(instance: Instance, inventory: Dict[str, list]) -> List[Tuple[str, str, str, str]]:
     """(kind, ecosystem, package, version) to ask about for one instance."""
     out = set()
     facts = json.loads(instance.facts_json or "{}")
     eco = ubuntu_ecosystem(str(facts.get("os_id", "")))
+    # 6.8.0-147-generic -> 6.8.0-147 (the source version is 6.8.0-147.147)
+    running = str((facts.get("os_status") or {}).get("running_kernel") or facts.get("kernel") or "")
+    m = re.match(r"^(\d+\.\d+\.\d+-\d+)", running)
+    running_abi = m.group(1) if m else ""
     if eco:
         for p in inventory.get("packages") or []:
-            if p.get("source") and p.get("source_version"):
+            if p.get("source") and p.get("source_version") \
+                    and not _old_kernel(p["source"], p["source_version"], running_abi):
                 out.add(("os", eco, p["source"], p["source_version"]))
     for p in inventory.get("python") or []:
         if p.get("name") and p.get("version"):

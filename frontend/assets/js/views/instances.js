@@ -916,6 +916,7 @@ async function packages(el, i) {
                         || '<tr><td colspan="5" class="text-muted">Nessuna vulnerabilità critica o alta</td></tr>'}</tbody>
                 </table></div>
                 ${rest ? `<div class="small text-muted">Altre ${rest} di gravità media o inferiore: <a href="#vulnerabilities">Vulnerabilità</a> o esportazione CSV.</div>` : ''}
+                <div class="small text-muted">Dei kernel conta solo quello in esecuzione: quelli installati ma non avviati (di riserva) non sono esposti finché non vengono avviati.</div>
             </div>
         </div>
         <hr>

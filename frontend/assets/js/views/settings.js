@@ -1,7 +1,7 @@
 /**
  * MADMIN Manager - Settings.
  */
-import { apiGet, apiPatch } from '../api.js';
+import { apiGet, apiPatch, apiPost } from '../api.js';
 import { escapeHtml, showToast } from '../utils.js';
 import { checkPermission } from '../app.js';
 
@@ -32,6 +32,15 @@ const FIELDS = [
     ['Release', [
         ['release_keys', 'Chiavi pubbliche di firma (PEM, una o più): una release caricata deve essere firmata da una di queste. Vuoto = non verificata qui (le istanze la verificano sempre)', 'textarea'],
     ]],
+    ['Notifiche e-mail', [
+        ['smtp_host', 'Server SMTP (vuoto = nessuna e-mail, restano i contatori nel menu)', 'text'],
+        ['smtp_port', 'Porta', 'number'],
+        ['smtp_encryption', 'Cifratura (none, tls = STARTTLS, ssl)', 'text'],
+        ['smtp_username', 'Utente', 'text'],
+        ['smtp_password', 'Password (vuoto = invariata)', 'password'],
+        ['smtp_from', 'Mittente', 'text'],
+        ['notify_to', 'Destinatari (separati da virgola; vuoto = i superuser con e-mail)', 'text'],
+    ]],
     ['Backup e licenze', [
         ['backup_interval_hours', 'Backup pianificati ogni (ore, 0 = disattivati)', 'number'],
         ['backup_retention', 'Backup conservati per istanza', 'number'],
@@ -52,10 +61,18 @@ export async function render(container) {
                     <label class="form-check mb-3"><input name="${k}" type="checkbox" class="form-check-input" ${s[k] ? 'checked' : ''} ${ro ? 'disabled' : ''}>
                     <span class="form-check-label">${label}</span></label>` : `
                     <div class="mb-3"><label class="form-label">${label}</label>
-                    <input name="${k}" type="${type}" class="form-control" value="${escapeHtml(s[k] ?? '')}" ${ro ? 'disabled' : ''}></div>`).join('')}
+                    <input name="${k}" type="${type}" class="form-control" value="${type === 'password' ? '' : escapeHtml(s[k] ?? '')}"
+                        ${type === 'password' ? `autocomplete="new-password" placeholder="${s.smtp_password_set ? '••••••••' : ''}"` : ''} ${ro ? 'disabled' : ''}></div>`).join('')}
+                ${title === 'Notifiche e-mail' && !ro ? '<button type="button" class="btn btn-outline-secondary btn-sm" id="smtp-test">Invia e-mail di prova</button>' : ''}
                 </div></div></div>`).join('')}
             ${ro ? '' : '<div class="col-12"><button class="btn btn-primary">Salva</button></div>'}
         </form>`;
+    container.querySelector('#smtp-test')?.addEventListener('click', async () => {
+        try {
+            const r = await apiPost('/settings/smtp/test', {});
+            showToast(`E-mail di prova inviata a ${r.sent_to.join(', ')}`, 'success', 6000);
+        } catch (err) { showToast(err.message, 'error', 8000); }
+    });
     container.querySelector('#manager-settings').addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = {};
@@ -64,6 +81,7 @@ export async function render(container) {
                 const input = e.target.elements[k];
                 if (type === 'checkbox') { body[k] = input.checked; continue; }
                 const v = input.value.trim();
+                if (type === 'password' && !v) continue;
                 body[k] = type === 'number' ? Number(v) : v;
             }
         }

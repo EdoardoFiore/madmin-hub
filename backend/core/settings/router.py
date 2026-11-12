@@ -34,7 +34,8 @@ async def read_settings(
     current_user: User = Depends(get_current_user),
 ):
     row = await get_system_settings(session)
-    data = row.model_dump()
+    data = row.model_dump(exclude={"smtp_password"})
+    data["smtp_password_set"] = bool(row.smtp_password)
     if not current_user.has_permission("manager.view"):
         data = {k: data[k] for k in _PUBLIC}
     return data
@@ -48,6 +49,10 @@ async def update_settings(
 ):
     row = await get_system_settings(session)
     changes = body.model_dump(exclude_unset=True)
+    password = changes.pop("smtp_password", None)
+    if password:
+        from core.secrets import encrypt_setting
+        row.smtp_password = encrypt_setting(password)
     for key, value in changes.items():
         if value is not None:
             setattr(row, key, value)
@@ -58,4 +63,23 @@ async def update_settings(
     row.updated_at = datetime.utcnow().isoformat()
     session.add(row)
     await session.commit()
-    return row.model_dump()
+    data = row.model_dump(exclude={"smtp_password"})
+    data["smtp_password_set"] = bool(row.smtp_password)
+    return data
+
+
+@router.post("/smtp/test")
+async def smtp_test(session: AsyncSession = Depends(get_session),
+                    current_user: User = Depends(require_permission("manager.manage"))):
+    """A test e-mail to the notification recipients."""
+    from manager.notify import recipients, send
+    row = await get_system_settings(session)
+    if not row.smtp_host:
+        raise HTTPException(400, "Server SMTP non configurato")
+    to = await recipients(session, row)
+    if not to:
+        raise HTTPException(400, "Nessun destinatario: indicare notify_to o un'e-mail sui superuser")
+    errors = await send(row, "Prova di notifica", f"E-mail di prova inviata da {current_user.username}.", to)
+    if errors:
+        raise HTTPException(502, "; ".join(errors)[:500])
+    return {"sent_to": to}

@@ -105,7 +105,8 @@
         "licenses": "Licenses",
         "enrollment": "Enrollment",
         "releases": "Releases",
-        "vulnerabilities": "Vulnerabilities"
+        "vulnerabilities": "Vulnerabilities",
+        "rollouts": "Rollouts"
     },
     "app": {
         "pageNotFound": "Page not found",

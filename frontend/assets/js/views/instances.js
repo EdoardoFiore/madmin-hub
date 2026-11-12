@@ -1179,13 +1179,31 @@ registerActions({
     managerGroupEdit: () => {
         const g = hierarchy().byId[selected.id];
         if (!g) return;
+        let w = {};
+        try { w = JSON.parse(g.maintenance_json || '{}'); } catch { /* none */ }
+        const days = w.days || [0, 1, 2, 3, 4, 5, 6];
+        const DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
         formModal(g.kind === 'partner' ? 'Modifica partner' : 'Modifica cliente', `
             <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(g.name)}" required maxlength="100"></div>
-            <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(g.description)}" maxlength="500"></div>`,
+            <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(g.description)}" maxlength="500"></div>
+            <h4 class="mt-3">Finestra di manutenzione</h4>
+            <div class="text-muted small mb-2">I rollout avviano aggiornamenti e riavvii sulle istanze di questo gruppo solo in questa
+                finestra (ora del manager). Vuota = sempre${g.kind === 'customer' && g.parent_id ? '; senza finestra vale quella del partner' : ''}.
+                Una fine precedente all'inizio attraversa la mezzanotte.</div>
+            <div class="row g-2 mb-2">
+                <div class="col"><label class="form-label">Dalle</label><input name="w_start" type="time" class="form-control" value="${escapeHtml(w.start || '')}"></div>
+                <div class="col"><label class="form-label">Alle</label><input name="w_end" type="time" class="form-control" value="${escapeHtml(w.end || '')}"></div>
+            </div>
+            <div class="btn-group w-100" role="group">${DAYS.map((l, n) => `
+                <input type="checkbox" class="btn-check" name="w_day" value="${n}" id="w-day-${n}" ${days.includes(n) ? 'checked' : ''}>
+                <label class="btn btn-sm" for="w-day-${n}">${l}</label>`).join('')}</div>`,
         async (form) => {
             const d = formData(form);
             if (!d.name) throw new Error('Nome obbligatorio');
-            await apiPatch(`/groups/${g.id}`, { name: d.name, description: d.description });
+            const wdays = [...form.querySelectorAll('[name=w_day]:checked')].map(x => Number(x.value));
+            if (Boolean(d.w_start) !== Boolean(d.w_end)) throw new Error('Finestra: indicare inizio e fine, o nessuno dei due');
+            await apiPatch(`/groups/${g.id}`, { name: d.name, description: d.description,
+                maintenance: { start: d.w_start || '', end: d.w_end || '', days: wdays.length ? wdays : [0, 1, 2, 3, 4, 5, 6] } });
             await fetchLists(true);
             renderTree();
             renderGroup(mainEl, g.id);

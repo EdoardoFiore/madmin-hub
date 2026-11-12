@@ -21,5 +21,7 @@ Pillow>=10.0.0
 pydantic>=2.5.0
 # OSV queries (vulnerability scan)
 httpx>=0.27.0
+# E-mail notifications
+aiosmtplib>=3.0.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0

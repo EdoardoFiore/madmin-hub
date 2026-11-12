@@ -289,6 +289,11 @@ async def rescue(request: Request, agent=Depends(require_agent), session: AsyncS
     await session.commit()
     logger.warning("Instance %s (%s): rescue report%s", instance.name, instance.id,
                    f", action {answer['action']} sent" if answer else "")
+    from manager.notify import notify
+    notify("rescue", instance.id, f"{instance.name}: MADMIN non attivo",
+           f"L'istanza {instance.name} ({instance.id}) segnala tramite il rescue che MADMIN non è attivo "
+           "o non è collegato al manager.\nStato e log nella pagina dell'istanza; azioni: riavvio, rollback, "
+           "installazione di una release.")
     return {"action": answer}
 
 
@@ -388,6 +393,7 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
         logger.info("Instance %s: update to %s confirmed", instance_id, ack["update_confirm"])
     # Same for a kernel booted on trial: it came up and reached the manager
     kernel = (p.get("state") or {}).get("kernel") if isinstance(p.get("state"), dict) else None
+    _notify_failures(instance.name, instance_id, update, kernel)
     if isinstance(kernel, dict) and kernel.get("result") == "pending" and facts \
             and kernel.get("kernel") and facts.get("kernel") == kernel.get("kernel"):
         ack["kernel_confirm"] = str(kernel["kernel"])[:100]
@@ -396,6 +402,20 @@ async def _handle_hello(ws: WebSocket, instance_id: str, source_ip: str) -> Agen
     state = p.get("state") if isinstance(p.get("state"), dict) else {}
     return AgentConnection(instance_id=instance_id, ws=ws, source_ip=source_ip,
                            capabilities=caps, features=features, revision=revision, hello_state=state)
+
+
+def _notify_failures(name: str, instance_id: str, update, kernel) -> None:
+    """A failed update or kernel trial reported by the instance (once each)."""
+    from manager.notify import notify
+    if isinstance(update, dict) and update.get("result") in ("rolled_back", "failed"):
+        notify("update", f"{instance_id}:{update.get('update_id')}",
+               f"{name}: aggiornamento {'annullato' if update['result'] == 'rolled_back' else 'fallito'}",
+               f"L'aggiornamento di {name} a {update.get('release_id')} è terminato con {update['result']} "
+               f"(passo {update.get('step')}): {update.get('detail', '')}\nDettagli e log nella pagina dell'istanza.")
+    if isinstance(kernel, dict) and kernel.get("result") == "failed":
+        notify("kernel", f"{instance_id}:{kernel.get('started_at')}", f"{name}: kernel {kernel.get('kernel')} non adottato",
+               f"Il kernel {kernel.get('kernel')} provato su {name} non è stato confermato: {kernel.get('detail', '')}\n"
+               f"L'istanza usa di nuovo {kernel.get('previous')}.")
 
 
 async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
@@ -413,6 +433,8 @@ async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
             await record_addresses(session, instance, None, facts)
         session.add(instance)
         await session.commit()
+        if isinstance(facts, dict) and isinstance(facts.get("os_status"), dict):
+            _notify_failures(instance.name, conn.instance_id, None, facts["os_status"].get("kernel_trial"))
         if isinstance(facts, dict) and conn.supports(protocol.CMD_INVENTORY_GET):
             await inventory_service.sections_announced(session, conn.instance_id, facts.get("sections"))
 
@@ -430,6 +452,7 @@ async def _handle_event(conn: AgentConnection, payload: dict) -> None:
                 instance.update_json = json.dumps(data)[:8000]
                 session.add(instance)
                 await session.commit()
+            _notify_failures(instance.name, conn.instance_id, data, None)
             logger.info("Instance %s: update %s %s", conn.instance_id, data.get("release_id"), data.get("result"))
     elif name == protocol.EVENT_CA_UPDATED:
         trusted = (payload.get("data") or {}).get("ca")

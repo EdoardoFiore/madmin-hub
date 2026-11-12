@@ -85,6 +85,11 @@ async def create_request(session, csr: str, facts: dict, proto: int, source_ip: 
     await session.commit()
     logger.info("Registration request %s from %s (%s), key %s",
                 req.id, source_ip, facts.get("hostname"), fp[:16])
+    from manager.notify import notify
+    notify("registration", req.id, f"Richiesta di registrazione da {facts.get('hostname') or source_ip}",
+           f"L'istanza {facts.get('hostname') or '?'} ({source_ip}) chiede di registrarsi.\n"
+           f"Impronta della chiave: {fp}\nApprovarla o rifiutarla in Enrollment > In attesa, dopo aver "
+           "verificato l'impronta sull'istanza.")
     return {"request_id": req.id, "request_secret": secret, "key_fingerprint": fp,
             "poll_interval": POLL_INTERVAL, "expires_at": req.expires_at.isoformat()}
 

@@ -8,7 +8,7 @@ are manager operations (superuser, rw).
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -495,9 +495,24 @@ class GroupIn(BaseModel):
     description: str = Field(default="", max_length=500)
 
 
+class MaintenanceWindow(BaseModel):
+    """Rollouts start on this group's instances only inside it ({} = always)."""
+    days: List[int] = Field(default_factory=lambda: list(range(7)))
+    start: str = Field(default="", pattern=r"^([01]\d|2[0-3]):[0-5]\d$|^$")
+    end: str = Field(default="", pattern=r"^([01]\d|2[0-3]):[0-5]\d$|^$")
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v):
+        if not v or any(d not in range(7) for d in v):
+            raise ValueError("giorni: da 0 (lunedì) a 6 (domenica)")
+        return sorted(set(v))
+
+
 class GroupUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
+    maintenance: Optional[MaintenanceWindow] = None
 
 
 def group_out(g: InstanceGroup, paths: dict, counts: dict) -> dict:
@@ -542,6 +557,11 @@ async def update_group(group_id: str, body: GroupUpdate, session: AsyncSession =
         group.name = body.name.strip()
     if body.description is not None:
         group.description = body.description
+    if body.maintenance is not None:
+        w = body.maintenance
+        if bool(w.start) != bool(w.end):
+            raise HTTPException(400, "Finestra di manutenzione: inizio e fine insieme")
+        group.maintenance_json = json.dumps(w.model_dump()) if w.start else "{}"
     session.add(group)
     await session.commit()
     return group.model_dump()

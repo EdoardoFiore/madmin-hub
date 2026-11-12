@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
     from manager.support.service import expiry_task, restore_listeners
     from manager.support.tunnels import stop_all
     from manager.inventory.osv import scan_task
+    from manager.rollouts.service import rollout_task
 
     await restore_listeners()
 
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
         spawn_background(expiry_task(), "support-expiry"),
         spawn_background(audit_cleanup_task(), "audit-cleanup"),
         spawn_background(scan_task(), "vulnerability-scan"),
+        spawn_background(rollout_task(), "rollouts"),
     ]
 
     logger.info("MADMIN Manager ready")
@@ -133,10 +135,12 @@ def create_app() -> FastAPI:
     from manager.keys.router import router as keys_router
     from manager.inventory.router import router as inventory_router
     from manager.osactions.router import router as osactions_router
+    from manager.rollouts.router import router as rollouts_router
 
     for r in (auth_router, audit_router, settings_router, instances_router, enrollment_router,
               backups_router, licenses_router, support_router, releases_router, keys_router,
-              inventory_router, osactions_router, apikeys_router, provisioning_router, agent_router):
+              inventory_router, osactions_router, rollouts_router, apikeys_router, provisioning_router,
+              agent_router):
         app.include_router(r)
 
     from core.auth.dependencies import get_current_user
@@ -154,12 +158,37 @@ def create_app() -> FastAPI:
                 {"label": "menu.licenses", "icon": "certificate", "route": "#licenses", "permission": "scope.view"},
                 {"label": "menu.enrollment", "icon": "key", "route": "#enrollment", "permission": "manager.view"},
                 {"label": "menu.releases", "icon": "package", "route": "#releases", "permission": "manager.view"},
+                {"label": "menu.rollouts", "icon": "stack-push", "route": "#rollouts", "permission": "scope.manage"},
                 {"label": "menu.users", "icon": "users", "route": "#users", "permission": "users.view"},
                 {"label": "menu.logs", "icon": "file-text", "route": "#logs", "permission": "manager.view"},
                 {"label": "menu.settings", "icon": "settings", "route": "#settings", "permission": "manager.view"},
             ],
             "modules": [],
         }
+
+    @app.get("/api/ui/badges", include_in_schema=False)
+    async def badges(current_user: User = Depends(get_current_user)):
+        """Counts shown next to the menu entries: what waits for someone (ROADMAP 10.2)."""
+        from sqlalchemy import func, select as sa_select
+        from core.database import async_session_maker
+        from manager import scope
+        from manager.models import EnrollmentRequest, Finding, Instance, Rollout, UserSshKey
+        out = {}
+        async with async_session_maker() as session:
+            if current_user.has_permission("manager.view"):
+                out["enrollment"] = (await session.execute(sa_select(func.count()).select_from(EnrollmentRequest)
+                                                           .where(EnrollmentRequest.status == "pending"))).scalar()
+                out["support"] = (await session.execute(sa_select(func.count()).select_from(UserSshKey).where(
+                    UserSshKey.status == "pending", UserSshKey.user_id != current_user.id))).scalar()
+            ids = await scope.group_ids(session, current_user)
+            q = scope.filter_instances(sa_select(func.count(func.distinct(Finding.advisory_id))).select_from(Finding)
+                                       .join(Instance, Instance.id == Finding.instance_id)
+                                       .where(Finding.severity == "critical", Instance.status == "active"), ids)
+            out["vulnerabilities"] = (await session.execute(q)).scalar()
+            if current_user.has_permission("scope.manage"):
+                out["rollouts"] = (await session.execute(sa_select(func.count()).select_from(Rollout).where(
+                    Rollout.status.in_(("halted", "waiting"))))).scalar()
+        return {k: v for k, v in out.items() if v}
 
     @app.get("/api/health")
     async def health():

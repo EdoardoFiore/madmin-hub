@@ -41,6 +41,10 @@ class InstanceGroup(SQLModel, table=True):
     kind: str = Field(default="customer", max_length=10)  # partner | customer
     parent_id: Optional[str] = Field(default=None, foreign_key="instance_group.id", max_length=36, index=True)
     description: str = Field(default="", max_length=500)
+    # Maintenance window for rollouts {"days": [0-6, Monday = 0], "start": "HH:MM",
+    # "end": "HH:MM"} in the manager's time zone; {} = any time. A customer
+    # without its own window uses its partner's.
+    maintenance_json: str = Field(default="{}")
 
 
 class Instance(SQLModel, table=True):
@@ -381,3 +385,47 @@ class Finding(SQLModel, table=True):
     fixed_version: str = Field(default="", max_length=200)   # "" = no fix published yet
     severity: str = Field(default="unknown", max_length=10, index=True)
     first_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
+# --- Rollouts (ROADMAP 10.1) ---
+
+class Rollout(SQLModel, table=True):
+    """One action on many instances: canary first, then the rest, with a
+    concurrency limit, a stop threshold and the groups' maintenance windows.
+    Each target is an ordinary persistent command."""
+    __tablename__ = "rollout"
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    name: str = Field(max_length=200)
+    action: str = Field(max_length=30)          # madmin.update | os.upgrade | os.reboot | backup.run
+    args_json: str = Field(default="{}")
+    selection_json: str = Field(default="{}")  # how the targets were chosen (for the record)
+    status: str = Field(default="running", max_length=12, index=True)
+    # running | waiting (canary done, confirmation needed) | halted | cancelled | done
+    concurrency: int = Field(default=1)
+    canary: int = Field(default=0)              # first N targets alone
+    canary_wait_minutes: int = Field(default=0)  # 0 = wait for a confirmation
+    fail_threshold: int = Field(default=10)    # halt above this % of failures (of the finished ones)
+    use_windows: bool = Field(default=True)
+    halted_reason: str = Field(default="", max_length=500)
+    created_by: str = Field(max_length=100)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    canary_done_at: Optional[datetime] = Field(default=None)
+    expires_at: datetime                         # targets not started by then are skipped
+    finished_at: Optional[datetime] = Field(default=None)
+
+
+class RolloutTarget(SQLModel, table=True):
+    __tablename__ = "rollout_target"
+    __table_args__ = (Index("ix_rollout_target_rollout", "rollout_id", "status"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    rollout_id: str = Field(foreign_key="rollout.id", max_length=36)
+    instance_id: str = Field(foreign_key="instance.id", max_length=36, index=True)
+    position: int = Field(default=0)
+    canary: bool = Field(default=False)
+    status: str = Field(default="pending", max_length=10)   # pending | running | done | failed | skipped
+    command_id: str = Field(default="", max_length=36)
+    detail: str = Field(default="", max_length=1000)
+    started_at: Optional[datetime] = Field(default=None)
+    finished_at: Optional[datetime] = Field(default=None)

@@ -46,6 +46,18 @@ class SystemSettings(SQLModel, table=True):
     # be signed by one of them. Empty = not checked here (the instances always check)
     release_keys: str = Field(default="", max_length=10000)
 
+    # E-mail notifications (ROADMAP 10.2): new registration request, SSH key to
+    # approve, rollout halted, failed update or kernel trial, instance in
+    # rescue, new critical vulnerability. No host = no e-mail (the menu badges
+    # stay). Recipients: notify_to, or every active superuser with an e-mail.
+    smtp_host: str = Field(default="", max_length=255)
+    smtp_port: int = Field(default=587)
+    smtp_encryption: str = Field(default="tls", max_length=4)   # none | tls | ssl
+    smtp_username: str = Field(default="", max_length=255)
+    smtp_password: Optional[str] = Field(default=None, max_length=1000)   # encrypted, never returned
+    smtp_from: str = Field(default="", max_length=255)
+    notify_to: str = Field(default="", max_length=1000)
+
     updated_at: Optional[str] = Field(default=None)
 
 
@@ -69,6 +81,36 @@ class SystemSettingsUpdate(SQLModel):
     agent_facts_interval: Optional[int] = None
     agent_backoff_max: Optional[int] = None
     release_keys: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_encryption: Optional[str] = None
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None   # "" = keep the stored one
+    smtp_from: Optional[str] = None
+    notify_to: Optional[str] = None
+
+    @field_validator("smtp_encryption")
+    @classmethod
+    def _enc(cls, v):
+        if v is not None and v not in ("none", "tls", "ssl"):
+            raise ValueError("Cifratura: none, tls o ssl")
+        return v
+
+    @field_validator("smtp_port")
+    @classmethod
+    def _port(cls, v):
+        if v is not None and not 1 <= v <= 65535:
+            raise ValueError("Porta non valida")
+        return v
+
+    @field_validator("notify_to", "smtp_from")
+    @classmethod
+    def _emails(cls, v):
+        if v:
+            for a in (x.strip() for x in v.split(",")):
+                if a and not re.match(r"^[^@\s,]+@[^@\s,]+\.[^@\s,]+$", a):
+                    raise ValueError(f"Indirizzo e-mail non valido: {a}")
+        return v
 
     @field_validator("registration_allowed_cidrs")
     @classmethod

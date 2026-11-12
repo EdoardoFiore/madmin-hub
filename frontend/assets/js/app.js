@@ -21,6 +21,7 @@ const views = {
     'enrollment': () => import('./views/enrollment.js'),
     'releases': () => import('./views/releases.js'),
     'vulnerabilities': () => import('./views/vulnerabilities.js'),
+    'rollouts': () => import('./views/rollouts.js'),
     'users': () => import('./views/users.js'),
     'settings': () => import('./views/settings.js'),
     'logs': () => import('./views/logs.js'),
@@ -531,6 +532,8 @@ async function loadMenu() {
         }
 
         navMenu.innerHTML = menuHtml;
+        refreshBadges();
+        if (!badgeTimer) badgeTimer = setInterval(refreshBadges, 60000);
 
     } catch (error) {
         console.error('Failed to load menu:', error);
@@ -540,6 +543,26 @@ async function loadMenu() {
 /**
  * Create a menu item HTML - supports both Tabler icons and custom URLs
  */
+let badgeTimer = null;
+
+/** Counts next to the menu entries (requests to approve, critical findings, ...). */
+async function refreshBadges() {
+    let counts = {};
+    try {
+        const r = await fetch('/api/ui/badges', { headers: { 'Authorization': `Bearer ${localStorage.getItem('madmin_token')}` } });
+        if (!r.ok) return;
+        counts = await r.json();
+    } catch { return; }
+    document.querySelectorAll('#nav-menu a.nav-link[href^="#"], .navbar-nav a.nav-link[href^="#"]').forEach((a) => {
+        const key = a.getAttribute('href').slice(1);
+        a.querySelector('.menu-badge')?.remove();
+        const n = counts[key];
+        if (n) {
+            a.insertAdjacentHTML('beforeend', `<span class="badge ${key === 'vulnerabilities' ? 'bg-red' : 'bg-orange'} text-white ms-auto menu-badge">${n}</span>`);
+        }
+    });
+}
+
 function createMenuItem(item) {
     let iconHtml;
     if (item.icon && /^(https?:\/\/|\/)/.test(item.icon)) {
@@ -721,6 +744,7 @@ function getViewTitle(viewName) {
         'enrollment': t('menu.enrollment'),
         'releases': t('menu.releases'),
         'vulnerabilities': t('menu.vulnerabilities'),
+        'rollouts': t('menu.rollouts'),
         'users': t('menu.users'),
         'settings': t('menu.settings'),
         'logs': t('menu.logs'),

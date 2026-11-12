@@ -50,6 +50,11 @@ async def add_key(body: KeyIn, session: AsyncSession = Depends(get_session),
     session.add(key)
     await session.commit()
     logger.info("SSH key %s added by %s (pending)", fingerprint, user.username)
+    from manager.notify import notify
+    notify("ssh-key", key.id, f"Chiave SSH di {user.username} da approvare",
+           f"{user.username} ha aggiunto la chiave SSH \"{key.name}\" ({fingerprint}).\n"
+           "Va approvata da un altro superuser (Supporto > Chiavi SSH) dopo aver verificato l'impronta "
+           f"con {user.username} su un altro canale. Se non l'ha aggiunta {user.username}, l'account è compromesso.")
     return key_out(key, user.username)
 
 

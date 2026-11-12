@@ -274,6 +274,7 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                     wanted[vid] = max(wanted.get(vid, ""), modified or "")
         advisories = await _advisories(client, wanted)
     total = 0
+    new_critical = []
     async with async_session_maker() as session:
         for inst in instances:
             current = {(f.advisory_id, f.package): f for f in (await session.execute(
@@ -285,8 +286,11 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                     if adv is None or (vid, name) in seen:
                         continue
                     seen.add((vid, name))
-                    f = current.get((vid, name)) or Finding(instance_id=inst.id, advisory_id=vid, kind=kind,
-                                                             package=name[:200])
+                    f = current.get((vid, name))
+                    if f is None:
+                        f = Finding(instance_id=inst.id, advisory_id=vid, kind=kind, package=name[:200])
+                        if adv.severity == "critical":
+                            new_critical.append((inst.name, vid, name))
                     f.installed_version = version[:200]
                     f.fixed_version = json.loads(adv.fixed_json).get(_pkg_key(eco, name), "")[:200]
                     f.severity = adv.severity
@@ -296,6 +300,11 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                     await session.delete(f)
             total += len(seen)
         await session.commit()
+    if new_critical:
+        from manager.notify import notify
+        lines = "\n".join(f"- {i}: {v} ({p})" for i, v, p in new_critical[:50])
+        notify("critical", datetime.utcnow().strftime("%Y%m%d%H"), f"{len(new_critical)} nuove vulnerabilità critiche",
+               f"Nuove vulnerabilità critiche rilevate:\n{lines}\nDettagli in Vulnerabilità.")
     return {"instances": len(instances), "findings": total, "packages": len(keys), "advisories": len(advisories)}
 
 

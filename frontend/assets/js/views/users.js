@@ -486,7 +486,9 @@ function renderUsers() {
 
         // Password status badge: force-change takes priority, then expired
         const pwdExpired = user.password_expires_at && new Date(user.password_expires_at) < new Date();
-        const pwdBadge = user.must_change_password
+        const pwdBadge = user.auth_source === 'ldap'
+            ? '<span class="badge bg-purple-lt ms-1" title="Utente LDAP: password, ruolo e gruppo vengono dalla directory">LDAP</span>'
+            : user.must_change_password
             ? `<span class="badge bg-orange-lt ms-1" title="${t('users.forcePasswordChange')}"><i class="ti ti-key"></i></span>`
             : pwdExpired
                 ? `<span class="badge bg-red-lt ms-1" title="${t('users.passwordExpired')}"><i class="ti ti-clock-exclamation"></i></span>`

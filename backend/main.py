@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
     from manager.support.tunnels import stop_all
     from manager.inventory.osv import scan_task
     from manager.rollouts.service import rollout_task
+    from manager.ldapauth import sync_task as ldap_sync_task
 
     await restore_listeners()
 
@@ -76,6 +77,7 @@ async def lifespan(app: FastAPI):
         spawn_background(audit_cleanup_task(), "audit-cleanup"),
         spawn_background(scan_task(), "vulnerability-scan"),
         spawn_background(rollout_task(), "rollouts"),
+        spawn_background(ldap_sync_task(), "ldap-sync"),
     ]
 
     logger.info("MADMIN Manager ready")

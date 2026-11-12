@@ -23,5 +23,7 @@ pydantic>=2.5.0
 httpx>=0.27.0
 # E-mail notifications
 aiosmtplib>=3.0.0
+# LDAP / Active Directory users
+ldap3>=2.9
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0

@@ -60,6 +60,11 @@ class User(SQLModel, table=True):
     email: Optional[str] = Field(default=None, max_length=255)
     hashed_password: str = Field(max_length=255)
 
+    # Where the password is checked: "local" (hashed_password) or "ldap" (a
+    # bind to the directory at every login; role, access and group come from
+    # the LDAP group mapping and are kept in sync by manager.ldapauth)
+    auth_source: str = Field(default="local", max_length=10)
+
     # Status
     is_active: bool = Field(default=True)
     is_protected: bool = Field(default=False)  # First setup user — cannot be modified or deleted by others
@@ -187,6 +192,7 @@ class UserResponse(SQLModel):
     access: str
     group_id: Optional[str] = None
     group_path: str = ""          # "Partner / Customer", for display
+    auth_source: str = "local"
     totp_enabled: bool = False
     totp_enforced: bool = False
     totp_locked: bool = False

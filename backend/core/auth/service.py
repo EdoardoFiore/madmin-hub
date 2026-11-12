@@ -196,6 +196,13 @@ async def authenticate_user(session: AsyncSession, username: str, password: str)
     )
     user = result.scalar_one_or_none()
 
+    # Not a local user: the directory decides (manager.ldapauth); a local
+    # username is never looked up in LDAP
+    if user is None or user.auth_source == "ldap":
+        from manager.ldapauth import login as ldap_login
+        ldap_user = await ldap_login(session, username, password)
+        if ldap_user is not None or user is not None:
+            return ldap_user
     # bcrypt takes ~0.25 s of CPU: in a thread, so logins do not stall every
     # other request. An unknown username is checked against a dummy hash, or
     # the response time would tell which usernames exist.

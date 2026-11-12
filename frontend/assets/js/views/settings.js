@@ -4,6 +4,7 @@
 import { apiGet, apiPatch, apiPost } from '../api.js';
 import { escapeHtml, showToast } from '../utils.js';
 import { checkPermission } from '../app.js';
+import { formModal, formData } from './manager-common.js';
 
 const FIELDS = [
     ['Generale', [
@@ -41,6 +42,16 @@ const FIELDS = [
         ['smtp_from', 'Mittente', 'text'],
         ['notify_to', 'Destinatari (separati da virgola; vuoto = i superuser con e-mail)', 'text'],
     ]],
+    ['Utenti LDAP / Active Directory', [
+        ['ldap_enabled', 'Login con utenti LDAP (gli utenti locali restano validi)', 'checkbox'],
+        ['ldap_url', 'Server (ldaps://host:636, oppure ldap://host con StartTLS)', 'text'],
+        ['ldap_bind_dn', 'Account di servizio (DN) per le ricerche', 'text'],
+        ['ldap_bind_password', 'Password dell\'account di servizio (vuoto = invariata)', 'password'],
+        ['ldap_base_dn', 'Base di ricerca', 'text'],
+        ['ldap_user_filter', 'Filtro utente ({username} = nome inserito al login)', 'text'],
+        ['ldap_ca_pem', 'CA del server LDAP (PEM; vuoto = CA di sistema)', 'textarea'],
+        ['ldap_mappings', 'Gruppi LDAP → ruolo (JSON, vince il primo): [{"group": "cn=...,dc=...", "role": "superuser|partner|customer", "access": "rw|ro", "group_id": "<id gruppo del manager>"}]', 'textarea'],
+    ]],
     ['Backup e licenze', [
         ['backup_interval_hours', 'Backup pianificati ogni (ore, 0 = disattivati)', 'number'],
         ['backup_retention', 'Backup conservati per istanza', 'number'],
@@ -62,8 +73,9 @@ export async function render(container) {
                     <span class="form-check-label">${label}</span></label>` : `
                     <div class="mb-3"><label class="form-label">${label}</label>
                     <input name="${k}" type="${type}" class="form-control" value="${type === 'password' ? '' : escapeHtml(s[k] ?? '')}"
-                        ${type === 'password' ? `autocomplete="new-password" placeholder="${s.smtp_password_set ? '••••••••' : ''}"` : ''} ${ro ? 'disabled' : ''}></div>`).join('')}
+                        ${type === 'password' ? `autocomplete="new-password" placeholder="${s[`${k}_set`] ? '••••••••' : ''}"` : ''} ${ro ? 'disabled' : ''}></div>`).join('')}
                 ${title === 'Notifiche e-mail' && !ro ? '<button type="button" class="btn btn-outline-secondary btn-sm" id="smtp-test">Invia e-mail di prova</button>' : ''}
+                ${title.startsWith('Utenti LDAP') && !ro ? '<button type="button" class="btn btn-outline-secondary btn-sm" id="ldap-test">Prova un login</button>' : ''}
                 </div></div></div>`).join('')}
             ${ro ? '' : '<div class="col-12"><button class="btn btn-primary">Salva</button></div>'}
         </form>`;
@@ -72,6 +84,19 @@ export async function render(container) {
             const r = await apiPost('/settings/smtp/test', {});
             showToast(`E-mail di prova inviata a ${r.sent_to.join(', ')}`, 'success', 6000);
         } catch (err) { showToast(err.message, 'error', 8000); }
+    });
+    container.querySelector('#ldap-test')?.addEventListener('click', () => {
+        formModal('Prova login LDAP', `
+            <div class="text-muted small mb-3">Usa le impostazioni salvate. Non crea l'utente: mostra cosa otterrebbe al login.</div>
+            <div class="mb-3"><label class="form-label">Utente</label><input name="username" class="form-control" required autocomplete="off"></div>
+            <div class="mb-3"><label class="form-label">Password</label><input name="password" type="password" class="form-control" required autocomplete="new-password"></div>`,
+        async (form) => {
+            const r = await apiPost('/settings/ldap/test', formData(form));
+            const m = r.mapping;
+            showToast(m ? `${r.dn}: ${m.role} ${m.access}${m.group_id ? ` (gruppo ${m.group_id})` : ''}`
+                : `${r.dn}: nessun gruppo mappato (${r.groups.join('; ') || 'nessun gruppo'}): login rifiutato`, m ? 'success' : 'warning', 10000);
+            return false;
+        }, { submitText: 'Prova' });
     });
     container.querySelector('#manager-settings').addEventListener('submit', async (e) => {
         e.preventDefault();

@@ -4,6 +4,7 @@ Manager settings API.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -34,8 +35,9 @@ async def read_settings(
     current_user: User = Depends(get_current_user),
 ):
     row = await get_system_settings(session)
-    data = row.model_dump(exclude={"smtp_password"})
+    data = row.model_dump(exclude={"smtp_password", "ldap_bind_password"})
     data["smtp_password_set"] = bool(row.smtp_password)
+    data["ldap_bind_password_set"] = bool(row.ldap_bind_password)
     if not current_user.has_permission("manager.view"):
         data = {k: data[k] for k in _PUBLIC}
     return data
@@ -49,10 +51,11 @@ async def update_settings(
 ):
     row = await get_system_settings(session)
     changes = body.model_dump(exclude_unset=True)
-    password = changes.pop("smtp_password", None)
-    if password:
-        from core.secrets import encrypt_setting
-        row.smtp_password = encrypt_setting(password)
+    from core.secrets import encrypt_setting
+    for secret in ("smtp_password", "ldap_bind_password"):
+        value = changes.pop(secret, None)
+        if value:
+            setattr(row, secret, encrypt_setting(value))
     for key, value in changes.items():
         if value is not None:
             setattr(row, key, value)
@@ -63,8 +66,9 @@ async def update_settings(
     row.updated_at = datetime.utcnow().isoformat()
     session.add(row)
     await session.commit()
-    data = row.model_dump(exclude={"smtp_password"})
+    data = row.model_dump(exclude={"smtp_password", "ldap_bind_password"})
     data["smtp_password_set"] = bool(row.smtp_password)
+    data["ldap_bind_password_set"] = bool(row.ldap_bind_password)
     return data
 
 
@@ -83,3 +87,21 @@ async def smtp_test(session: AsyncSession = Depends(get_session),
     if errors:
         raise HTTPException(502, "; ".join(errors)[:500])
     return {"sent_to": to}
+
+
+class LdapTest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/ldap/test")
+async def ldap_test(body: LdapTest, session: AsyncSession = Depends(get_session),
+                    current_user: User = Depends(require_permission("manager.manage"))):
+    """What a login of this user would get (nothing is created)."""
+    import asyncio
+    from manager.ldapauth import LdapError, check
+    row = await get_system_settings(session)
+    try:
+        return await asyncio.to_thread(check, row, body.username, body.password)
+    except (LdapError, ValueError) as e:
+        raise HTTPException(400, f"LDAP: {e}")

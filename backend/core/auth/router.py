@@ -668,6 +668,9 @@ async def update_user(
             detail="The system first user can only be modified by themselves"
         )
 
+    if user.auth_source == "ldap" and (user_data.password is not None or user_data.role is not None
+                                        or user_data.access is not None or user_data.group_id is not None):
+        raise HTTPException(400, "Utente LDAP: password, ruolo, accesso e gruppo vengono dalla directory")
     if user.id == current_user.id:
         _assert_self_edit_allowed(user, user_data)
     elif user_data.role is not None or user_data.group_id is not None:
@@ -777,6 +780,8 @@ async def change_own_password(
     """
     Change own password (requires current password verification).
     """
+    from manager.ldapauth import require_local
+    require_local(current_user)
     if not service.verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

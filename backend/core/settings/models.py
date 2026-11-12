@@ -58,6 +58,19 @@ class SystemSettings(SQLModel, table=True):
     smtp_from: str = Field(default="", max_length=255)
     notify_to: str = Field(default="", max_length=1000)
 
+    # LDAP / Active Directory users (ROADMAP 10.3, manager.ldapauth). Local
+    # users always keep working; a local username is never looked up in LDAP.
+    ldap_enabled: bool = Field(default=False)
+    ldap_url: str = Field(default="", max_length=255)          # ldaps://host:636 or ldap://host (StartTLS)
+    ldap_bind_dn: str = Field(default="", max_length=500)      # service account for the searches
+    ldap_bind_password: Optional[str] = Field(default=None, max_length=1000)   # encrypted, never returned
+    ldap_base_dn: str = Field(default="", max_length=500)
+    ldap_user_filter: str = Field(default="(|(uid={username})(sAMAccountName={username}))", max_length=500)
+    ldap_ca_pem: str = Field(default="", max_length=20000)     # CA of the directory; "" = system CAs
+    # [{"group": "<group DN>", "role": "superuser|partner|customer", "access": "rw|ro",
+    #   "group_id": "<manager group, partner/customer only>"}], first match wins
+    ldap_mappings: str = Field(default="[]", max_length=20000)
+
     updated_at: Optional[str] = Field(default=None)
 
 
@@ -88,6 +101,36 @@ class SystemSettingsUpdate(SQLModel):
     smtp_password: Optional[str] = None   # "" = keep the stored one
     smtp_from: Optional[str] = None
     notify_to: Optional[str] = None
+    ldap_enabled: Optional[bool] = None
+    ldap_url: Optional[str] = None
+    ldap_bind_dn: Optional[str] = None
+    ldap_bind_password: Optional[str] = None   # "" = keep the stored one
+    ldap_base_dn: Optional[str] = None
+    ldap_user_filter: Optional[str] = None
+    ldap_ca_pem: Optional[str] = None
+    ldap_mappings: Optional[str] = None
+
+    @field_validator("ldap_url")
+    @classmethod
+    def _ldap_url(cls, v):
+        if v and not re.match(r"^ldaps?://[^/\s]+$", v):
+            raise ValueError("URL LDAP: ldaps://host[:porta] o ldap://host[:porta] (con StartTLS)")
+        return v
+
+    @field_validator("ldap_user_filter")
+    @classmethod
+    def _ldap_filter(cls, v):
+        if v is not None and v and "{username}" not in v:
+            raise ValueError("Il filtro deve contenere {username}")
+        return v
+
+    @field_validator("ldap_mappings")
+    @classmethod
+    def _ldap_mappings(cls, v):
+        if v:
+            from manager.ldapauth import parse_mappings
+            parse_mappings(v)
+        return v
 
     @field_validator("smtp_encryption")
     @classmethod

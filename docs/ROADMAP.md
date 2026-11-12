@@ -393,8 +393,8 @@ Heavy facts are sent by digest: `facts.sections = {"packages": "<sha256>", "pyth
 
 Steps:
 
-- [ ] Agent: sections, digests, `inventory.get`.
-- [ ] Manager: `InstancePackage` table (or a JSON column per section, to be decided on the size measured in the field), history of the changes.
+- [x] Agent: `os_status` in the facts, sections with digests (`facts.sections`), `inventory.get`.
+- [x] Manager: `InstanceInventory` (one JSON row per instance and section: ~820 OS packages = ~80 KB), `InventoryChange` (history, last 200 per section).
 
 ### 8.2 Matching
 
@@ -404,10 +404,11 @@ Steps:
 
 Steps:
 
-- [ ] Manager: feed downloader with a local cache (the manager may be the only machine with outbound access), matcher, tables `Advisory` and `InstanceFinding`.
-- [ ] UI: fleet view by version, by CVE, by "reboot required"; per-instance tab; filters by group; export.
-- [ ] Notifications (e-mail, and the UI badge of 10.2) for a new critical finding.
-- [ ] Scope: findings are filtered like everything else (`hub/scope.py`): a partner sees only its subtree.
+- [x] Manager: OSV queried from the manager only (`querybatch` per unique package version, cached 20 h; advisories cached and re-fetched when modified), tables `Advisory`, `OsvQuery`, `Finding`; scan on every inventory change and daily. Instead of downloading the whole Ubuntu feed, only the versions installed somewhere are asked. Kernel packages count only for the running kernel.
+- [x] UI: Vulnerabilità page (by advisory, by instance with reboot/pending updates, by version), Sistema tab of the instance, group filter, CSV export.
+- [x] Notifications (e-mail and menu badge) for a new critical finding.
+- [x] Scope: filtered by `manager/scope.py`.
+- [x] Release build: `build-release.sh` checks the wheels against OSV; a critical advisory stops the build unless waived in `scripts/osv-waivers.txt` (it found certifi, pillow, dnspython and pip: fixed).
 
 ## 9. Phase 4 — OS actions
 
@@ -433,9 +434,9 @@ A router that reboots is an outage for the customer, and the firewall is fail-cl
 Steps:
 
 - [x] `GRUB_DEFAULT=saved` in the installer (`/etc/default/grub.d/99-madmin.cfg`). The boot-check unit needs no installer change: units ship in the release (`scripts/systemd/`) and `madmin-update` installs them at the switch, restoring the old ones on rollback.
-- [ ] The four commands, with progress.
-- [ ] Manager: actions in the instance UI (superuser only), confirmation dialogs that state the outage.
-- [ ] Tested on throwaway Ubuntu 24.04 instances, including a kernel that deliberately fails to boot.
+- [x] The four commands, with progress. `os.upgrade` runs `madmin-update os-upgrade` in a transient unit (survives the restart of MADMIN by needrestart) and takes the update lock; `os.reboot` is idempotent across the reboot.
+- [x] Manager: actions in the instance UI (superuser only), confirmation dialogs that state the outage; `hello_ack.kernel_confirm`.
+- [x] Tested on the test instance: security upgrade (24 packages, kernel 6.8.0-149), reboot on trial with MADMIN made to fail on the new kernel (boot-check back to 6.8.0-149 → 147 after 15 minutes), then a trial confirmed. `panic=10` on the kernel command line covers a kernel that panics.
 
 ### 9.2 From Ubuntu 24.04 to 26.04 (evaluation, not scheduled)
 
@@ -481,18 +482,19 @@ None of these touches the agent. They can be done at any time, also in parallel 
 - Each target is an ordinary persistent command: an offline instance receives it when it connects, within the rollout's deadline.
 - Rollouts of updates, OS upgrades and reboots are superuser only. Backup rollouts follow the scope rules: they can only contain instances the user may manage, re-checked when each command is created.
 
-- [ ] Tables `Rollout`, `RolloutTarget`; scheduler task; UI (progress, halt, resume, retry the failed ones).
-- [ ] Maintenance windows on `InstanceGroup`.
+- [x] Tables `Rollout`, `RolloutTarget`; scheduler task (15 s); UI (progress, halt, resume, retry, cancel, canary confirmation). Canary = instances labelled `canary=true` first; candidate releases only on one instance or on canary instances.
+- [x] Maintenance windows on `InstanceGroup` (customer inherits from partner; across midnight).
 
 ### 10.2 Pending approval notification
 
-- [ ] Badge on the Enrollment menu entry and a toast when a registration request arrives (the UI polls or uses its existing channel); optional e-mail to superusers.
+- [x] Menu badges (`/api/ui/badges`, polled every minute): registration requests, SSH keys to approve, critical vulnerabilities, rollouts halted or waiting.
+- [x] E-mail (SMTP in Settings, test button) to `notify_to` or every superuser with an e-mail: registration requests, SSH keys, rollouts halted/waiting, failed updates and kernel trials, rescue reports, new critical findings; the same event at most once an hour.
 
 ### 10.3 LDAP users
 
-- [ ] LDAP/AD as an authentication source: bind as the user, mapping of LDAP groups to `role`, `access` and `group_id`; users are created at the first login; local users keep working (at least one local superuser is always kept as a way in).
-- [ ] TOTP stays enforced by the manager also for LDAP users.
-- [ ] A user removed from LDAP or from the mapped group loses the sessions at the next check.
+- [x] LDAP/AD as an authentication source (`manager/ldapauth.py`): service-account search, bind as the user over ldaps or StartTLS with the certificate verified, groups from `memberOf` or `groupOfNames`/`groupOfUniqueNames`, mappings to `role`, `access` and `group_id`; users created at the first login; a local username is never looked up in LDAP.
+- [x] TOTP enforced for LDAP users.
+- [x] Sync every 15 minutes: removed from the directory or the mapped groups → disabled, sessions revoked; mapping changed → updated, sessions revoked, SSH keys back to approval. Tested against OpenLDAP (17 cases).
 
 ### 10.4 Support access hardening
 

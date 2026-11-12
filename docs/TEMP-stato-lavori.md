@@ -1,6 +1,6 @@
 # Stato dei lavori — MADMIN Manager e agente (documento temporaneo)
 
-Aggiornato al 2026-11-11. Riassume cosa è stato fatto nelle Fasi 0 e 1 della roadmap, come funziona e come si usa. La fonte di verità restano `docs/ROADMAP.md` e `docs/PROTOCOL.md` (questa repo) e `docs/RELEASING.md` (repo MADMIN); questo file si può eliminare quando il lavoro sarà unito in `main`.
+Aggiornato al 2026-11-12. Riassume cosa è stato fatto nelle Fasi 0–5 della roadmap (le sezioni 3–9 descrivono le Fasi 0 e 1, la sezione 10 il lavoro del 2026-11-12), come funziona e come si usa. Il manuale operativo è `docs/OPERATIONS.md`. La fonte di verità restano `docs/ROADMAP.md` e `docs/PROTOCOL.md` (questa repo) e `docs/RELEASING.md` (repo MADMIN); questo file si può eliminare quando il lavoro sarà unito in `main`.
 
 ---
 
@@ -14,7 +14,7 @@ Aggiornato al 2026-11-11. Riassume cosa è stato fatto nelle Fasi 0 e 1 della ro
 
 Nessuno dei due branch è unito a `main`. Il vecchio branch `feat/hub-agent` di MADMIN è superato: i suoi 3 commit sono stati riportati in `feat/manager-agent`.
 
-Stato: **Fase 0 (rename + congelamento protocollo) e Fase 1 (release firmate, updater, rescue) fatte e testate.** Prima del primo deploy mancano: cerimonia delle chiavi di firma, migrazioni del database del manager (§10.5 roadmap), hardening degli accessi di supporto (§10.4).
+Stato: **Fasi 0, 1, 3, 4 e 5 fatte e testate** (la Fase 2 è il deploy, operativo). Prima del primo deploy manca solo la cerimonia delle chiavi di firma (e le attività della Fase 2: host definitivo, `--ui-allow`, TOTP per tutti i superuser).
 
 ---
 
@@ -282,17 +282,205 @@ systemctl start madmin-manager
 - Le release dei rollback restavano su disco → rimosse.
 
 ## 8. Limiti noti / da fare
-- Cerimonia delle chiavi di firma.
-- Migrazioni del database del manager (§10.5) e backup/ripristino documentato del manager.
-- Hardening degli accessi di supporto (§10.4): step-up TOTP, chiavi SSH per utente con approvazione, massimo 4 sessioni, UI filtrata per IP.
-- Non testato: disco pieno durante unpack e dump; rollback lanciato dal rescue (testato solo `madmin-update rollback`).
-- Non fatto: ripresa dei download interrotti, pulizia automatica delle release sul manager, notifica degli eventi di rescue, controllo nel build della coerenza tra modelli e migrazioni, aggiornamento delle unit systemd tramite update (oggi le scrive solo l'installer), uso di 4429 da parte del manager.
-- Fasi successive: inventario e vulnerabilità (3), azioni sul sistema operativo (4), rollout di gruppo e altre funzioni del manager (5).
+Aggiornato nella sezione 10.8.
 
 ## 9. Ambiente di test
 - **Manager**: 10.178.0.102 (root, porta 22), checkout `/root/madmin-manager`, superuser `efroot`. Usa la CA ruotata il 2026-11-11.
-- **Istanza** `madmin-staging`: 10.178.0.101 (root, porta 22123; SSH ammesso solo da 10.178.0.0/24), checkout `/root/madmin`, utente `admin`. Release attuale `1.2.0+9670f53e3549`.
+- **Istanza** `madmin-staging`: 10.178.0.101 (root, porta 22123; SSH ammesso solo da 10.178.0.0/24), checkout `/root/madmin`, utente `admin`. Release attuale `1.2.0+e172241ad4ed`, kernel 6.8.0-149 (confermato dalla prova).
 - **Credenziali** impostate durante i test: nel file `creds.txt` della cartella temporanea della sessione di Claude (da cambiare o salvare altrove).
 - **Chiave di firma di test**: `/root/test-release.key` sull'istanza, fidata via `/etc/madmin/release-keys.d/test.pem` e impostata nelle impostazioni del manager. Da rimuovere quando ci saranno le chiavi vere.
 - **Script di test** sull'istanza: `/root/mkrel.sh <nome> [patch]` crea una release firmata di prova da `origin` + un commit (clone in `/root/mb`, file in `/root/rels/`); `/root/killtest.sh`.
 - Sul manager restano caricate le release di prova.
+
+
+---
+
+## 10. Lavori del 2026-11-12
+
+### 10.1 Prima del deploy (§10.4, §10.5 della roadmap)
+
+**Migrazioni del database del manager** (`backend/core/migrations/`): stesso meccanismo di MADMIN. `init_db` esegue `create_all` (tabelle nuove) e poi i passi numerati `NNNN_nome.py` non ancora applicati, registrati in `schema_version` (componente `manager`). Un database nuovo registra l'ultimo passo senza eseguire nulla. Passi attuali: 0001 impronta della chiave nelle sessioni SSH, 0002 finestra di manutenzione dei gruppi, 0003 SMTP, 0004 LDAP. Regola (in `CLAUDE.md`): una colonna nuova = campo nel modello + passo `ADD COLUMN IF NOT EXISTS`.
+
+**Backup e restore del manager**:
+- `scripts/manager-backup.sh --out FILE --passphrase-file PASS`: archivio cifrato (AES-256, PBKDF2) con database, `DATA_DIR` (CA, release, backup delle istanze) e `SECRET_KEY`.
+- `scripts/manager-restore.sh --in FILE --passphrase-file PASS`: su un manager appena installato con lo stesso `--host/--ip`. Ripristina prima in un database di appoggio, poi lo scambia.
+- Le istanze si ricollegano da sole.
+- Provato tre volte: backup, disinstallazione, installazione e restore.
+
+**Accessi di supporto**:
+- *Codice TOTP a ogni apertura* (UI e SSH):
+  - nessun codice di recupero accettato;
+  - un codice già usato è rifiutato;
+  - 5 errori bloccano la 2FA e chiudono le sessioni dell'utente;
+  - senza 2FA attiva non si apre il supporto.
+- *Chiavi SSH per utente* (Supporto → Le mie chiavi SSH):
+  - una chiave nuova resta in attesa finché un **altro** superuser rw non la approva;
+  - con un solo superuser si approva dalla riga di comando:
+    ```bash
+    cd /opt/madmin-manager/backend
+    sudo -u madmin-manager ../venv/bin/python -m manager.keys list --pending
+    sudo -u madmin-manager ../venv/bin/python -m manager.keys approve <utente> <impronta>
+    ```
+  - un cambio di ruolo, accesso o gruppo rimette le chiavi in attesa;
+  - all'apertura SSH si sceglie una propria chiave approvata (non si incolla più);
+  - il certificato ha come key id `<utente> <impronta> <istanza>`, che compare nel log sshd dell'istanza.
+- *Al massimo 4 sessioni aperte per utente* (UI e SSH insieme). La quinta riceve un 409 con l'elenco delle aperte, controllato prima del codice TOTP, che quindi non viene consumato.
+- *UI filtrata per IP*:
+  - opzione `setup-manager.sh --ui-allow 10.0.0.0/24,...`, scritta in `/etc/nginx/snippets/madmin-manager-ui-allow.conf`;
+  - una reinstallazione senza l'opzione conserva la lista;
+  - la porta agent resta aperta.
+
+**Lato istanza (cose non correggibili dopo)**:
+- Le unit systemd ora stanno nella release (`scripts/systemd/`). `madmin-update` installa quelle cambiate prima di avviare la nuova release, conserva le vecchie in `state/units/` e le ripristina col rollback; abilita le unit nuove che hanno `[Install]`. L'installer copia gli stessi file.
+- `GRUB_DEFAULT=saved` e `panic=10` in `/etc/default/grub.d/99-madmin.cfg`.
+
+### 10.2 Fase 3 — inventario e vulnerabilità
+
+**Agente**: i fact contengono `os_status`:
+- kernel in esecuzione e kernel installati;
+- riavvio richiesto e pacchetti che lo chiedono;
+- aggiornamenti in sospeso, totali e di sicurezza (`apt-get -s`, in cache per un'ora);
+- aggiornamenti automatici;
+- ultimo `apt update`;
+- riavvio programmato;
+- kernel in prova.
+
+Contengono anche `sections`: i digest delle sezioni pesanti `packages` (dpkg, con il pacchetto sorgente) e `python` (il venv). Il manager chiede una sezione con `inventory.get` solo quando il suo digest cambia.
+
+**Manager**:
+- `InstanceInventory` (una riga JSON per istanza e sezione) e `InventoryChange` (storico delle modifiche).
+- La scansione OSV parte dal manager, l'unico che deve uscire su internet:
+  - interroga OSV solo per le versioni installate da qualche parte (`querybatch`), con risposte in cache per 20 ore;
+  - scarica gli avvisi e li riscarica quando OSV li segnala modificati;
+  - usa i dati di sicurezza Ubuntu per pacchetto sorgente e gli avvisi PyPI per il venv;
+  - gira a ogni cambio di inventario e una volta al giorno;
+  - conta i pacchetti kernel solo per il kernel in esecuzione: i kernel di riserva generavano 4400 falsi positivi.
+- UI: pagina Vulnerabilità (per avviso, per istanza, per versione, filtro per gruppo, CSV) e scheda Sistema dell'istanza (stato OS, avvisi critici e alti, elenco pacchetti, modifiche recenti). Tutto filtrato per ambito.
+
+**Build della release**: `build-release.sh` controlla le wheel su OSV. Un avviso critico blocca il build, a meno che non sia approvato con motivazione in `scripts/osv-waivers.txt`. Il controllo ha subito trovato certifi, pillow, dnspython (aggiornati nelle due repo) e il pip 24.0 del venv: ora la release porta il proprio pip 26.3.
+
+### 10.3 Fase 4 — azioni sul sistema operativo
+
+Solo superuser. Dalla scheda Sistema o da un rollout:
+
+| Azione | Cosa fa |
+|---|---|
+| Aggiorna liste | `apt-get update` |
+| Aggiornamenti di sicurezza | `unattended-upgrade`, cioè solo il canale security |
+| Aggiorna tutto | `apt-get upgrade --with-new-pkgs`; i pacchetti in hold restano fermi, i file di configurazione locali sono conservati |
+| Riavvia | dopo N minuti (0–1440), con un motivo; serve scrivere il nome dell'istanza per confermare |
+| Annulla riavvio | annulla un riavvio programmato |
+
+Come funziona:
+- L'aggiornamento gira in `madmin-update os-upgrade` dentro una unit transitoria, perché needrestart può riavviare MADMIN durante l'aggiornamento. Prende il lock dell'updater, quindi non si sovrappone a un aggiornamento di MADMIN. Il comando segue il file `state/os-<id>.json` e, se viene reinviato, si riaggancia al lavoro già in corso.
+- Il riavvio è idempotente: un marcatore per comando impedisce un secondo riavvio quando il comando viene reinviato dopo il boot.
+- **Kernel in prova**: se c'è un kernel più recente di quello in uso, `grub-set-default` resta sul kernel attuale e `grub-reboot` avvia il nuovo una sola volta.
+  - L'istanza si ricollega e il manager risponde `hello_ack.kernel_confirm`: il nuovo kernel diventa il predefinito.
+  - Se dopo 15 minuti dal boot non c'è conferma, `madmin-boot-check.timer` riavvia sul kernel precedente e la prova risulta fallita, con e-mail.
+  - Un kernel in panic si riavvia da solo dopo 10 secondi (`panic=10`) sul kernel predefinito.
+
+### 10.4 Fase 5 — funzioni del manager
+
+**Rollout** (menu Rollout): una sola azione su un insieme di istanze. Le azioni sono: aggiornamento MADMIN, aggiornamento dei pacchetti, riavvio, backup.
+- Selezione: per gruppo, per etichette, escludendo chi ha già una data versione.
+- Ordine: prima il canary (le istanze con etichetta `canary=true`), poi attesa di N minuti o conferma manuale ("Prosegui oltre il canary"), poi le altre.
+- Limiti: concorrenza massima; soglia di arresto in percentuale; un fallimento nel canary ferma tutto.
+- Finestre di manutenzione del gruppo (Modifica gruppo; un cliente senza finestra usa quella del partner).
+- Partono solo le istanze online; quelle non partite entro la scadenza vengono saltate.
+- Azioni sul rollout: Ferma, Riprendi, Riprova falliti, Annulla.
+- Una release candidate va solo su una istanza o su istanze canary.
+- Aggiornamenti, aggiornamenti del sistema e riavvii sono solo per superuser; i backup sono permessi anche a partner e clienti rw, sulle proprie istanze.
+
+**Notifiche**:
+- Badge nel menu: richieste di registrazione, chiavi SSH da approvare, vulnerabilità critiche, rollout fermati o in attesa.
+- E-mail (Impostazioni → Notifiche e-mail, con pulsante di prova) a `notify_to` o a tutti i superuser con un indirizzo. Partono per:
+  - richieste di registrazione;
+  - chiavi SSH da approvare;
+  - rollout fermati o in attesa;
+  - aggiornamenti falliti o annullati;
+  - kernel in prova non adottati;
+  - segnalazioni del rescue;
+  - nuove vulnerabilità critiche.
+- Lo stesso evento parte al massimo una volta all'ora.
+
+**LDAP / Active Directory** (Impostazioni → Utenti LDAP, con "Prova un login"):
+- Login: l'account di servizio cerca l'utente, poi il manager fa il bind come l'utente.
+- Connessione sempre cifrata (ldaps o StartTLS) con il certificato verificato. Il certificato deve corrispondere al nome DNS: ldap3 non verifica i certificati emessi per un IP.
+- Gruppi letti da `memberOf` o da `groupOfNames` e `groupOfUniqueNames`, poi mappati su ruolo, accesso e gruppo del manager.
+- L'utente viene creato al primo login, con TOTP obbligatorio.
+- Un nome utente locale non viene mai cercato in LDAP: l'utente locale vince sempre.
+- Agli utenti LDAP non si cambiano password, ruolo o gruppo dal manager.
+- Sincronizzazione ogni 15 minuti:
+  - utente tolto dalla directory o dai gruppi mappati → disattivato, sessioni revocate;
+  - mappatura cambiata → aggiornato, sessioni revocate, chiavi SSH di nuovo da approvare.
+
+### 10.5 Test eseguiti (2026-11-12)
+- Manager: backup, disinstallazione, installazione, restore (tre volte). La migrazione 0001 è stata applicata al database vecchio e l'istanza si è ricollegata da sola.
+- Le migrazioni 0002–0004 sono state applicate al database esistente con la semplice reinstallazione.
+- `--ui-allow`: un IP fuori lista riceve 403 sulla UI, mentre la porta agent resta raggiungibile.
+- Supporto: 28 casi via API, tutti superati:
+  - nessuna 2FA, codice errato, già usato o mancante;
+  - chiave in attesa, chiave di altri, auto-approvazione;
+  - approvazione da un altro superuser e da riga di comando;
+  - limite di 4 sessioni e sostituzione della propria sessione SSH;
+  - cambio di accesso;
+  - blocco dopo 5 codici errati;
+  - cancellazione di utenti con chiavi.
+
+  In più, SSH vero dal Mac con il certificato: il log sshd riporta utente e impronta.
+- Inventario: 822 pacchetti OS e 48 Python arrivati dopo l'aggiornamento tramite manager. Scansione OSV: 9 avvisi critici (kernel e altri), coerenti con gli aggiornamenti in sospeso.
+- Reinstallazione dell'istanza dal repo con token di re-enroll (stessa identità) e restore del backup dal manager. GRUB, `panic=10`, unit e pip 26.3 risultano corretti.
+- Sistema operativo:
+  - aggiornamento di sicurezza: 24 pacchetti, kernel 149, in un minuto;
+  - riavvio in prova con MADMIN reso volutamente guasto sul 149: dopo 15 minuti torna sul 147 e la prova risulta fallita, con e-mail;
+  - secondo riavvio: kernel 149 confermato e predefinito in circa 1 minuto e mezzo.
+- Rollout:
+  - backup, aggiornamento di sicurezza, release già installata (saltata);
+  - finestra fuori orario (il rollout attende e riparte quando la finestra viene tolta);
+  - canary fallito con il lock dell'updater occupato: rollout fermato, e-mail e badge; "Riprova" lo porta a termine.
+- E-mail verificate con un server SMTP di cattura sulla VM del manager.
+- LDAP contro un OpenLDAP di prova con TLS: 17 casi, tutti superati. Tra questi:
+  - StartTLS e ldaps;
+  - certificato non fidato rifiutato;
+  - password errata o vuota;
+  - utente `efroot` falso nella directory che non sostituisce quello locale;
+  - sincronizzazione che disattiva e promuove.
+- Disco pieno durante un aggiornamento:
+  - prima dell'unpack: rifiutato;
+  - durante il venv: fallito senza modifiche;
+  - durante il dump: rollback.
+- Compatibilità dell'agente: 6 casi su 6.
+
+### 10.6 Bug trovati e corretti
+- Il validatore della porta SMTP aveva lo stesso nome di quello delle porte di supporto, quindi uno annullava l'altro.
+- Il login LDAP salvava l'utente solo dopo la risposta, perché il commit della dipendenza avviene dopo l'invio.
+- L'API utenti non restituiva `auth_source`.
+- **Disco pieno durante lo snapshot**: il journal restava su "running" e il manager vedeva un aggiornamento eterno. Ora l'updater tiene una riserva da 16 MB e rimuove lo snapshot parziale.
+- `os.reboot` reinviato dopo il boot poteva riavviare una seconda volta: ora c'è un marcatore per comando.
+- Gli avvisi dei kernel installati ma non in uso producevano 4400 falsi positivi.
+
+### 10.7 Attenzione
+- **Una reinstallazione dell'istanza fatta via SSH perde l'accesso SSH finché non si ripristina il backup**: il firewall appena installato non ammette nuove connessioni in ingresso. L'istanza però si collega al manager, quindi il restore da lì riporta le regole. In alternativa conviene usare la console.
+
+### 10.8 Limiti noti / da fare
+- Cerimonia delle chiavi di firma (operatore).
+- Fase 2 (deploy): host definitivo, `--ui-allow`, TOTP per tutti i superuser, prima release firmata, canary.
+- Non testato:
+  - l'agente `agent-v1-baseline` (layout piatto) contro il manager attuale; i comandi nuovi sono comunque protetti dalle capability;
+  - rollback lanciato dal rescue;
+  - le pagine nuove della UI in un browser (verificate solo via API e con la sintassi JS).
+- Non fatto:
+  - ripresa dei download interrotti;
+  - pulizia automatica delle release sul manager;
+  - controllo nel build della coerenza tra modelli e migrazioni;
+  - uso di 4429;
+  - percorso B per Ubuntu 26.04 (non previsto).
+
+### 10.9 Ambiente di test, aggiunte
+- Sul manager:
+  - OpenLDAP di prova (`dc=test,dc=local`; admin `cn=admin,dc=test,dc=local` / `LdapAdmin-2026`; utenti alice, bob, efroot falso; CA in `/etc/ldap/tls/ca.pem`);
+  - server SMTP di cattura `smtpsink` sulla porta 2525, con i messaggi in `/root/smtpsink.mbox`; l'SMTP è impostato su 127.0.0.1:2525;
+  - LDAP disattivato nelle impostazioni;
+  - file di backup del manager in `/root/*.bak`, passphrase `/root/mgr-backup.pass`.
+- Sull'istanza: `/root/fulltest.sh <release> <passo>` riempie il disco quando il journal raggiunge il passo indicato.
+- Gruppo `ldap-test-customer` creato sul manager per i test.

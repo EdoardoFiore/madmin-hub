@@ -358,7 +358,19 @@ class Advisory(SQLModel, table=True):
     # {"<ecosystem>|<package>": "<fixed version>" or ""}
     fixed_json: str = Field(default="{}")
     url: str = Field(default="", max_length=300)
+    withdrawn: bool = Field(default=False)                   # retracted by its source: never a finding
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UbuntuVex(SQLModel, table=True):
+    """Cache of the Canonical VEX document of one CVE (inventory/ubuntu.py):
+    the Ubuntu tracker status of each source package in each release."""
+    __tablename__ = "ubuntu_vex"
+
+    cve: str = Field(primary_key=True, max_length=40)
+    # {"<codename>": {"<source package>": ["<status>", "<version>"]}}; {} = no document
+    statuses_json: str = Field(default="{}")
+    fetched_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class OsvQuery(SQLModel, table=True):
@@ -382,8 +394,14 @@ class Finding(SQLModel, table=True):
     kind: str = Field(max_length=10)                         # os | python
     package: str = Field(max_length=200)                     # source package (os) or distribution (python)
     installed_version: str = Field(default="", max_length=200)
-    fixed_version: str = Field(default="", max_length=200)   # "" = no fix published yet
+    fixed_version: str = Field(default="", max_length=200)   # "" = no fix installable from the archive
     severity: str = Field(default="unknown", max_length=10, index=True)
+    # Ubuntu tracker status (ubuntu.STATUSES; "" = unknown) and the version it refers to
+    # (the fixed one for fixed/esm, otherwise the version Ubuntu assessed)
+    status: str = Field(default="", max_length=12)
+    status_version: str = Field(default="", max_length=200)
+    # GA kernel only: "<linux-hwe-X.Y> <fixed|not-affected> <version>" when the newest HWE kernel is not exposed
+    kernel_fix: str = Field(default="", max_length=250)
     first_seen: datetime = Field(default_factory=datetime.utcnow)
 
 

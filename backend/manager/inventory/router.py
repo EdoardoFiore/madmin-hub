@@ -20,11 +20,33 @@ from core.database import get_session
 
 from manager import groups as manager_groups, scope
 from manager.models import Advisory, Finding, Instance, InstanceInventory, InventoryChange
-from . import osv
+from . import osv, ubuntu
 
 router = APIRouter(prefix="/api", tags=["Inventory"])
 
 SEVERITY_ORDER = {s: n for n, s in enumerate(osv.SEVERITIES)}
+STATUS_ORDER = {s: n for n, s in enumerate(ubuntu.STATUSES)}
+STATUS_RE = r"^[a-z,-]*$"
+
+
+def _status_counts(findings) -> dict:
+    c = Counter(f.status for f in findings)
+    return {s: c.get(s, 0) for s in ubuntu.STATUSES}
+
+
+def _kernel_fix(findings) -> Optional[dict]:
+    """The newest HWE kernel that would remove some of the GA kernel findings:
+    {source, count, critical, high}."""
+    by_source = defaultdict(Counter)
+    for f in findings:
+        if f.kernel_fix:
+            source = f.kernel_fix.split(" ", 1)[0]
+            by_source[source]["count"] += 1
+            by_source[source][f.severity] += 1
+    if not by_source:
+        return None
+    source, c = max(by_source.items(), key=lambda x: x[1]["count"])
+    return {"source": source, "count": c["count"], "critical": c["critical"], "high": c["high"]}
 
 
 def _facts(instance: Instance) -> dict:
@@ -44,7 +66,8 @@ async def _instances(session, user: User, group_id: Optional[str]) -> list:
     return (await session.execute(query.order_by(Instance.name))).scalars().all()
 
 
-async def _findings(session, instance_ids: list, severity: str = "", fixable: bool = False) -> list:
+async def _findings(session, instance_ids: list, severity: str = "", fixable: bool = False,
+                    status: str = "") -> list:
     if not instance_ids:
         return []
     query = select(Finding, Advisory).join(Advisory, Advisory.id == Finding.advisory_id) \
@@ -53,6 +76,9 @@ async def _findings(session, instance_ids: list, severity: str = "", fixable: bo
         query = query.where(Finding.severity.in_(severity.split(",")))
     if fixable:
         query = query.where(Finding.fixed_version != "")
+    if status:
+        # "unknown" stands for "" (no Ubuntu data) in the query string
+        query = query.where(Finding.status.in_(["" if s == "unknown" else s for s in status.split(",")]))
     return (await session.execute(query)).all()
 
 
@@ -61,6 +87,7 @@ def _finding_out(f: Finding, a: Advisory) -> dict:
         "advisory_id": a.id, "cves": json.loads(a.aliases_json), "summary": a.summary, "url": a.url,
         "severity": f.severity, "kind": f.kind, "package": f.package,
         "installed_version": f.installed_version, "fixed_version": f.fixed_version,
+        "status": f.status, "status_version": f.status_version, "kernel_fix": f.kernel_fix,
         "first_seen": f.first_seen, "published": a.published,
     }
 
@@ -88,6 +115,9 @@ async def instance_inventory(instance_id: str, session: AsyncSession = Depends(g
                                  "pending": bool(r.wanted_digest)} for r in rows},
         "findings": {s: by_sev.get(s, 0) for s in osv.SEVERITIES},
         "fixable": sum(1 for f, _ in findings if f.fixed_version),
+        "statuses": _status_counts(f for f, _ in findings),
+        "kernel_fix": _kernel_fix(f for f, _ in findings),
+        "release": ubuntu.codename(str(facts.get("os_id") or "")),
     }
 
 
@@ -122,7 +152,8 @@ async def instance_findings(instance_id: str, session: AsyncSession = Depends(ge
     instance = await scope.get_instance(session, user, instance_id)
     rows = await _findings(session, [instance.id])
     out = [_finding_out(f, a) for f, a in rows]
-    return sorted(out, key=lambda x: (SEVERITY_ORDER.get(x["severity"], 9), not x["fixed_version"], x["package"]))
+    return sorted(out, key=lambda x: (SEVERITY_ORDER.get(x["severity"], 9), STATUS_ORDER.get(x["status"], 99),
+                                      x["package"]))
 
 
 # --- Fleet ---
@@ -146,6 +177,7 @@ async def summary(group_id: Optional[str] = Query(default=None, max_length=36),
         "instances_affected": {s: len(instances_by_sev[s]) for s in osv.SEVERITIES},
         "fixable_instances": len({f.instance_id for f, _ in findings if f.fixed_version
                                   and f.severity in ("critical", "high")}),
+        "statuses": _status_counts(f for f, _ in findings),
         "reboot_required": sum(1 for s in statuses if s.get("reboot_required")),
         "pending_security": sum(1 for s in statuses if (s.get("pending_security") or 0) > 0),
         "scan": dict(osv.state),
@@ -156,25 +188,31 @@ async def summary(group_id: Optional[str] = Query(default=None, max_length=36),
 async def advisories(group_id: Optional[str] = Query(default=None, max_length=36),
                      severity: str = Query(default="", max_length=60),
                      fixable: bool = False, q: str = Query(default="", max_length=100),
+                     status: str = Query(default="", max_length=120, pattern=STATUS_RE),
                      session: AsyncSession = Depends(get_session),
                      user: User = Depends(require_permission("scope.view"))):
     instances = await _instances(session, user, group_id)
-    rows = await _findings(session, [i.id for i in instances], severity, fixable)
+    rows = await _findings(session, [i.id for i in instances], severity, fixable, status)
     agg = {}
     for f, a in rows:
         e = agg.setdefault(a.id, {"advisory_id": a.id, "cves": json.loads(a.aliases_json), "summary": a.summary,
                                   "severity": a.severity, "url": a.url, "packages": set(), "instances": set(),
-                                  "fixable": 0, "kind": f.kind})
+                                  "fixable": 0, "kind": f.kind, "statuses": Counter(), "kernel_fix": ""})
         e["packages"].add(f.package)
         e["instances"].add(f.instance_id)
         e["fixable"] += 1 if f.fixed_version else 0
+        e["statuses"][f.status] += 1
+        e["kernel_fix"] = e["kernel_fix"] or f.kernel_fix
     out = []
     ql = q.lower()
     for e in agg.values():
         if ql and ql not in e["advisory_id"].lower() and not any(ql in c.lower() for c in e["cves"]) \
                 and not any(ql in p.lower() for p in e["packages"]):
             continue
-        out.append({**e, "packages": sorted(e["packages"]), "instances": len(e["instances"])})
+        # the most actionable status among the instances (fixed before pending before needed...)
+        main = min(e["statuses"], key=lambda s: STATUS_ORDER.get(s, 99))
+        out.append({**e, "packages": sorted(e["packages"]), "instances": len(e["instances"]),
+                    "status": main, "statuses": dict(e["statuses"])})
     return sorted(out, key=lambda x: (SEVERITY_ORDER.get(x["severity"], 9), -x["instances"], x["advisory_id"]))[:2000]
 
 
@@ -193,6 +231,7 @@ async def advisory_detail(advisory_id: str, group_id: Optional[str] = Query(defa
         "severity": adv.severity, "published": adv.published, "modified": adv.modified,
         "instances": [{"id": f.instance_id, "name": instances[f.instance_id].name, "package": f.package,
                        "installed_version": f.installed_version, "fixed_version": f.fixed_version,
+                       "status": f.status, "status_version": f.status_version, "kernel_fix": f.kernel_fix,
                        "first_seen": f.first_seen} for f in rows],
     }
 
@@ -205,10 +244,13 @@ async def fleet_instances(group_id: Optional[str] = Query(default=None, max_leng
     findings = await _findings(session, [i.id for i in instances])
     counts = defaultdict(Counter)
     fixable = Counter()
+    pending = Counter()
     for f, _ in findings:
         counts[f.instance_id][f.severity] += 1
         if f.fixed_version:
             fixable[f.instance_id] += 1
+        if f.status == "pending":
+            pending[f.instance_id] += 1
     out = []
     for i in instances:
         facts = _facts(i)
@@ -221,6 +263,7 @@ async def fleet_instances(group_id: Optional[str] = Query(default=None, max_leng
             "pending_security": st.get("pending_security"), "apt_updated_at": st.get("apt_updated_at"),
             "unattended_upgrades": st.get("unattended_upgrades"),
             "findings": {s: counts[i.id].get(s, 0) for s in osv.SEVERITIES}, "fixable": fixable[i.id],
+            "pending": pending[i.id],
         })
     return out
 
@@ -249,10 +292,12 @@ async def export_csv(group_id: Optional[str] = Query(default=None, max_length=36
     out = io.StringIO()
     w = csv.writer(out, delimiter=";")
     w.writerow(["istanza", "id_istanza", "severita", "advisory", "cve", "tipo", "pacchetto",
-                "versione_installata", "versione_corretta", "prima_rilevazione"])
+                "versione_installata", "versione_corretta", "stato_ubuntu", "versione_stato", "kernel_hwe",
+                "prima_rilevazione"])
     for f, a in sorted(rows, key=lambda r: (instances[r[0].instance_id].name, SEVERITY_ORDER.get(r[0].severity, 9))):
         cells = [instances[f.instance_id].name, f.instance_id, f.severity, a.id, " ".join(json.loads(a.aliases_json)),
-                 f.kind, f.package, f.installed_version, f.fixed_version, f.first_seen.isoformat()]
+                 f.kind, f.package, f.installed_version, f.fixed_version, f.status, f.status_version, f.kernel_fix,
+                 f.first_seen.isoformat()]
         # Spreadsheet formula injection: a cell never starts with = + - @
         w.writerow([("'" + c) if isinstance(c, str) and c[:1] in ("=", "+", "-", "@") else c for c in cells])
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",

@@ -409,6 +409,7 @@ Steps:
 - [x] Notifications (e-mail and menu badge) for a new critical finding.
 - [x] Scope: filtered by `manager/scope.py`.
 - [x] Release build: `build-release.sh` checks the wheels against OSV; a critical advisory stops the build unless waived in `scripts/osv-waivers.txt` (it found certifi, pillow, dnspython and pip: fixed).
+- [x] Ubuntu status of each OS finding (`inventory/ubuntu.py`). OSV says only "affected, no fixed version" until Ubuntu publishes a fix, so on a fully updated instance every finding looked the same. The Canonical VEX document of each CVE (`raw.githubusercontent.com/canonical/ubuntu-security-notices/main/vex/cve/<year>/<cve>.json`, table `UbuntuVex`, cached 20 h) gives the tracker status per release and source package: fixed, pending (fix prepared: for the kernel, the next SRU), needed, triage, deferred, ignored, eol, esm (Pro only), not affected. Not findings: withdrawn advisories, packages Ubuntu marks not affected, fixes not newer than the installed version (OSV lags a few days). `stale` = Ubuntu assessed an older version than the installed one (probably fixed). For the GA kernel the finding says when the newest HWE kernel already has the fix. Outbound destinations of the manager: `api.osv.dev` and `raw.githubusercontent.com`. On the first test instance (Ubuntu 24.04, fully updated): 1615 findings, 0 fixable; 10 false positives removed, 595 kernel CVEs with the fix pending (all 5 critical), ~560 already fixed in `linux-hwe-7.0`.
 
 ## 9. Phase 4 — OS actions
 

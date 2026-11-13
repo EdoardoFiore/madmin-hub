@@ -22,6 +22,49 @@ export function severityBadge(s) {
     return `<span class="badge ${cls}">${label}</span>`;
 }
 
+// Ubuntu tracker status of a finding (backend/manager/inventory/ubuntu.py), most actionable first
+export const STATUS = {
+    fixed: ['Correggibile', 'bg-success-lt', 'Correzione pubblicata: si installa con gli aggiornamenti'],
+    pending: ['Correzione in arrivo', 'bg-azure-lt', 'Ubuntu ha preparato la correzione, non ancora pubblicata (per il kernel: il prossimo rilascio)'],
+    stale: ['Da verificare', 'bg-teal-lt', 'Ubuntu ha valutato una versione precedente a quella installata: probabilmente già corretta, i dati Ubuntu non sono ancora aggiornati'],
+    needed: ['Senza correzione', 'bg-orange-lt', 'Vulnerabile: Ubuntu non ha ancora una correzione'],
+    triage: ['In valutazione', 'bg-secondary-lt', 'Non ancora valutata dal team di sicurezza Ubuntu: può risultare non applicabile'],
+    deferred: ['Rimandata', 'bg-secondary-lt', 'Vulnerabile: Ubuntu ha rimandato la correzione'],
+    esm: ['Solo Ubuntu Pro', 'bg-purple-lt', 'Corretta solo nei repository Ubuntu Pro (ESM)'],
+    ignored: ['Non verrà corretta', 'bg-dark-lt', 'Ubuntu ha deciso di non correggerla (rischio basso o correzione non praticabile)'],
+    eol: ['Non supportato', 'bg-dark-lt', 'Il pacchetto non è più supportato in questa release'],
+    '': ['Nessuna correzione nota', 'bg-secondary-lt', 'Nessuna versione corretta nota'],
+};
+
+export const STATUS_FILTERS = [
+    ['', 'Tutti gli stati'],
+    ['fixed', 'Correggibili ora'],
+    ['pending', 'Correzione in arrivo'],
+    ['needed,triage,deferred,unknown', 'Senza correzione'],
+    ['stale', 'Da verificare'],
+    ['esm,ignored,eol', 'Non verranno corrette'],
+];
+
+export function statusBadge(s) {
+    const [label, cls, title] = STATUS[s] || STATUS[''];
+    return `<span class="badge ${cls}" title="${escapeHtml(title)}">${label}</span>`;
+}
+
+/** "linux-hwe-7.0 fixed 7.0.0-43.43~24.04.1" -> text for the GA kernel findings */
+export function kernelFixText(kf) {
+    if (!kf) return '';
+    const [source, status, version] = kf.split(' ');
+    return status === 'fixed' ? `corretta nel kernel HWE ${source} (${version})` : `non presente nel kernel HWE ${source}`;
+}
+
+/** Status badge with its version: "in <fixed>" or the version Ubuntu assessed. */
+export function statusCell(f) {
+    const v = f.fixed_version || f.status_version;
+    const what = f.fixed_version || f.status === 'esm' ? 'in' : f.status === 'stale' ? 'valutata' : '';
+    return `${statusBadge(f.status)}${what && v ? `<div class="small text-muted font-monospace">${what} ${escapeHtml(v)}</div>` : ''}
+        ${f.kernel_fix ? `<div class="small text-muted">${escapeHtml(kernelFixText(f.kernel_fix))}</div>` : ''}`;
+}
+
 export function advisoryLink(a) {
     const cves = (a.cves || []).slice(0, 3).join(', ');
     return `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener noreferrer" class="font-monospace">${escapeHtml(a.advisory_id)}</a>
@@ -29,7 +72,7 @@ export function advisoryLink(a) {
 }
 
 let containerEl = null;
-let state = { tab: 'advisories', group: '', severity: 'critical,high', fixable: false, q: '' };
+let state = { tab: 'advisories', group: '', severity: 'critical,high', status: '', q: '' };
 
 function qs(extra = {}) {
     const p = new URLSearchParams();
@@ -66,6 +109,13 @@ export async function render(container) {
             ${card('Riavvio richiesto', sum.reboot_required, sum.reboot_required ? 'text-warning' : '', 'istanze')}
             ${card('Aggiornamenti sicurezza', sum.pending_security, '', `istanze con aggiornamenti in sospeso (su ${sum.instances})`)}
         </div>
+        ${scan.vex_error ? `<div class="alert alert-warning py-2">Stato Ubuntu non aggiornato per alcune CVE: ${escapeHtml(scan.vex_error)}</div>` : ''}
+        <div class="card mb-3"><div class="card-body py-2 d-flex flex-wrap gap-3 align-items-center">
+            <span class="text-muted small">Stato secondo Ubuntu (rilevazioni, tutte le gravità):</span>
+            ${Object.entries(sum.statuses || {}).filter(([, n]) => n).map(([s, n]) =>
+                `<a role="button" class="text-reset" ${actionAttrs('vulnStatus', s || 'unknown')}>${statusBadge(s)} ${n}</a>`).join('')
+                || '<span class="text-muted small">nessuna rilevazione</span>'}
+        </div></div>
         <div class="card">
             <div class="card-header">
                 <ul class="nav nav-tabs card-header-tabs">
@@ -91,30 +141,34 @@ async function renderTab() {
 }
 
 async function advisoriesTab(el) {
-    const rows = await apiGet(`/vulnerabilities/advisories${qs({ severity: state.severity, fixable: state.fixable, q: state.q })}`);
+    const rows = await apiGet(`/vulnerabilities/advisories${qs({ severity: state.severity, status: state.status, q: state.q })}`);
+    const filters = STATUS_FILTERS.some(([v]) => v === state.status) ? STATUS_FILTERS
+        : [...STATUS_FILTERS, [state.status, (STATUS[state.status === 'unknown' ? '' : state.status] || STATUS[''])[0]]];
     el.innerHTML = `
         <div class="card-body border-bottom d-flex flex-wrap gap-2 align-items-center">
             <select class="form-select form-select-sm w-auto" id="vuln-sev">
                 ${[['critical,high', 'Critiche e alte'], ['critical', 'Solo critiche'], ['critical,high,medium', 'Fino a medie'], ['', 'Tutte']]
                     .map(([v, l]) => `<option value="${v}" ${v === state.severity ? 'selected' : ''}>${l}</option>`).join('')}
             </select>
-            <label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="vuln-fix" ${state.fixable ? 'checked' : ''}>
-                <span class="form-check-label">Solo con correzione disponibile</span></label>
+            <select class="form-select form-select-sm w-auto" id="vuln-status">
+                ${filters.map(([v, l]) => `<option value="${v}" ${v === state.status ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+            </select>
             <input class="form-control form-control-sm w-auto ms-auto" id="vuln-q" placeholder="CVE, pacchetto..." value="${escapeHtml(state.q)}">
         </div>
         <div class="table-responsive"><table class="table card-table table-vcenter">
-            <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Tipo</th><th>Pacchetti</th><th>Istanze</th><th>Correzione</th><th>Descrizione</th></tr></thead>
+            <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Tipo</th><th>Pacchetti</th><th>Istanze</th><th>Stato Ubuntu</th><th>Descrizione</th></tr></thead>
             <tbody>${rows.map(r => `<tr class="cursor-pointer" ${actionAttrs('vulnAdvisory', r.advisory_id)}>
                 <td>${advisoryLink(r)}</td><td>${severityBadge(r.severity)}</td>
                 <td>${r.kind === 'os' ? 'OS' : 'Python'}</td>
                 <td class="small">${escapeHtml(r.packages.slice(0, 4).join(', '))}${r.packages.length > 4 ? '…' : ''}</td>
                 <td>${r.instances}</td>
-                <td>${r.fixable ? '<span class="badge bg-success-lt">disponibile</span>' : '<span class="badge bg-secondary-lt">non ancora</span>'}</td>
+                <td>${statusBadge(r.status)}${Object.keys(r.statuses || {}).length > 1 ? '<div class="small text-muted">varia per istanza</div>' : ''}
+                    ${r.kernel_fix ? `<div class="small text-muted">${escapeHtml(kernelFixText(r.kernel_fix))}</div>` : ''}</td>
                 <td class="small text-muted text-truncate" style="max-width: 28rem">${escapeHtml(r.summary)}</td>
             </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Nessuna vulnerabilità con questi filtri</td></tr>'}</tbody>
         </table></div>`;
     el.querySelector('#vuln-sev').addEventListener('change', (e) => { state.severity = e.target.value; renderTab(); });
-    el.querySelector('#vuln-fix').addEventListener('change', (e) => { state.fixable = e.target.checked; renderTab(); });
+    el.querySelector('#vuln-status').addEventListener('change', (e) => { state.status = e.target.value; renderTab(); });
     el.querySelector('#vuln-q').addEventListener('change', (e) => { state.q = e.target.value.trim(); renderTab(); });
 }
 
@@ -128,7 +182,7 @@ async function instancesTab(el) {
     const rank = r => -(r.findings.critical * 1e6 + r.findings.high * 1e3 + r.findings.medium);
     rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     el.innerHTML = `<div class="table-responsive"><table class="table card-table table-vcenter">
-        <thead><tr><th>Istanza</th><th>MADMIN</th><th>OS</th><th>Kernel</th><th>Riavvio</th><th>Aggiornamenti</th><th>Vulnerabilità</th><th>Correggibili</th></tr></thead>
+        <thead><tr><th>Istanza</th><th>MADMIN</th><th>OS</th><th>Kernel</th><th>Riavvio</th><th>Aggiornamenti</th><th>Vulnerabilità</th><th>Correggibili</th><th>In arrivo</th></tr></thead>
         <tbody>${rows.map(r => `<tr class="cursor-pointer" ${actionAttrs('vulnInstance', r.id)}>
             <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.version || '-')}</td>
             <td class="small">${escapeHtml(r.os || '-')}</td>
@@ -138,7 +192,8 @@ async function instancesTab(el) {
             <td>${r.pending_updates == null ? '-' : `${r.pending_updates}${r.pending_security ? ` <span class="badge bg-red-lt">${r.pending_security} sicurezza</span>` : ''}`}
                 ${r.apt_updated_at ? `<div class="small text-muted">liste: ${relTime(new Date(r.apt_updated_at * 1000).toISOString())}</div>` : ''}</td>
             <td>${sevCounts(r.findings)}</td><td>${r.fixable || '-'}</td>
-        </tr>`).join('') || '<tr><td colspan="8" class="text-muted">Nessuna istanza</td></tr>'}</tbody>
+            <td title="${escapeHtml(STATUS.pending[2])}">${r.pending || '-'}</td>
+        </tr>`).join('') || '<tr><td colspan="9" class="text-muted">Nessuna istanza</td></tr>'}</tbody>
     </table></div>`;
 }
 
@@ -154,6 +209,7 @@ async function versionsTab(el) {
 
 registerActions({
     vulnTab: (tab) => { state.tab = tab; render(containerEl); },
+    vulnStatus: (status) => { state.tab = 'advisories'; state.status = status; state.severity = ''; render(containerEl); },
     vulnInstance: (id) => { location.hash = `#instances/${id}/packages`; },
     vulnAdvisory: async (id) => {
         try {
@@ -162,10 +218,10 @@ registerActions({
                 <div class="mb-2">${severityBadge(d.severity)} <span class="text-muted small">pubblicata ${fmtDate(d.published)}</span></div>
                 <p>${escapeHtml(d.summary)}</p>
                 <p class="small">${escapeHtml((d.cves || []).join(', '))} · <a href="${escapeHtml(d.url)}" target="_blank" rel="noopener noreferrer">dettagli</a></p>
-                <table class="table table-sm"><thead><tr><th>Istanza</th><th>Pacchetto</th><th>Installato</th><th>Corretto in</th><th>Dal</th></tr></thead>
+                <table class="table table-sm"><thead><tr><th>Istanza</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th><th>Dal</th></tr></thead>
                 <tbody>${d.instances.map(i => `<tr><td><a href="#instances/${escapeHtml(i.id)}/packages" data-bs-dismiss="modal">${escapeHtml(i.name)}</a></td>
                     <td>${escapeHtml(i.package)}</td><td class="font-monospace small">${escapeHtml(i.installed_version)}</td>
-                    <td class="font-monospace small">${escapeHtml(i.fixed_version || 'non ancora')}</td><td>${fmtDate(i.first_seen)}</td></tr>`).join('')}</tbody></table>`);
+                    <td>${statusCell(i)}</td><td>${fmtDate(i.first_seen)}</td></tr>`).join('')}</tbody></table>`);
         } catch (e) { showToast(e.message, 'error'); }
     },
     vulnScan: async () => {

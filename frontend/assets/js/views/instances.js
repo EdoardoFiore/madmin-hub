@@ -10,7 +10,7 @@ import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
          cmpVersion, meter, STATUS_LABELS } from './manager-common.js';
-import { severityBadge, advisoryLink } from './vulnerabilities.js';
+import { severityBadge, advisoryLink, statusBadge, statusCell } from './vulnerabilities.js';
 
 const TABS = [
     ['overview', 'Panoramica', 'scope.view'],
@@ -900,6 +900,17 @@ async function packages(el, i) {
         ${st.reboot_scheduled_at ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerOsRebootCancel')}><i class="ti ti-x me-1"></i>Annulla riavvio</button>` : ''}
     </div>` : '';
     const rest = findings.length - top.length;
+    const ss = inv.statuses || {};
+    const total = findings.length;
+    // One sentence that says whether there is something to do on this instance
+    const verdict = !total ? ['alert-success', 'Nessuna vulnerabilità nota.']
+        : inv.fixable ? ['alert-warning', `${inv.fixable} vulnerabilità si correggono con gli aggiornamenti già disponibili: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>)${st.reboot_required ? ', poi riavvio' : ''}.`]
+        : st.reboot_required ? ['alert-warning', 'Aggiornamenti installati: serve il <b>riavvio</b> per applicarli.']
+        : ['alert-info', `Il sistema è aggiornato: nessuna delle ${total} vulnerabilità ha una correzione installabile ora.
+            ${ss.pending ? `${ss.pending} hanno la correzione già preparata da Ubuntu (arriverà con i prossimi aggiornamenti).` : ''}
+            ${ss.stale ? `${ss.stale} risultano probabilmente già corrette (dati Ubuntu non ancora aggiornati).` : ''}`];
+    const kf = inv.kernel_fix;
+    const hweMeta = inv.os_id && inv.os_id.startsWith('ubuntu-') ? `linux-generic-hwe-${inv.os_id.slice(7)}` : 'linux-generic-hwe';
     el.innerHTML = `<div class="card-body">
         ${osActions}
         <div class="row g-3">
@@ -920,14 +931,21 @@ async function packages(el, i) {
                 ['Pacchetti Python', secInfo('python')],
             ])}</div>
             <div class="col-lg-7">
-                <div class="mb-2">${Object.entries(inv.findings).filter(([, n]) => n).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' &nbsp; ') || '<span class="text-muted">Nessuna vulnerabilità nota</span>'}
-                    ${inv.fixable ? `<span class="ms-2 small text-muted">${inv.fixable} con correzione disponibile</span>` : ''}</div>
+                <div class="alert ${verdict[0]} py-2 mb-2">${verdict[1]}</div>
+                <div class="mb-1">${Object.entries(inv.findings).filter(([, n]) => n).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' &nbsp; ') || ''}</div>
+                ${total ? `<div class="mb-2 small">${Object.entries(ss).filter(([, n]) => n).map(([s, n]) => `${statusBadge(s)} ${n}`).join(' &nbsp; ')}</div>` : ''}
+                ${kf ? `<div class="alert alert-secondary py-2 small mb-2">
+                    <b>${kf.count}</b> vulnerabilità del kernel${kf.critical || kf.high ? ` (${[kf.critical ? `${kf.critical} critiche` : '', kf.high ? `${kf.high} alte` : ''].filter(Boolean).join(', ')})` : ''}
+                    sono già corrette (o non presenti) nel kernel HWE <span class="font-monospace">${escapeHtml(kf.source)}</span>.
+                    Il kernel in uso (GA) le riceverà con i prossimi rilasci; in alternativa si può passare al kernel HWE
+                    (<span class="font-monospace">${escapeHtml(hweMeta)}</span>), che segue una serie di kernel più recente e cambia serie
+                    a ogni point release: va provato prima su un'istanza di test.</div>` : ''}
                 <div class="table-responsive"><table class="table table-sm table-vcenter">
-                    <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Corretto in</th></tr></thead>
+                    <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th></tr></thead>
                     <tbody>${top.map(f => `<tr><td>${advisoryLink(f)}</td><td>${severityBadge(f.severity)}</td>
                         <td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
                         <td class="font-monospace small">${escapeHtml(f.installed_version)}</td>
-                        <td class="font-monospace small">${escapeHtml(f.fixed_version || 'non ancora')}</td></tr>`).join('')
+                        <td>${statusCell(f)}</td></tr>`).join('')
                         || '<tr><td colspan="5" class="text-muted">Nessuna vulnerabilità critica o alta</td></tr>'}</tbody>
                 </table></div>
                 ${rest ? `<div class="small text-muted">Altre ${rest} di gravità media o inferiore: <a href="#vulnerabilities">Vulnerabilità</a> o esportazione CSV.</div>` : ''}

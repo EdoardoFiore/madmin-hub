@@ -9,6 +9,13 @@ QUERY_MAX_AGE, an advisory is fetched again when OSV reports it modified.
 An instance is scanned when one of its sections changes (mark_dirty) and every
 instance once a day. The findings of an instance are the advisories that
 affect its packages now; first_seen survives the recomputation.
+
+For the OS packages OSV says only "affected" until Ubuntu publishes a fix, so
+the Ubuntu tracker status of each CVE (fix pending, not fixed, deferred, will
+not be fixed, ...) comes from the Canonical VEX documents (ubuntu.py), cached
+like the advisories. A withdrawn advisory, a package Ubuntu marks not affected
+and a fix not newer than the installed version (OSV lagging behind) are not
+findings.
 """
 import asyncio
 import json
@@ -24,13 +31,15 @@ from sqlmodel import select
 
 from core.database import async_session_maker
 
-from manager.models import Advisory, Finding, Instance, InstanceInventory, OsvQuery
+from manager.models import Advisory, Finding, Instance, InstanceInventory, OsvQuery, UbuntuVex
+from . import ubuntu
 
 logger = logging.getLogger("madmin_manager.osv")
 
 API = "https://api.osv.dev/v1"
 BATCH = 500
 QUERY_MAX_AGE = timedelta(hours=20)
+VEX_MAX_AGE = timedelta(hours=20)
 DAILY = timedelta(hours=24)
 LOOP_INTERVAL = 60
 FETCH_CONCURRENCY = 8
@@ -38,7 +47,8 @@ SEVERITIES = ("critical", "high", "medium", "low", "negligible", "unknown")
 
 _dirty: Set[str] = set()
 _last_full: Optional[datetime] = None
-state = {"last_scan_at": None, "last_error": "", "running": False}
+# vex_error: the Ubuntu statuses could not be refreshed (the scan goes on with the cached ones)
+state = {"last_scan_at": None, "last_error": "", "vex_error": "", "running": False}
 
 
 def mark_dirty(instance_id: str) -> None:
@@ -242,11 +252,90 @@ async def _advisories(client: httpx.AsyncClient, wanted: Dict[str, str]) -> Dict
                 refs = v.get("references") or []
                 row.url = (next((r.get("url") for r in refs if r.get("type") == "ADVISORY"), None)
                            or f"https://osv.dev/vulnerability/{vid}")[:300]
+                row.withdrawn = bool(v.get("withdrawn"))
                 row.fetched_at = datetime.utcnow()
                 session.add(row)
                 out[vid] = row
             await session.commit()
     return out
+
+
+async def _vex(client: httpx.AsyncClient, cves: Set[str]) -> Dict[str, dict]:
+    """Ubuntu statuses of these CVEs ({cve: {codename: {source: [status, version]}}}),
+    fetched again after VEX_MAX_AGE. A CVE without a document maps to {}; one that
+    cannot be fetched keeps its cached statuses (or none), and state["vex_error"] says so."""
+    now = datetime.utcnow()
+    out: Dict[str, dict] = {}
+    cached: Dict[str, UbuntuVex] = {}
+    async with async_session_maker() as session:
+        ids = sorted(cves)
+        for i in range(0, len(ids), 1000):
+            for row in (await session.execute(select(UbuntuVex).where(UbuntuVex.cve.in_(ids[i:i + 1000])))).scalars():
+                cached[row.cve] = row
+                out[row.cve] = json.loads(row.statuses_json)
+    stale = [c for c in sorted(cves) if ubuntu.vex_url(c) and (c not in cached or now - cached[c].fetched_at > VEX_MAX_AGE)]
+    sem = asyncio.Semaphore(FETCH_CONCURRENCY)
+    errors: List[str] = []
+
+    async def fetch(cve: str) -> Optional[dict]:
+        async with sem:
+            try:
+                r = await client.get(ubuntu.vex_url(cve))
+                if r.status_code == 404:
+                    return {}
+                r.raise_for_status()
+                return ubuntu.parse(r.json())
+            except (httpx.HTTPError, ValueError) as e:
+                errors.append(f"{cve}: {e}")
+                return None
+
+    for i in range(0, len(stale), 200):
+        chunk = stale[i:i + 200]
+        results = await asyncio.gather(*(fetch(c) for c in chunk))
+        async with async_session_maker() as session:
+            for cve, statuses in zip(chunk, results):
+                if statuses is None:
+                    continue
+                row = await session.get(UbuntuVex, cve) or UbuntuVex(cve=cve)
+                row.statuses_json = json.dumps(statuses, separators=(",", ":"))
+                row.fetched_at = now
+                session.add(row)
+                out[cve] = statuses
+            await session.commit()
+    state["vex_error"] = f"{len(errors)} CVE non aggiornate ({errors[0]})"[:300] if errors else ""
+    if errors:
+        logger.warning("Ubuntu VEX: %d documents not fetched, first: %s", len(errors), errors[0])
+    return out
+
+
+def _ubuntu_status(adv: Advisory, vex: Dict[str, dict], release: str) -> Dict[str, list]:
+    """Statuses of the release for the first CVE of the advisory that has some."""
+    for cve in json.loads(adv.aliases_json):
+        statuses = (vex.get(cve) or {}).get(release)
+        if statuses:
+            return statuses
+    return {}
+
+
+def _classify(kind: str, version: str, fixed: str, statuses: Dict[str, list], name: str):
+    """(status, status_version, fixed_version, kernel_fix) of one finding, or
+    None when it is not one (Ubuntu: not affected, or already fixed in the
+    installed version while OSV still lists it)."""
+    if kind != "os":
+        return ("fixed" if fixed else ""), "", fixed, ""
+    status, status_version = (statuses.get(name) or ["", ""])[:2]
+    if status == "not-affected":
+        return None
+    if status in ("fixed", "esm") and status_version and ubuntu.compare(version, status_version) >= 0:
+        return None
+    if status == "fixed" and not fixed:
+        fixed = status_version
+    elif status not in ("fixed", "esm") and status_version and ubuntu.compare(version, status_version) > 0:
+        status = "stale"
+    if fixed and not status:
+        status = "fixed"
+    alt = ubuntu.kernel_alternative(statuses, name)
+    return status, status_version, fixed, " ".join(alt) if alt else ""
 
 
 async def scan(instance_ids: Optional[List[str]] = None) -> dict:
@@ -273,6 +362,20 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                 if vid:
                     wanted[vid] = max(wanted.get(vid, ""), modified or "")
         advisories = await _advisories(client, wanted)
+        releases = {inst.id: ubuntu.codename(str(json.loads(inst.facts_json or "{}").get("os_id", "")))
+                    for inst in instances}
+        cves: Set[str] = set()
+        for inst in instances:
+            if not releases[inst.id]:
+                continue
+            for kind, eco, name, version in targets[inst.id]:
+                if kind != "os":
+                    continue
+                for vid, _ in answers.get(f"{eco}|{name}|{version}", []):
+                    adv = advisories.get(vid)
+                    if adv is not None and not adv.withdrawn:
+                        cves.update(json.loads(adv.aliases_json))
+        vex = await _vex(client, cves) if cves else {}
     total = 0
     new_critical = []
     async with async_session_maker() as session:
@@ -283,7 +386,12 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
             for kind, eco, name, version in targets[inst.id]:
                 for vid, _ in answers.get(f"{eco}|{name}|{version}", []):
                     adv = advisories.get(vid)
-                    if adv is None or (vid, name) in seen:
+                    if adv is None or adv.withdrawn or (vid, name) in seen:
+                        continue
+                    statuses = _ubuntu_status(adv, vex, releases[inst.id]) if kind == "os" and releases[inst.id] else {}
+                    verdict = _classify(kind, version, json.loads(adv.fixed_json).get(_pkg_key(eco, name), ""),
+                                        statuses, name)
+                    if verdict is None:
                         continue
                     seen.add((vid, name))
                     f = current.get((vid, name))
@@ -292,7 +400,8 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                         if adv.severity == "critical":
                             new_critical.append((inst.name, vid, name))
                     f.installed_version = version[:200]
-                    f.fixed_version = json.loads(adv.fixed_json).get(_pkg_key(eco, name), "")[:200]
+                    f.status, f.status_version, f.fixed_version, f.kernel_fix = (
+                        verdict[0], verdict[1][:200], verdict[2][:200], verdict[3][:250])
                     f.severity = adv.severity
                     session.add(f)
             for (vid, name), f in current.items():

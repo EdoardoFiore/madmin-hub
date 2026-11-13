@@ -76,6 +76,14 @@ def apply_facts(instance: Instance, facts: dict) -> None:
     if len(raw) > _MAX_FACTS:
         logger.warning("Facts of %s too large (%d bytes): ignored", instance.id, len(raw))
         return
+    try:
+        old_kernel = json.loads(instance.facts_json or "{}").get("kernel")
+    except ValueError:
+        old_kernel = None
+    if old_kernel and facts.get("kernel") and facts.get("kernel") != old_kernel:
+        # Another kernel running: its findings change (and whether a reboot is worth it)
+        from manager.inventory import osv
+        osv.mark_dirty(instance.id)
     instance.facts_json = raw
     instance.hostname = _clip(facts.get("hostname"), 255)
     instance.machine_id = _clip(facts.get("machine_id"), 64)

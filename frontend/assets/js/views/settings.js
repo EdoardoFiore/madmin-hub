@@ -34,7 +34,7 @@ const FIELDS = [
         ['release_keys', 'Chiavi pubbliche di firma (PEM, una o più): una release caricata deve essere firmata da una di queste. Vuoto = non verificata qui (le istanze la verificano sempre)', 'textarea'],
     ]],
     ['Aggiornamenti automatici delle istanze', [
-        ['autoupdate_time', 'Ora (ogni giorno: aggiornamenti di sicurezza e riavvio dei servizi che li usano; la macchina non si riavvia mai da sola). Un gruppo può avere la sua', 'time'],
+        ['autoupdate_time', 'Ora (ogni giorno: solo gli aggiornamenti di sicurezza della versione di Ubuntu installata, mai gli aggiornamenti normali né un\'altra versione di Ubuntu; poi riavvio dei servizi che li usano, mai della macchina). Un gruppo può avere la sua', 'time'],
         ['autoupdate_tz', 'Fuso orario (es. Europe/Rome)', 'text'],
         ['autoupdate_randomize', 'Ritardo casuale massimo (minuti, 0-180): le istanze non si aggiornano tutte nello stesso istante', 'number'],
     ]],

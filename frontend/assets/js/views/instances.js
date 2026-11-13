@@ -975,8 +975,8 @@ async function packages(el, i) {
         : stateTile('ti-package', 'Aggiornamenti', st.pending_updates == null ? '-' : `${st.pending_security || 0} di sicurezza`, 'muted',
             'anteprima non disponibile (aggiornare MADMIN)');
     const autoTile = stateTile('ti-clock-play', 'Automatici', au.time ? `ogni notte ${escapeHtml(au.time)}` : 'orario Ubuntu', 'muted',
-        au.next_run ? `prossimo ${ts(au.next_run)}` : (au.tz || ''),
-        'Ogni giorno installano gli aggiornamenti di sicurezza e riavviano i servizi che li usano (pochi secondi); la macchina non si riavvia mai da sola. Ora per gruppo o in Impostazioni.');
+        `solo sicurezza${au.next_run ? ` · prossimo ${ts(au.next_run)}` : ''}`,
+        'Ogni giorno installano solo gli aggiornamenti di sicurezza della versione di Ubuntu installata (versioni corrette degli stessi pacchetti: mai gli aggiornamenti normali, mai un\'altra versione di Ubuntu), poi riavviano i servizi che li usano (pochi secondi). La macchina non si riavvia mai da sola. Ora per gruppo o in Impostazioni.');
 
     const menu = osManage ? `<div class="dropdown">
         <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown"><i class="ti ti-dots me-1"></i>Azioni</button>
@@ -1009,11 +1009,11 @@ async function packages(el, i) {
         ${total ? `<div class="small mb-2"><span class="text-muted">Note:</span> ${sevBadges(inv.findings)}
             <a href="#vulnerabilities" class="ms-2">tutte le istanze</a></div>` : '<div class="text-muted">Nessuna vulnerabilità nota.</div>'}
         ${fixable.length ? `<div class="table-responsive" style="max-height: 18rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-2">
-            <thead class="sticky-top bg-body"><tr><th>Da correggere</th><th>Gravità</th><th>Pacchetto</th><th>Stato</th></tr></thead>
+            <thead class="bg-body" style="position: sticky; top: 0; z-index: 1"><tr><th>Da correggere</th><th>Gravità</th><th>Pacchetto</th><th>Stato</th></tr></thead>
             <tbody>${fixable.map(f => findingRow(f, true)).join('')}</tbody></table></div>` : ''}
         ${byPackage.length ? `<details><summary class="small text-muted cursor-pointer">Tutte, per pacchetto (${byPackage.length} pacchetti, ${total} vulnerabilità)</summary>
             <div class="table-responsive mt-2" style="max-height: 24rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0" id="vuln-pkgs">
-            <thead class="sticky-top bg-body"><tr><th></th><th>Pacchetto</th><th class="text-end">Totale</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
+            <thead class="bg-body" style="position: sticky; top: 0; z-index: 1"><tr><th></th><th>Pacchetto</th><th class="text-end">Totale</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
             <tbody>${byPackage.map((g, n) => `<tr class="cursor-pointer" data-pkg="${n}">
                 <td class="text-muted" style="width: 1.5rem"><i class="ti ti-chevron-right"></i></td>
                 <td>${escapeHtml(g.package)}${g.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
@@ -1030,7 +1030,7 @@ async function packages(el, i) {
     const items = up.available ? up.items || [] : [];
     const updBody = !up.available ? '<div class="text-muted small">L\'istanza non invia ancora l\'anteprima: aggiornare MADMIN.</div>'
         : items.length ? `<div class="table-responsive" style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-1">
-            <thead class="sticky-top bg-body"><tr><th>Tipo</th><th>Pacchetto</th><th>Versione</th><th>Corregge</th><th></th></tr></thead>
+            <thead class="bg-body" style="position: sticky; top: 0; z-index: 1"><tr><th>Tipo</th><th>Pacchetto</th><th>Versione</th><th>Corregge</th><th></th></tr></thead>
             <tbody>${items.map(upgradeRow).join('')}</tbody></table></div>
             <div class="small text-muted">${Object.values(UP_TONE).map(([cls, label, title]) => `<span class="badge ${cls}" title="${escapeHtml(title)}">${label}</span>`).join(' ')}
                 · calcolati sull'istanza ${relTime(up.updated_at)}</div>`
@@ -1042,7 +1042,8 @@ async function packages(el, i) {
         ['Kernel', `<span class="font-monospace">${escapeHtml(st.running_kernel || inv.kernel || '-')}</span>${st.newest_kernel && st.newest_kernel !== st.running_kernel
             ? ` <span class="small text-muted">· installato <span class="font-monospace">${escapeHtml(st.newest_kernel)}</span></span>` : ''}
             ${trial ? ` <span class="badge ${trial.result === 'confirmed' ? 'bg-success-lt' : trial.result === 'failed' ? 'bg-danger-lt' : 'bg-warning-lt'}">prova ${escapeHtml(trial.kernel)}: ${trial.result === 'confirmed' ? 'confermato' : trial.result === 'failed' ? 'fallito' : 'in corso'}</span>` : ''}`],
-        ['Aggiornamenti automatici', au.time ? `ogni giorno alle ${escapeHtml(au.time)} ${escapeHtml(au.tz || '')}${au.randomize_minutes ? ` (+${au.randomize_minutes} min)` : ''}` : 'orario predefinito di Ubuntu'],
+        ['Aggiornamenti automatici', `${au.time ? `ogni giorno alle ${escapeHtml(au.time)} ${escapeHtml(au.tz || '')}${au.randomize_minutes ? ` (+${au.randomize_minutes} min)` : ''}` : 'orario predefinito di Ubuntu'}
+            <div class="small text-muted">solo sicurezza della versione di Ubuntu installata; servizi riavviati, macchina mai</div>`],
         ['Liste apt', st.apt_updated_at ? relTime(new Date(st.apt_updated_at * 1000).toISOString()) : '-'],
         ['Pacchetti ricevuti', sec.packages?.updated_at ? relTime(sec.packages.updated_at) : '-'],
         ['Scansione vulnerabilità', inv.scan_at ? relTime(inv.scan_at) : '-'],
@@ -1085,7 +1086,7 @@ async function packages(el, i) {
         try {
             const list = await apiGet(`/instances/${i.id}/findings?package=${encodeURIComponent(byPackage[n].package)}`);
             cell.innerHTML = `<div style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0">
-                <thead class="sticky-top bg-body"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
+                <thead class="bg-body" style="position: sticky; top: 0; z-index: 1"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
                 <tbody>${list.map(f => findingRow(f, false)).join('')}</tbody></table></div>`;
             detail.dataset.loaded = '1';
         } catch (err) {

@@ -130,7 +130,7 @@ The maximum frame size is 1 MB.
 - `ssh_ports`
 - `modules` [{id, version, enabled}]
 - `os_id` (`ubuntu-24.04`), `os_status` {`running_kernel`, `newest_kernel`, `kernels` [installed], `reboot_required`, `reboot_packages`, `unattended_upgrades`, `apt_updated_at` (epoch of the last `apt-get update`), `pending_updates`, `pending_security`}
-- `sections` {`packages`: sha256, `python`: sha256}: digests of the heavy sections. When one differs from the copy it holds, the manager asks for the section with `inventory.get` (persistent, re-sent until answered; a newer digest arriving meanwhile is fetched after it).
+- `sections` {`packages`: sha256, `python`: sha256, `upgrades`: sha256}: digests of the heavy sections. When one differs from the copy it holds, the manager asks for the section with `inventory.get` (persistent, re-sent until answered; a newer digest arriving meanwhile is fetched after it).
 
 ## Close codes
 
@@ -175,7 +175,7 @@ All the commands below are at version 1.
 | `os.upgrade` | `scope` `security`\|`all` | `scope`, `changed`, `changes` [{name, from, to}], `new_kernels`, `reboot_required`, `reboot_packages`, `started_at`, `finished_at` (long command, persistent result) |
 | `os.reboot` | `delay_minutes` 0–1440, `reason` | `delay_minutes`, `at` (epoch), `kernel_trial` (kernel booted on trial, or null), `kernel` (running now) — persistent result |
 | `os.reboot.cancel` | – | `cancelled` |
-| `inventory.get` | `section` `packages`\|`python` | `section`, `digest`, `items`: packages [{name, version, arch, source, source_version}] (installed only, `source` = Debian source package), python [{name, version}] (the venv MADMIN runs in) — not audited |
+| `inventory.get` | `section` `packages`\|`python`\|`upgrades` | `section`, `digest`, `items`: packages [{name, version, arch, source, source_version}] (installed only, `source` = Debian source package), python [{name, version}] (the venv MADMIN runs in), upgrades [{name, arch, installed ("" = new package), candidate, security_version, security (installed by `os.upgrade security`), all (installed by `os.upgrade all`), origin `security`\|`mixed`\|`updates`, reason ""\|`phased`\|`held`\|`kept`, phased (percent), reboot}] — not audited |
 
 `manager.relocate` moves the instance to another address of the same manager. The agent checks that the address presents a certificate under the CA it already trusts and serves `/agent/ca.pem`, saves it as `manager_url_next` and answers. It then connects there: a `hello_ack` from the new address makes it the `manager_url`; any failure before that drops it and the agent stays where it was. The old address must stay reachable until the move is confirmed.
 

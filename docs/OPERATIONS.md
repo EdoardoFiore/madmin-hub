@@ -71,7 +71,26 @@ A reboot with a newer kernel installed boots it **on trial**: the old kernel sta
 
 ### Vulnerabilities
 
-Vulnerabilità: by advisory, by instance (reboot required, pending security updates), by version; CSV export. The scan runs daily and after every package change. "Correzione disponibile" means the fix is in the Ubuntu archive: a security upgrade (and a reboot for the kernel) removes it. Advisories without a fix are Ubuntu's own triage (needs-triage, deferred).
+How it works ("Come funziona" on the Vulnerabilità page): the instance sends its packages (OS and MADMIN venv) and the available updates when they change; the manager checks them against OSV and the Ubuntu tracker status of each CVE (daily and at every change); each finding gets a status:
+
+- **Correggibile**: the fix is in the Ubuntu archive. The instance's Sistema tab shows which update installs it.
+- **Serve release MADMIN**: a Python package of the MADMIN venv with a fixed version: build a release with the newer package (`requirements.lock`).
+- **In arrivo** (pending), **Senza correzione** (needed, triage, deferred), **Non verrà corretta** (ignored, eol, ESM only), **Da verificare** (Ubuntu's data older than the installed version).
+
+Only fixable critical findings raise the menu badge and the e-mail.
+
+### What the two OS updates install
+
+Instance → Sistema → Aggiornamenti disponibili lists every upgradable package, coloured:
+
+| Colour | Meaning | Installed by |
+|---|---|---|
+| red | security update fixing critical/high findings | both |
+| orange | security update | both |
+| blue | normal update (bug fixes) | only Aggiorna tutto |
+| grey | held back: Ubuntu's phased rollout (a % of machines at a time), `apt-mark hold`, or kept back by apt | neither |
+
+"Aggiornamenti di sicurezza" runs `unattended-upgrade` (the security pocket and ESM, as configured on the instance); "Aggiorna tutto" runs `apt-get upgrade --with-new-pkgs`. The confirmation lists exactly what will be installed and the findings it fixes. "Ricontrolla ora" runs `apt-get update` and refreshes the list.
 
 ### When MADMIN does not start (rescue)
 

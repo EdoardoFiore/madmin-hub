@@ -12,6 +12,7 @@ The previous attempt is in `../madmin-hub-legacy` (reference only, do not copy f
 
 - **No test commands are run locally.** Tested on a separate test server.
 - **Claude may commit and push** (Conventional Commits, one logical change per commit). Work on a feature branch, never directly on `main`.
+- **Every pushed block of work bumps the version** (SemVer, `MANAGER_VERSION` in `backend/config.py`: patch = fixes, minor = features/schema steps/API), with an entry in `CHANGELOG.md` and an annotated tag `vX.Y.Z` pushed with it. Same rule in the MADMIN repo (`MADMIN_VERSION`, its `CHANGELOG.md`); a change to the agent protocol touches both. Not every version is released, every version is tracked.
 - DB schema: `init_db()` runs `create_all` (new tables), then the numbered steps in `backend/core/migrations/NNNN_<name>.py` (any change to an existing table: column, type, index). A new column needs both the model field and a step (`ADD COLUMN IF NOT EXISTS ...`); steps are forward only and idempotent.
 
 ```bash

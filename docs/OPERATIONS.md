@@ -79,6 +79,15 @@ How it works ("Come funziona" on the Vulnerabilità page): the instance sends it
 
 Only fixable critical findings raise the menu badge and the e-mail.
 
+### Automatic updates, service restarts, reboots
+
+- Every instance installs the **security updates by itself every day** (Ubuntu's unattended-upgrades) at the time set in Settings → Aggiornamenti automatici (default 03:00 Europe/Rome, plus up to 30 random minutes), or the group's own time (group edit; a customer without one takes its partner's). The manager applies it to each instance (`os.autoupdate.set`) and checks it at every connection.
+- After installing, needrestart **restarts the services** that use the updated libraries (a few seconds each: IPsec tunnels and OpenVPN clients reconnect). That is why the time is at night.
+- The instance **never reboots by itself** (`/etc/apt/apt.conf.d/99madmin-unattended-upgrades`, shipped with MADMIN).
+- **Riavvio consigliato** (red, badge on Istanze, e-mail): the reboot fixes critical or high findings of the running kernel (the fixed kernel is installed, not booted), or the CPU microcode changed. **Riavvio richiesto** (grey) is Ubuntu's flag for any new kernel or libc: it can wait for the next maintenance.
+- Services still running old libraries (a restart that failed) are listed on the Sistema tab: Riavvia ora, or at a time.
+- **Scheduling**: Rollout → Nuovo rollout → Avvio "A un orario" (once), or Nuova pianificazione (every day / chosen days at a time), e.g. every Sunday 04:00 reboot of the instances with *riavvio consigliato*, every night services restart of the instances that need it.
+
 ### What the two OS updates install
 
 Instance → Sistema → Aggiornamenti disponibili lists every upgradable package, coloured:

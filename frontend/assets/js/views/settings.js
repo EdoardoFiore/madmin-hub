@@ -33,6 +33,11 @@ const FIELDS = [
     ['Release', [
         ['release_keys', 'Chiavi pubbliche di firma (PEM, una o più): una release caricata deve essere firmata da una di queste. Vuoto = non verificata qui (le istanze la verificano sempre)', 'textarea'],
     ]],
+    ['Aggiornamenti automatici delle istanze', [
+        ['autoupdate_time', 'Ora (ogni giorno: aggiornamenti di sicurezza e riavvio dei servizi che li usano; la macchina non si riavvia mai da sola). Un gruppo può avere la sua', 'time'],
+        ['autoupdate_tz', 'Fuso orario (es. Europe/Rome)', 'text'],
+        ['autoupdate_randomize', 'Ritardo casuale massimo (minuti, 0-180): le istanze non si aggiornano tutte nello stesso istante', 'number'],
+    ]],
     ['Notifiche e-mail', [
         ['smtp_host', 'Server SMTP (vuoto = nessuna e-mail, restano i contatori nel menu)', 'text'],
         ['smtp_port', 'Porta', 'number'],

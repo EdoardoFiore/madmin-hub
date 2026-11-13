@@ -437,6 +437,9 @@ async def _handle_heartbeat(conn: AgentConnection, payload: dict) -> None:
             _notify_failures(instance.name, conn.instance_id, None, facts["os_status"].get("kernel_trial"))
         if isinstance(facts, dict) and conn.supports(protocol.CMD_INVENTORY_GET):
             await inventory_service.sections_announced(session, conn.instance_id, facts.get("sections"))
+        if isinstance(facts, dict):
+            from manager.osactions.service import reconcile as autoupdate_reconcile
+            await autoupdate_reconcile(session, instance)
 
 
 async def _handle_event(conn: AgentConnection, payload: dict) -> None:
@@ -503,6 +506,10 @@ async def control_channel(ws: WebSocket):
         await dispatcher.resend_pending(instance.id)
         try:
             await reconcile(instance.id, conn.hello_state)
+            from manager.osactions.service import reconcile as autoupdate_reconcile
+            async with async_session_maker() as session:
+                current = await session.get(Instance, instance.id)
+                await autoupdate_reconcile(session, current)
         except Exception:
             logger.exception("Instance %s: state not reconciled", instance.id)
         while True:

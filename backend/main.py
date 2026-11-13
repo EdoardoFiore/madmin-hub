@@ -186,9 +186,15 @@ def create_app() -> FastAPI:
             # Only what someone can act on: critical findings with a fix installable now
             q = scope.filter_instances(sa_select(func.count(func.distinct(Finding.advisory_id))).select_from(Finding)
                                        .join(Instance, Instance.id == Finding.instance_id)
-                                       .where(Finding.severity == "critical", Finding.fixed_version != "",
+                                       .where(Finding.severity == "critical", Finding.fixed_version != "", Finding.status != "reboot",
                                               Instance.status == "active"), ids)
             out["vulnerabilities"] = (await session.execute(q)).scalar()
+            # Instances where a reboot fixes critical/high kernel findings
+            q = scope.filter_instances(sa_select(func.count(func.distinct(Finding.instance_id))).select_from(Finding)
+                                       .join(Instance, Instance.id == Finding.instance_id)
+                                       .where(Finding.status == "reboot", Finding.severity.in_(("critical", "high")),
+                                              Instance.status == "active"), ids)
+            out["instances"] = (await session.execute(q)).scalar()
             if current_user.has_permission("scope.manage"):
                 out["rollouts"] = (await session.execute(sa_select(func.count()).select_from(Rollout).where(
                     Rollout.status.in_(("halted", "waiting"))))).scalar()

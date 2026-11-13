@@ -71,6 +71,13 @@ class SystemSettings(SQLModel, table=True):
     #   "group_id": "<manager group, partner/customer only>"}], first match wins
     ldap_mappings: str = Field(default="[]", max_length=20000)
 
+    # Automatic security updates of the instances (unattended-upgrades and the
+    # service restarts of needrestart): daily time, time zone, random delay.
+    # A group can set its own time (InstanceGroup.autoupdate_time).
+    autoupdate_time: str = Field(default="03:00", max_length=5)
+    autoupdate_tz: str = Field(default="Europe/Rome", max_length=60)
+    autoupdate_randomize: int = Field(default=30)
+
     updated_at: Optional[str] = Field(default=None)
 
 
@@ -109,6 +116,34 @@ class SystemSettingsUpdate(SQLModel):
     ldap_user_filter: Optional[str] = None
     ldap_ca_pem: Optional[str] = None
     ldap_mappings: Optional[str] = None
+    autoupdate_time: Optional[str] = None
+    autoupdate_tz: Optional[str] = None
+    autoupdate_randomize: Optional[int] = None
+
+    @field_validator("autoupdate_time")
+    @classmethod
+    def _au_time(cls, v):
+        if v is not None and not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", v):
+            raise ValueError("Ora: HH:MM")
+        return v
+
+    @field_validator("autoupdate_tz")
+    @classmethod
+    def _au_tz(cls, v):
+        if v is not None:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(v)
+            except Exception:
+                raise ValueError("Fuso orario sconosciuto (es. Europe/Rome)")
+        return v
+
+    @field_validator("autoupdate_randomize")
+    @classmethod
+    def _au_rand(cls, v):
+        if v is not None and not 0 <= v <= 180:
+            raise ValueError("Ritardo casuale: 0-180 minuti")
+        return v
 
     @field_validator("ldap_url")
     @classmethod

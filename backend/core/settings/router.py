@@ -66,6 +66,9 @@ async def update_settings(
     row.updated_at = datetime.utcnow().isoformat()
     session.add(row)
     await session.commit()
+    if {"autoupdate_time", "autoupdate_tz", "autoupdate_randomize"} & set(changes):
+        from manager.osactions.service import reconcile_all
+        await reconcile_all(session)
     data = row.model_dump(exclude={"smtp_password", "ldap_bind_password"})
     data["smtp_password_set"] = bool(row.smtp_password)
     data["ldap_bind_password_set"] = bool(row.ldap_bind_password)

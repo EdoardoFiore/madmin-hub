@@ -5,7 +5,7 @@ scope (re-checked when each command is created, by the scope of the targets
 chosen here).
 """
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +35,11 @@ class Selection(BaseModel):
     version_not: Optional[str] = Field(default=None, max_length=30)    # skip instances already on it
     os_id: Optional[str] = Field(default=None, max_length=30)
     instance_ids: List[str] = Field(default_factory=list, max_length=MAX_TARGETS)
+    # Only instances with services running outdated libraries (needrestart)
+    needs_service_restart: bool = False
+    # Only instances whose reboot is "required" (Ubuntu's flag) or "recommended"
+    # (it fixes critical/high kernel findings, or outdated microcode)
+    reboot: str = Field(default="", pattern="^(|required|recommended)$")
 
 
 class RolloutIn(BaseModel):
@@ -48,6 +53,8 @@ class RolloutIn(BaseModel):
     fail_threshold: int = Field(default=10, ge=0, le=100)
     use_windows: bool = True
     expires_hours: int = Field(default=72, ge=1, le=720)
+    # Nothing starts before it (ISO with time zone; naive = UTC); the expiry counts from it
+    start_at: Optional[datetime] = None
 
     @field_validator("action")
     @classmethod
@@ -57,9 +64,10 @@ class RolloutIn(BaseModel):
         return v
 
 
-async def _resolve(session, user: User, sel: Selection) -> List[Instance]:
-    query = scope.filter_instances(select(Instance).where(Instance.status == "active"),
-                                   await scope.group_ids(session, user))
+async def _resolve(session, user: Optional[User], sel: Selection) -> List[Instance]:
+    """user None = every instance (a schedule, superuser only)."""
+    ids = await scope.group_ids(session, user) if user is not None else None
+    query = scope.filter_instances(select(Instance).where(Instance.status == "active"), ids)
     if sel.group_id == "none":
         query = query.where(Instance.group_id == None)  # noqa: E711
     elif sel.group_id:
@@ -74,10 +82,30 @@ async def _resolve(session, user: User, sel: Selection) -> List[Instance]:
             continue
         if sel.version_not and f"{i.madmin_version}+{i.build}" == sel.version_not:
             continue
-        if sel.os_id and json.loads(i.facts_json or "{}").get("os_id") != sel.os_id:
+        facts = json.loads(i.facts_json or "{}")
+        st = facts.get("os_status") or {}
+        if sel.os_id and facts.get("os_id") != sel.os_id:
+            continue
+        if sel.needs_service_restart and not st.get("restart_services"):
+            continue
+        if sel.reboot == "required" and not st.get("reboot_required"):
+            continue
+        if sel.reboot == "recommended" and i.id not in await _reboot_recommended(session):
             continue
         out.append(i)
     return out[:MAX_TARGETS]
+
+
+async def _reboot_recommended(session) -> set:
+    """Instances where the reboot fixes critical/high findings, or the microcode is outdated."""
+    from manager.models import Finding
+    rows = (await session.execute(select(Finding.instance_id).where(
+        Finding.status == "reboot", Finding.severity.in_(("critical", "high"))).distinct())).all()
+    out = {r[0] for r in rows}
+    for i in (await session.execute(select(Instance).where(Instance.status == "active"))).scalars():
+        if (json.loads(i.facts_json or "{}").get("os_status") or {}).get("microcode_outdated"):
+            out.add(i.id)
+    return out
 
 
 def _is_canary(i: Instance) -> bool:
@@ -120,11 +148,8 @@ async def preview(body: Selection, session: AsyncSession = Depends(get_session),
     return _targets_out(await _resolve(session, user, body))
 
 
-@router.post("/rollouts", status_code=201)
-async def create(body: RolloutIn, session: AsyncSession = Depends(get_session),
-                 user: User = Depends(require_permission("scope.manage"))):
-    if ACTIONS[body.action]["superuser"] and not user.has_permission("manager.manage"):
-        raise HTTPException(403, "Solo un superuser può avviare aggiornamenti, upgrade del sistema e riavvii")
+async def build(session, body: RolloutIn, user: Optional[User], created_by: str, schedule_id: str = "") -> Rollout:
+    """A rollout from the request (or a schedule: user None, every instance)."""
     args = await _check_args(session, body)
     instances = await _resolve(session, user, body.selection)
     if not instances:
@@ -137,16 +162,32 @@ async def create(body: RolloutIn, session: AsyncSession = Depends(get_session),
         if rel.channel != "stable" and len(instances) > 1 and not all(_is_canary(i) for i in instances):
             raise HTTPException(409, "Release candidate: solo su una istanza o su istanze con etichetta canary=true "
                                      "(promuoverla a stable per un rollout più ampio)")
+    start_at = None
+    if body.start_at is not None:
+        start_at = body.start_at.astimezone(timezone.utc).replace(tzinfo=None) if body.start_at.tzinfo else body.start_at
+        if start_at < datetime.utcnow() - timedelta(minutes=5):
+            raise HTTPException(400, "L'ora di avvio è già passata")
+    begin = max(start_at or datetime.utcnow(), datetime.utcnow())
     rollout = Rollout(name=body.name.strip(), action=body.action, args_json=json.dumps(args),
                       selection_json=body.selection.model_dump_json(), concurrency=body.concurrency,
                       canary=canary, canary_wait_minutes=body.canary_wait_minutes,
-                      fail_threshold=body.fail_threshold, use_windows=body.use_windows,
-                      created_by=user.username, expires_at=datetime.utcnow() + timedelta(hours=body.expires_hours))
+                      fail_threshold=body.fail_threshold, use_windows=body.use_windows, created_by=created_by,
+                      start_at=start_at, schedule_id=schedule_id,
+                      expires_at=begin + timedelta(hours=body.expires_hours))
     session.add(rollout)
     await session.flush()
     for n, i in enumerate(instances):
         session.add(RolloutTarget(rollout_id=rollout.id, instance_id=i.id, position=n, canary=n < canary))
     await session.commit()
+    return rollout
+
+
+@router.post("/rollouts", status_code=201)
+async def create(body: RolloutIn, session: AsyncSession = Depends(get_session),
+                 user: User = Depends(require_permission("scope.manage"))):
+    if ACTIONS[body.action]["superuser"] and not user.has_permission("manager.manage"):
+        raise HTTPException(403, "Solo un superuser può avviare aggiornamenti, upgrade del sistema e riavvii")
+    rollout = await build(session, body, user, user.username)
     return await _out(session, rollout)
 
 
@@ -284,3 +325,98 @@ async def cancel(rollout_id: str, session: AsyncSession = Depends(get_session),
     session.add(rollout)
     await session.commit()
     return await _out(session, rollout)
+
+
+# --- Recurring schedules (superusers) ---
+
+class ScheduleIn(BaseModel):
+    name: str = Field(min_length=3, max_length=200)
+    action: str
+    args: dict = Field(default_factory=dict)
+    selection: Selection
+    days: List[int] = Field(default_factory=lambda: list(range(7)))
+    time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    concurrency: int = Field(default=1, ge=1, le=50)
+    canary: int = Field(default=0, ge=0, le=50)
+    fail_threshold: int = Field(default=10, ge=0, le=100)
+    use_windows: bool = False
+    expires_hours: int = Field(default=4, ge=1, le=72)
+    enabled: bool = True
+
+    @field_validator("action")
+    @classmethod
+    def _action(cls, v):
+        if v not in ACTIONS:
+            raise ValueError("azione non prevista")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v):
+        if not v or any(d not in range(7) for d in v):
+            raise ValueError("giorni: da 0 (lunedì) a 6 (domenica)")
+        return sorted(set(v))
+
+
+def schedule_out(s) -> dict:
+    d = s.model_dump(exclude={"args_json", "selection_json", "params_json", "days_json"})
+    d.update(args=json.loads(s.args_json), selection=json.loads(s.selection_json),
+             params=json.loads(s.params_json), days=json.loads(s.days_json), label=ACTIONS[s.action]["label"])
+    from .service import next_run
+    d["next_run"] = next_run(s)
+    return d
+
+
+@router.get("/rollout-schedules")
+async def list_schedules(session: AsyncSession = Depends(get_session),
+                         user: User = Depends(require_permission("manager.view"))):
+    from manager.models import RolloutSchedule
+    rows = (await session.execute(select(RolloutSchedule).order_by(RolloutSchedule.time))).scalars().all()
+    return [schedule_out(s) for s in rows]
+
+
+async def _save_schedule(session, body: ScheduleIn, user: User, row=None):
+    from manager.models import RolloutSchedule
+    probe = RolloutIn(name=body.name, action=body.action, args=body.args, selection=body.selection)
+    args = await _check_args(session, probe)
+    if body.action == protocol.CMD_UPDATE:
+        rel = await session.get(Release, args["release_id"])
+        if rel.channel != "stable":
+            raise HTTPException(409, "Una pianificazione ripetuta richiede una release stable")
+    row = row or RolloutSchedule(name="", action="", time="", created_by=user.username)
+    row.name, row.action, row.time, row.enabled = body.name.strip(), body.action, body.time, body.enabled
+    row.args_json = json.dumps(args)
+    row.selection_json = body.selection.model_dump_json()
+    row.days_json = json.dumps(body.days)
+    row.params_json = json.dumps({k: getattr(body, k) for k in
+                                  ("concurrency", "canary", "fail_threshold", "use_windows", "expires_hours")})
+    session.add(row)
+    await session.commit()
+    return schedule_out(row)
+
+
+@router.post("/rollout-schedules", status_code=201)
+async def create_schedule(body: ScheduleIn, session: AsyncSession = Depends(get_session),
+                          user: User = Depends(require_permission("manager.manage"))):
+    return await _save_schedule(session, body, user)
+
+
+@router.put("/rollout-schedules/{schedule_id}")
+async def update_schedule(schedule_id: str, body: ScheduleIn, session: AsyncSession = Depends(get_session),
+                          user: User = Depends(require_permission("manager.manage"))):
+    from manager.models import RolloutSchedule
+    row = await session.get(RolloutSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(404, "Pianificazione non trovata")
+    return await _save_schedule(session, body, user, row)
+
+
+@router.delete("/rollout-schedules/{schedule_id}", status_code=204)
+async def delete_schedule(schedule_id: str, session: AsyncSession = Depends(get_session),
+                          user: User = Depends(require_permission("manager.manage"))):
+    from manager.models import RolloutSchedule
+    row = await session.get(RolloutSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(404, "Pianificazione non trovata")
+    await session.delete(row)
+    await session.commit()

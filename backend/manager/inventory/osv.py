@@ -153,6 +153,18 @@ def _old_kernel(source: str, version: str, running_abi: str) -> bool:
                 and not version.startswith(running_abi + "."))
 
 
+def installed_kernel_versions(inventory: Dict[str, list]) -> Dict[str, str]:
+    """{kernel source package: newest version installed}: a kernel installed
+    but not booted yet (its findings are fixed by a reboot)."""
+    newest: Dict[str, str] = {}
+    for p in inventory.get("packages") or []:
+        src, ver = p.get("source") or "", p.get("source_version") or ""
+        if src.startswith("linux") and _KERNEL_VERSION_RE.match(ver):
+            if src not in newest or ubuntu.compare(ver, newest[src]) > 0:
+                newest[src] = ver
+    return newest
+
+
 def _targets(instance: Instance, inventory: Dict[str, list]) -> List[Tuple[str, str, str, str]]:
     """(kind, ecosystem, package, version) to ask about for one instance."""
     out = set()
@@ -352,6 +364,7 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                 InstanceInventory.instance_id == inst.id))).scalars().all()
             inventories[inst.id] = {r.section: json.loads(r.items_json) for r in rows if r.digest}
     targets = {inst.id: _targets(inst, inventories[inst.id]) for inst in instances}
+    kernels = {inst.id: installed_kernel_versions(inventories[inst.id]) for inst in instances}
     keys = sorted({(e, n, v) for t in targets.values() for _, e, n, v in t})
     if not keys:
         return {"instances": len(instances), "findings": 0}
@@ -379,6 +392,7 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
         vex = await _vex(client, cves) if cves else {}
     total = 0
     new_critical = []
+    reboot_worth = {}   # instance name -> (kernel, critical/high CVEs fixed by the reboot)
     async with async_session_maker() as session:
         for inst in instances:
             current = {(f.advisory_id, f.package): f for f in (await session.execute(
@@ -394,6 +408,10 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                                         statuses, name)
                     if verdict is None:
                         continue
+                    newest = kernels[inst.id].get(name)
+                    if kind == "os" and verdict[2] and newest and ubuntu.compare(newest, verdict[2]) >= 0:
+                        # the fixed kernel is installed: only the reboot is missing
+                        verdict = ("reboot",) + tuple(verdict[1:])
                     seen.add((vid, name))
                     f = current.get((vid, name))
                     was_fixable = f is not None and bool(f.fixed_version)
@@ -401,18 +419,29 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                         f = Finding(instance_id=inst.id, advisory_id=vid, kind=kind, package=name[:200])
                     # Notified when there is something to do: a critical finding whose fix
                     # became installable (new, or published since the last scan)
-                    if adv.severity == "critical" and verdict[2] and not was_fixable:
+                    if adv.severity == "critical" and verdict[2] and verdict[0] != "reboot" and not was_fixable:
                         new_critical.append((inst.name, vid, name, kind))
                     f.installed_version = version[:200]
                     f.status, f.status_version, f.fixed_version, f.kernel_fix = (
                         verdict[0], verdict[1][:200], verdict[2][:200], verdict[3][:250])
                     f.severity = adv.severity
                     session.add(f)
+                    if verdict[0] == "reboot" and adv.severity in ("critical", "high"):
+                        cve = (json.loads(adv.aliases_json) or [vid])[0]
+                        reboot_worth.setdefault(inst.name, (max(kernels[inst.id].values(), default=""), set()))[1].add(cve)
             for (vid, name), f in current.items():
                 if (vid, name) not in seen:
                     await session.delete(f)
             total += len(seen)
         await session.commit()
+    if reboot_worth:
+        from manager.notify import notify
+        for name, (kernel, cves) in reboot_worth.items():
+            # Once per instance and installed kernel
+            notify("reboot", f"{name}:{kernel}", f"{name}: riavvio consigliato",
+                   f"Sull'istanza {name} è installato il kernel {kernel}, non ancora avviato: il riavvio corregge "
+                   f"{len(cves)} vulnerabilità critiche o alte del kernel in uso.\n"
+                   "Programmalo dalla scheda Sistema dell'istanza (Riavvia, anche con ritardo) o con un rollout.")
     if new_critical:
         from manager.notify import notify
         os_lines = [f"- {i}: {v} ({p})" for i, v, p, k in new_critical if k == "os"][:50]

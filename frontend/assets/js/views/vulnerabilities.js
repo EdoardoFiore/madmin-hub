@@ -29,6 +29,7 @@ export function severityBadge(s, quiet = false) {
 // Ubuntu tracker status of a finding (backend/manager/inventory/ubuntu.py), most actionable first
 export const STATUS = {
     fixed: ['Correggibile', 'bg-success-lt', 'Correzione pubblicata: si installa con gli aggiornamenti del sistema'],
+    reboot: ['Corretta, serve riavvio', 'bg-yellow-lt', 'La correzione è già installata (kernel nuovo): diventa effettiva al riavvio'],
     release: ['Serve release MADMIN', 'bg-indigo-lt', 'Pacchetto Python di MADMIN con una versione corretta su PyPI: serve una release di MADMIN che la includa (gli aggiornamenti del sistema non lo toccano)'],
     pending: ['Correzione in arrivo', 'bg-azure-lt', 'Ubuntu ha preparato la correzione, non ancora pubblicata (per il kernel: il prossimo rilascio)'],
     stale: ['Da verificare', 'bg-teal-lt', 'Ubuntu ha valutato una versione precedente a quella installata: probabilmente già corretta, i dati Ubuntu non sono ancora aggiornati'],
@@ -44,6 +45,7 @@ export const STATUS = {
 export const STATUS_FILTERS = [
     ['', 'Tutti gli stati'],
     ['fixed', 'Correggibili ora (sistema)'],
+    ['reboot', 'Corrette, serve riavvio'],
     ['release', 'Serve release MADMIN'],
     ['pending', 'Correzione in arrivo'],
     ['needed,triage,deferred,unknown', 'Senza correzione'],
@@ -115,7 +117,8 @@ export async function render(container) {
             ${card('Alte', a.high, fx.high ? 'text-orange' : 'text-muted', sevHint('high'))}
             ${card('Medie', a.medium, 'text-muted', sevHint('medium'))}
             ${card('Correggibili', sum.fixable_instances, sum.fixable_instances ? 'text-red' : '', 'istanze con critiche/alte già corrette nei repository')}
-            ${card('Riavvio richiesto', sum.reboot_required, sum.reboot_required ? 'text-warning' : '', 'istanze')}
+            ${card('Riavvio consigliato', sum.reboot_recommended, sum.reboot_recommended ? 'text-red' : '',
+                `istanze: il riavvio corregge critiche/alte del kernel · richiesto da Ubuntu: ${sum.reboot_required}`)}
             ${card('Aggiornamenti sicurezza', sum.pending_security, '', `istanze con aggiornamenti in sospeso (su ${sum.instances})`)}
         </div>
         ${howItWorks()}
@@ -229,7 +232,10 @@ async function instancesTab(el) {
             <td class="small">${escapeHtml(r.os || '-')}</td>
             <td class="small font-monospace">${escapeHtml(r.kernel || '-')}${r.newest_kernel && r.newest_kernel !== r.kernel
                 ? `<div class="text-warning">installato ${escapeHtml(r.newest_kernel)}</div>` : ''}</td>
-            <td>${r.reboot_required ? '<span class="badge bg-warning-lt">richiesto</span>' : '<span class="text-muted">no</span>'}</td>
+            <td>${r.reboot?.recommended ? `<span class="badge bg-red text-red-fg" title="corregge ${r.reboot.count} vulnerabilità del kernel">consigliato</span>`
+                : r.reboot_required ? '<span class="badge bg-secondary-lt" title="richiesto da Ubuntu, non corregge vulnerabilità critiche o alte">richiesto</span>'
+                : '<span class="text-muted">no</span>'}
+                ${r.restart_services ? `<div class="small text-warning">${r.restart_services} servizi da riavviare</div>` : ''}</td>
             <td>${r.pending_updates == null ? '-' : `${r.pending_updates}${r.pending_security ? ` <span class="badge bg-red-lt">${r.pending_security} sicurezza</span>` : ''}`}
                 ${r.apt_updated_at ? `<div class="small text-muted">liste: ${relTime(new Date(r.apt_updated_at * 1000).toISOString())}</div>` : ''}</td>
             <td>${sevCounts(r.findings)}</td>

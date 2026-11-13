@@ -38,6 +38,7 @@ ACTIONS = {
     protocol.CMD_OS_UPGRADE: {"label": "Aggiornamento pacchetti", "superuser": True, "timeout": 5400},
     protocol.CMD_OS_REBOOT: {"label": "Riavvio", "superuser": True, "timeout": 120},
     protocol.CMD_BACKUP_RUN: {"label": "Backup", "superuser": False, "timeout": 1800},
+    protocol.CMD_OS_SERVICES_RESTART: {"label": "Riavvio servizi", "superuser": True, "timeout": 300},
 }
 # How long a target command may wait to be delivered (the instance was online
 # when it was sent; a short outage is tolerated, a reboot hours later is not)
@@ -97,6 +98,14 @@ async def _start_target(session, rollout: Rollout, target: RolloutTarget, instan
         cmd_args = {"scope": args["scope"]}
     elif rollout.action == protocol.CMD_OS_REBOOT:
         cmd_args = {"delay_minutes": 0, "reason": args.get("reason") or rollout.name}
+    elif rollout.action == protocol.CMD_OS_SERVICES_RESTART:
+        st = (json.loads(instance.facts_json or "{}").get("os_status") or {})
+        if not st.get("restart_services"):
+            target.status, target.detail = "skipped", "nessun servizio da riavviare"
+            target.finished_at = datetime.utcnow()
+            session.add(target)
+            return
+        cmd_args = {}
     else:
         cmd_args = {}
     conn = registry.get(instance.id)
@@ -170,6 +179,8 @@ async def _advance(session, rollout: Rollout, windows: dict) -> None:
                 session.add(t)
     if rollout.status in ("halted", "cancelled"):
         return
+    if rollout.start_at and now < rollout.start_at:
+        return   # scheduled: waits for its time
     finished = [t for t in targets if t.status in ("done", "failed")]
     failed = [t for t in finished if t.status == "failed"]
     # Stop threshold (over the finished ones; one failure in the canary is enough)
@@ -239,9 +250,66 @@ def _halt(session, rollout: Rollout, reason: str) -> None:
            f"Il rollout \"{rollout.name}\" ({rollout.action}) si è fermato: {reason}.\nDettagli in Rollout.")
 
 
+# --- Recurring schedules ---
+
+SCHEDULE_GRACE = timedelta(minutes=60)   # a slot missed while the manager was down still runs within it
+
+
+def _slot(s, day: datetime) -> datetime:
+    h, m = (int(x) for x in s.time.split(":"))
+    return day.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+def next_run(s) -> Optional[str]:
+    """Next local time a schedule creates its rollout (ISO), or None when disabled."""
+    if not s.enabled:
+        return None
+    days = json.loads(s.days_json)
+    now = datetime.now()
+    for n in range(8):
+        slot = _slot(s, now + timedelta(days=n))
+        if slot.weekday() in days and slot > now and slot.date().isoformat() != s.last_run_on:
+            return slot.isoformat(timespec="minutes")
+    return None
+
+
+async def schedule_tick() -> None:
+    from manager.models import RolloutSchedule
+    from .router import RolloutIn, Selection, build
+    now = datetime.now()
+    today = now.date().isoformat()
+    async with async_session_maker() as session:
+        rows = (await session.execute(select(RolloutSchedule).where(RolloutSchedule.enabled == True)))\
+            .scalars().all()  # noqa: E712
+        for s in rows:
+            slot = _slot(s, now)
+            if now.weekday() not in json.loads(s.days_json) or s.last_run_on == today \
+                    or not slot <= now < slot + SCHEDULE_GRACE:
+                continue
+            s.last_run_on = today
+            params = json.loads(s.params_json)
+            try:
+                body = RolloutIn(name=f"{s.name} ({today} {s.time})", action=s.action, args=json.loads(s.args_json),
+                                 selection=Selection(**json.loads(s.selection_json)), **params)
+                rollout = await build(session, body, None, f"{s.created_by} (pianificazione)", schedule_id=s.id)
+                s.last_rollout_id = rollout.id
+                logger.info("Schedule %s: rollout %s created", s.name, rollout.id[:8])
+            except Exception as e:
+                # e.g. no instance matches tonight: nothing to do, not an error
+                logger.info("Schedule %s: no rollout (%s)", s.name, getattr(e, "detail", e))
+            session.add(s)
+            await session.commit()
+
+
 async def rollout_task() -> None:
     while True:
         await asyncio.sleep(LOOP_INTERVAL)
+        try:
+            await schedule_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Rollout schedules error")
         try:
             await tick()
         except asyncio.CancelledError:

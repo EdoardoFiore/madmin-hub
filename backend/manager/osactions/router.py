@@ -7,7 +7,8 @@ The commands are persistent with short delivery deadlines: an instance that
 comes back online hours later must not upgrade or reboot by surprise.
 """
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -29,7 +30,8 @@ REFRESH_TTL = timedelta(minutes=30)
 UPGRADE_TTL = timedelta(minutes=30)
 UPGRADE_TIMEOUT = 5400
 REBOOT_TTL = timedelta(minutes=10)
-_OS_COMMANDS = (protocol.CMD_OS_REFRESH, protocol.CMD_OS_UPGRADE, protocol.CMD_OS_REBOOT)
+_OS_COMMANDS = (protocol.CMD_OS_REFRESH, protocol.CMD_OS_UPGRADE, protocol.CMD_OS_REBOOT,
+                protocol.CMD_OS_SERVICES_RESTART)
 
 
 async def _target(session, instance_id: str, user: User, name: str) -> Instance:
@@ -94,4 +96,30 @@ async def os_reboot_cancel(instance_id: str, session: AsyncSession = Depends(get
     check_capability(instance.id, protocol.CMD_OS_REBOOT_CANCEL)
     cmd = await queue_command(session, instance.id, protocol.CMD_OS_REBOOT_CANCEL, {}, operator=user.username,
                               ttl=REBOOT_TTL, timeout=60)
+    return {"command_id": cmd.id, "status": cmd.status}
+
+
+class ServicesRestartIn(BaseModel):
+    # None = every service the instance lists now (os_status.restart_services)
+    services: Optional[List[str]] = Field(default=None, max_length=100)
+    # Later: a one-instance rollout that starts then (ISO with time zone)
+    start_at: Optional[datetime] = None
+
+
+@router.post("/instances/{instance_id}/os/services/restart", status_code=202)
+async def os_services_restart(instance_id: str, body: ServicesRestartIn, session: AsyncSession = Depends(get_session),
+                              user: User = Depends(require_permission("manager.manage"))):
+    """The services that run outdated libraries, now or at a chosen time. The
+    instance restarts only services needrestart lists (never another unit)."""
+    instance = await _target(session, instance_id, user, protocol.CMD_OS_SERVICES_RESTART)
+    if body.start_at is not None:
+        from manager.rollouts.router import RolloutIn, Selection, build
+        rollout = await build(session, RolloutIn(
+            name=f"Riavvio servizi {instance.name}", action=protocol.CMD_OS_SERVICES_RESTART,
+            selection=Selection(instance_ids=[instance.id]), canary=0, use_windows=False, expires_hours=6,
+            start_at=body.start_at), user, user.username)
+        return {"rollout_id": rollout.id, "start_at": rollout.start_at}
+    args = {} if body.services is None else {"services": body.services}
+    cmd = await queue_command(session, instance.id, protocol.CMD_OS_SERVICES_RESTART, args,
+                              operator=user.username, ttl=REBOOT_TTL, timeout=300)
     return {"command_id": cmd.id, "status": cmd.status}

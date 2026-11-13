@@ -87,6 +87,8 @@ CMD_OS_REFRESH = "os.refresh"           # apt-get update, then new facts
 CMD_OS_UPGRADE = "os.upgrade"           # {"scope": "security" | "all"}
 CMD_OS_REBOOT = "os.reboot"             # {"delay_minutes", "reason"}; a new kernel boots once on trial
 CMD_OS_REBOOT_CANCEL = "os.reboot.cancel"
+CMD_OS_SERVICES_RESTART = "os.services.restart"   # {"services"?: [names]}: those needrestart lists
+CMD_OS_AUTOUPDATE_SET = "os.autoupdate.set"       # {"time": "HH:MM", "tz", "randomize_minutes"}
 
 # Heavy sections of the facts, sent by digest and fetched with inventory.get
 INVENTORY_SECTIONS = ("packages", "python", "upgrades")

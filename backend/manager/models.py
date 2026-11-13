@@ -45,6 +45,9 @@ class InstanceGroup(SQLModel, table=True):
     # "end": "HH:MM"} in the manager's time zone; {} = any time. A customer
     # without its own window uses its partner's.
     maintenance_json: str = Field(default="{}")
+    # Time of the automatic security updates of its instances (HH:MM, in the
+    # time zone of Settings); "" = the partner's, or Settings'
+    autoupdate_time: str = Field(default="", max_length=5)
 
 
 class Instance(SQLModel, table=True):
@@ -431,6 +434,8 @@ class Rollout(SQLModel, table=True):
     canary_done_at: Optional[datetime] = Field(default=None)
     expires_at: datetime                         # targets not started by then are skipped
     finished_at: Optional[datetime] = Field(default=None)
+    start_at: Optional[datetime] = Field(default=None)   # UTC; nothing starts before it
+    schedule_id: str = Field(default="", max_length=36)  # created by a recurring schedule
 
 
 class RolloutTarget(SQLModel, table=True):
@@ -447,3 +452,24 @@ class RolloutTarget(SQLModel, table=True):
     detail: str = Field(default="", max_length=1000)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
+
+
+class RolloutSchedule(SQLModel, table=True):
+    """A rollout created by itself on the chosen days at the chosen time
+    (manager's local time): e.g. every night at 03:30 restart the services
+    that need it on a group. Superusers only."""
+    __tablename__ = "rollout_schedule"
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=36)
+    name: str = Field(max_length=200)
+    action: str = Field(max_length=30)
+    args_json: str = Field(default="{}")
+    selection_json: str = Field(default="{}")
+    params_json: str = Field(default="{}")       # concurrency, canary, fail_threshold, use_windows, expires_hours
+    days_json: str = Field(default="[0,1,2,3,4,5,6]")
+    time: str = Field(max_length=5)                # HH:MM
+    enabled: bool = Field(default=True)
+    created_by: str = Field(max_length=100)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_run_on: str = Field(default="", max_length=10)   # local date of the last rollout created
+    last_rollout_id: str = Field(default="", max_length=36)

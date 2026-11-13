@@ -8,6 +8,18 @@ All notable changes to MADMIN Manager. Versions follow [Semantic Versioning](htt
 
 Every block of work that is pushed bumps the version (`MANAGER_VERSION` in `backend/config.py`), adds an entry here and is tagged `vX.Y.Z`. The manager is updated by rerunning `setup-manager.sh` from a checkout of the version (schema steps run at startup). The wire protocol has its own versioning (`docs/PROTOCOL.md`), the MADMIN instances theirs (MADMIN `CHANGELOG.md`).
 
+## [1.2.0] - 2026-11-13
+
+### Added
+- Reboot worth it: findings of the running kernel fixed by a kernel already installed get the status "Corretta, serve riavvio" (not counted as fixable); "riavvio consigliato" when the reboot fixes critical/high findings or the microcode changed (Sistema tab, Vulnerabilità card and column, badge on Istanze, e-mail once per installed kernel). Ubuntu's "riavvio richiesto" stays informative.
+- Time of the automatic security updates: Settings (default 03:00 Europe/Rome, random delay) and per group (inherited from the partner), applied to each instance with `os.autoupdate.set` and reconciled at every connection and change.
+- Services running outdated libraries (from the instance) with "Riavvia servizi" now or at a time (`os.services.restart`).
+- Rollouts: action "Riavvio servizi", filters by state (services to restart, reboot recommended/required), start at a chosen time; recurring schedules (days and time) that create rollouts.
+- Sistema tab: the preview of the updates, the freshness of the data and the automatic update time.
+
+### Fixed
+- `instances.js` had been emptied by the 1.1.0 change (the instance pages did not load in 1.1.0–1.1.2): restored with the Sistema tab changes.
+
 ## [1.1.2] - 2026-11-13
 
 ### Fixed

@@ -302,6 +302,9 @@ async def update_instance(instance_id: str, body: InstanceUpdate,
         setattr(instance, k, v)
     session.add(instance)
     await session.commit()
+    # Another group may mean another time for the automatic updates
+    from manager.osactions.service import reconcile as autoupdate_reconcile
+    await autoupdate_reconcile(session, instance)
     return instance_out(instance, detail=True)
 
 
@@ -513,6 +516,8 @@ class GroupUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
     maintenance: Optional[MaintenanceWindow] = None
+    # "" = inherit (partner, then Settings)
+    autoupdate_time: Optional[str] = Field(default=None, pattern=r"^(([01]\d|2[0-3]):[0-5]\d)?$")
 
 
 def group_out(g: InstanceGroup, paths: dict, counts: dict) -> dict:
@@ -562,8 +567,14 @@ async def update_group(group_id: str, body: GroupUpdate, session: AsyncSession =
         if bool(w.start) != bool(w.end):
             raise HTTPException(400, "Finestra di manutenzione: inizio e fine insieme")
         group.maintenance_json = json.dumps(w.model_dump()) if w.start else "{}"
+    autoupdate_changed = body.autoupdate_time is not None and body.autoupdate_time != group.autoupdate_time
+    if body.autoupdate_time is not None:
+        group.autoupdate_time = body.autoupdate_time
     session.add(group)
     await session.commit()
+    if autoupdate_changed:
+        from manager.osactions.service import reconcile_all
+        await reconcile_all(session)
     return group.model_dump()
 
 

@@ -223,8 +223,13 @@ async def instance_upgrades(instance_id: str, session: AsyncSession = Depends(ge
             sc["packages"] += 1
             sc["reboot"] = sc["reboot"] or bool(it.get("reboot"))
             for f, a in got:
-                sc["ids"][a.id] = f.severity
+                # One vulnerability per CVE: Ubuntu's own record and its USN describe the same one
+                sc["ids"][(json.loads(a.aliases_json) or [a.id])[0]] = f.severity
         best = fixes.get("all") or fixes.get("security") or []
+        by_cve = {}
+        for f, a in best:
+            by_cve.setdefault((json.loads(a.aliases_json) or [a.id])[0], (f, a))
+        best = list(by_cve.values())
         sev = Counter(f.severity for f, _ in best)
         tone = ("critical" if it.get("security") and (sev["critical"] or sev["high"]) else
                 "security" if it.get("security") else "updates" if it.get("all") else "held")

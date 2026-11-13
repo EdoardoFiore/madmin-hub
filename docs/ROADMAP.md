@@ -406,7 +406,7 @@ Steps:
 
 - [x] Manager: OSV queried from the manager only (`querybatch` per unique package version, cached 20 h; advisories cached and re-fetched when modified), tables `Advisory`, `OsvQuery`, `Finding`; scan on every inventory change and daily. Instead of downloading the whole Ubuntu feed, only the versions installed somewhere are asked. Kernel packages count only for the running kernel.
 - [x] UI: Vulnerabilità page (by advisory, by instance with reboot/pending updates, by version), Sistema tab of the instance, group filter, CSV export.
-- [x] Notifications (e-mail and menu badge) for a new critical finding.
+- [x] Notifications (e-mail and menu badge) for a critical finding with an installable fix (new, or whose fix was just published). Findings without a fix stay quiet: grey severity in the UI, no badge, no e-mail.
 - [x] Scope: filtered by `manager/scope.py`.
 - [x] Release build: `build-release.sh` checks the wheels against OSV; a critical advisory stops the build unless waived in `scripts/osv-waivers.txt` (it found certifi, pillow, dnspython and pip: fixed).
 - [x] Ubuntu status of each OS finding (`inventory/ubuntu.py`). OSV says only "affected, no fixed version" until Ubuntu publishes a fix, so on a fully updated instance every finding looked the same. The Canonical VEX document of each CVE (`raw.githubusercontent.com/canonical/ubuntu-security-notices/main/vex/cve/<year>/<cve>.json`, table `UbuntuVex`, cached 20 h) gives the tracker status per release and source package: fixed, pending (fix prepared: for the kernel, the next SRU), needed, triage, deferred, ignored, eol, esm (Pro only), not affected. Not findings: withdrawn advisories, packages Ubuntu marks not affected, fixes not newer than the installed version (OSV lags a few days). `stale` = Ubuntu assessed an older version than the installed one (probably fixed). For the GA kernel the finding says when the newest HWE kernel already has the fix. Outbound destinations of the manager: `api.osv.dev` and `raw.githubusercontent.com`. On the first test instance (Ubuntu 24.04, fully updated): 1615 findings, 0 fixable; 10 false positives removed, 595 kernel CVEs with the fix pending (all 5 critical), ~560 already fixed in `linux-hwe-7.0`.
@@ -488,8 +488,8 @@ None of these touches the agent. They can be done at any time, also in parallel 
 
 ### 10.2 Pending approval notification
 
-- [x] Menu badges (`/api/ui/badges`, polled every minute): registration requests, SSH keys to approve, critical vulnerabilities, rollouts halted or waiting.
-- [x] E-mail (SMTP in Settings, test button) to `notify_to` or every superuser with an e-mail: registration requests, SSH keys, rollouts halted/waiting, failed updates and kernel trials, rescue reports, new critical findings; the same event at most once an hour.
+- [x] Menu badges (`/api/ui/badges`, polled every minute): registration requests, SSH keys to approve, critical vulnerabilities with an installable fix, rollouts halted or waiting.
+- [x] E-mail (SMTP in Settings, test button) to `notify_to` or every superuser with an e-mail: registration requests, SSH keys, rollouts halted/waiting, failed updates and kernel trials, rescue reports, critical findings that became fixable; the same event at most once an hour.
 
 ### 10.3 LDAP users
 

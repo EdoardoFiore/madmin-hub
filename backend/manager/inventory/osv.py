@@ -395,10 +395,13 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                         continue
                     seen.add((vid, name))
                     f = current.get((vid, name))
+                    was_fixable = f is not None and bool(f.fixed_version)
                     if f is None:
                         f = Finding(instance_id=inst.id, advisory_id=vid, kind=kind, package=name[:200])
-                        if adv.severity == "critical":
-                            new_critical.append((inst.name, vid, name))
+                    # Notified when there is something to do: a critical finding whose fix
+                    # became installable (new, or published since the last scan)
+                    if adv.severity == "critical" and verdict[2] and not was_fixable:
+                        new_critical.append((inst.name, vid, name))
                     f.installed_version = version[:200]
                     f.status, f.status_version, f.fixed_version, f.kernel_fix = (
                         verdict[0], verdict[1][:200], verdict[2][:200], verdict[3][:250])
@@ -412,8 +415,10 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
     if new_critical:
         from manager.notify import notify
         lines = "\n".join(f"- {i}: {v} ({p})" for i, v, p in new_critical[:50])
-        notify("critical", datetime.utcnow().strftime("%Y%m%d%H"), f"{len(new_critical)} nuove vulnerabilità critiche",
-               f"Nuove vulnerabilità critiche rilevate:\n{lines}\nDettagli in Vulnerabilità.")
+        notify("critical", datetime.utcnow().strftime("%Y%m%d%H"),
+               f"{len(new_critical)} vulnerabilità critiche da correggere",
+               f"Vulnerabilità critiche con una correzione installabile:\n{lines}\n"
+               f"Si correggono con gli aggiornamenti di sicurezza dell'istanza. Dettagli in Vulnerabilità.")
     return {"instances": len(instances), "findings": total, "packages": len(keys), "advisories": len(advisories)}
 
 

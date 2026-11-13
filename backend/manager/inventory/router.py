@@ -147,13 +147,40 @@ async def instance_section(instance_id: str, section: str, q: str = Query(defaul
 
 
 @router.get("/instances/{instance_id}/findings")
-async def instance_findings(instance_id: str, session: AsyncSession = Depends(get_session),
+async def instance_findings(instance_id: str, package: str = Query(default="", max_length=200),
+                            fixable: bool = False,
+                            session: AsyncSession = Depends(get_session),
                             user: User = Depends(require_permission("scope.view"))):
     instance = await scope.get_instance(session, user, instance_id)
-    rows = await _findings(session, [instance.id])
+    rows = await _findings(session, [instance.id], fixable=fixable)
+    if package:
+        rows = [(f, a) for f, a in rows if f.package == package]
     out = [_finding_out(f, a) for f, a in rows]
     return sorted(out, key=lambda x: (SEVERITY_ORDER.get(x["severity"], 9), STATUS_ORDER.get(x["status"], 99),
                                       x["package"]))
+
+
+@router.get("/instances/{instance_id}/findings/packages")
+async def instance_finding_packages(instance_id: str, session: AsyncSession = Depends(get_session),
+                                    user: User = Depends(require_permission("scope.view"))):
+    """The findings of one instance grouped by package: a compact view for
+    hundreds of findings (the list of one package is /findings?package=)."""
+    instance = await scope.get_instance(session, user, instance_id)
+    groups = {}
+    for f, _ in await _findings(session, [instance.id]):
+        g = groups.setdefault((f.kind, f.package), {"package": f.package, "kind": f.kind, "count": 0, "fixable": 0,
+                                                    "installed_version": f.installed_version,
+                                                    "severities": Counter(), "statuses": Counter()})
+        g["count"] += 1
+        g["fixable"] += 1 if f.fixed_version else 0
+        g["severities"][f.severity] += 1
+        g["statuses"][f.status] += 1
+    out = []
+    for g in groups.values():
+        out.append({**g, "severities": {s: g["severities"][s] for s in osv.SEVERITIES if g["severities"][s]},
+                    "statuses": {s: g["statuses"][s] for s in ubuntu.STATUSES if g["statuses"][s]},
+                    "severity": min(g["severities"], key=lambda s: SEVERITY_ORDER.get(s, 9))})
+    return sorted(out, key=lambda g: (-g["fixable"], SEVERITY_ORDER.get(g["severity"], 9), -g["count"], g["package"]))
 
 
 # --- Fleet ---
@@ -166,15 +193,19 @@ async def summary(group_id: Optional[str] = Query(default=None, max_length=36),
     findings = await _findings(session, [i.id for i in instances])
     advisories_by_sev = defaultdict(set)
     instances_by_sev = defaultdict(set)
+    fixable_by_sev = defaultdict(set)
     for f, _ in findings:
         advisories_by_sev[f.severity].add(f.advisory_id)
         instances_by_sev[f.severity].add(f.instance_id)
+        if f.fixed_version:
+            fixable_by_sev[f.severity].add(f.advisory_id)
     statuses = [_os_status(i) for i in instances]
     return {
         "instances": len(instances),
         "scanned": len({f.instance_id for f, _ in findings}),
         "advisories": {s: len(advisories_by_sev[s]) for s in osv.SEVERITIES},
         "instances_affected": {s: len(instances_by_sev[s]) for s in osv.SEVERITIES},
+        "advisories_fixable": {s: len(fixable_by_sev[s]) for s in osv.SEVERITIES},
         "fixable_instances": len({f.instance_id for f, _ in findings if f.fixed_version
                                   and f.severity in ("critical", "high")}),
         "statuses": _status_counts(f for f, _ in findings),

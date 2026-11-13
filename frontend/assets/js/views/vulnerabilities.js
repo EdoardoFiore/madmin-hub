@@ -17,9 +17,13 @@ export const SEVERITY = {
     unknown: ['Non nota', 'bg-secondary-lt'],
 };
 
-export function severityBadge(s) {
+/**
+ * Severity badge. quiet = nothing to install yet: shown in grey, so the
+ * colours (red above all) are left to what can be fixed now.
+ */
+export function severityBadge(s, quiet = false) {
     const [label, cls] = SEVERITY[s] || SEVERITY.unknown;
-    return `<span class="badge ${cls}">${label}</span>`;
+    return `<span class="badge ${quiet ? 'bg-secondary-lt' : cls}"${quiet ? ' title="Nessuna correzione installabile ora"' : ''}>${label}</span>`;
 }
 
 // Ubuntu tracker status of a finding (backend/manager/inventory/ubuntu.py), most actionable first
@@ -86,7 +90,10 @@ export async function render(container) {
     containerEl = container;
     const [sum, groups] = await Promise.all([apiGet(`/vulnerabilities/summary${qs()}`), apiGet('/groups').catch(() => [])]);
     const a = sum.advisories;
+    const fx = sum.advisories_fixable || {};
     const scan = sum.scan || {};
+    // Colour only for what can be fixed now; the rest is counted, in grey
+    const sevHint = (s) => `${fx[s] ? `<b>${fx[s]} correggibili</b>` : 'nessuna correggibile'} · ${sum.instances_affected[s]} istanze`;
     const card = (label, value, cls = '', hint = '') => `<div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body">
         <div class="subheader">${label}</div><div class="h2 mb-0 ${cls}">${value}</div>
         ${hint ? `<div class="small text-muted">${hint}</div>` : ''}</div></div></div>`;
@@ -102,10 +109,10 @@ export async function render(container) {
             <button class="btn btn-outline-primary btn-sm" ${actionAttrs('vulnExport')}><i class="ti ti-download me-1"></i>Esporta CSV</button>
         </div>
         <div class="row g-2 mb-3">
-            ${card('Critiche', a.critical, a.critical ? 'text-red' : '', `${sum.instances_affected.critical} istanze`)}
-            ${card('Alte', a.high, a.high ? 'text-orange' : '', `${sum.instances_affected.high} istanze`)}
-            ${card('Medie', a.medium, '', `${sum.instances_affected.medium} istanze`)}
-            ${card('Correggibili', sum.fixable_instances, '', 'istanze con critiche/alte già corrette nei repository')}
+            ${card('Critiche', a.critical, fx.critical ? 'text-red' : 'text-muted', sevHint('critical'))}
+            ${card('Alte', a.high, fx.high ? 'text-orange' : 'text-muted', sevHint('high'))}
+            ${card('Medie', a.medium, 'text-muted', sevHint('medium'))}
+            ${card('Correggibili', sum.fixable_instances, sum.fixable_instances ? 'text-red' : '', 'istanze con critiche/alte già corrette nei repository')}
             ${card('Riavvio richiesto', sum.reboot_required, sum.reboot_required ? 'text-warning' : '', 'istanze')}
             ${card('Aggiornamenti sicurezza', sum.pending_security, '', `istanze con aggiornamenti in sospeso (su ${sum.instances})`)}
         </div>
@@ -158,7 +165,7 @@ async function advisoriesTab(el) {
         <div class="table-responsive"><table class="table card-table table-vcenter">
             <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Tipo</th><th>Pacchetti</th><th>Istanze</th><th>Stato Ubuntu</th><th>Descrizione</th></tr></thead>
             <tbody>${rows.map(r => `<tr class="cursor-pointer" ${actionAttrs('vulnAdvisory', r.advisory_id)}>
-                <td>${advisoryLink(r)}</td><td>${severityBadge(r.severity)}</td>
+                <td>${advisoryLink(r)}</td><td>${severityBadge(r.severity, !r.fixable)}</td>
                 <td>${r.kind === 'os' ? 'OS' : 'Python'}</td>
                 <td class="small">${escapeHtml(r.packages.slice(0, 4).join(', '))}${r.packages.length > 4 ? '…' : ''}</td>
                 <td>${r.instances}</td>
@@ -172,9 +179,10 @@ async function advisoriesTab(el) {
     el.querySelector('#vuln-q').addEventListener('change', (e) => { state.q = e.target.value.trim(); renderTab(); });
 }
 
-function sevCounts(f) {
+/** Counts per severity, in grey: the colour goes to the Correggibili column. */
+export function sevCounts(f) {
     return ['critical', 'high', 'medium', 'low'].map(s => f[s]
-        ? `<span class="badge ${SEVERITY[s][1]} me-1" title="${SEVERITY[s][0]}">${f[s]}</span>` : '').join('') || '<span class="text-muted">-</span>';
+        ? `<span class="badge bg-secondary-lt me-1" title="${SEVERITY[s][0]}">${SEVERITY[s][0][0]} ${f[s]}</span>` : '').join('') || '<span class="text-muted">-</span>';
 }
 
 async function instancesTab(el) {
@@ -191,7 +199,8 @@ async function instancesTab(el) {
             <td>${r.reboot_required ? '<span class="badge bg-warning-lt">richiesto</span>' : '<span class="text-muted">no</span>'}</td>
             <td>${r.pending_updates == null ? '-' : `${r.pending_updates}${r.pending_security ? ` <span class="badge bg-red-lt">${r.pending_security} sicurezza</span>` : ''}`}
                 ${r.apt_updated_at ? `<div class="small text-muted">liste: ${relTime(new Date(r.apt_updated_at * 1000).toISOString())}</div>` : ''}</td>
-            <td>${sevCounts(r.findings)}</td><td>${r.fixable || '-'}</td>
+            <td>${sevCounts(r.findings)}</td>
+            <td>${r.fixable ? `<span class="badge bg-red text-red-fg">${r.fixable}</span>` : '<span class="text-muted">-</span>'}</td>
             <td title="${escapeHtml(STATUS.pending[2])}">${r.pending || '-'}</td>
         </tr>`).join('') || '<tr><td colspan="9" class="text-muted">Nessuna istanza</td></tr>'}</tbody>
     </table></div>`;
@@ -215,7 +224,7 @@ registerActions({
         try {
             const d = await apiGet(`/vulnerabilities/advisories/${encodeURIComponent(id)}${qs()}`);
             secretModal(`${d.advisory_id}`, `
-                <div class="mb-2">${severityBadge(d.severity)} <span class="text-muted small">pubblicata ${fmtDate(d.published)}</span></div>
+                <div class="mb-2">${severityBadge(d.severity, !d.instances.some(i => i.fixed_version))} <span class="text-muted small">pubblicata ${fmtDate(d.published)}</span></div>
                 <p>${escapeHtml(d.summary)}</p>
                 <p class="small">${escapeHtml((d.cves || []).join(', '))} · <a href="${escapeHtml(d.url)}" target="_blank" rel="noopener noreferrer">dettagli</a></p>
                 <table class="table table-sm"><thead><tr><th>Istanza</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th><th>Dal</th></tr></thead>

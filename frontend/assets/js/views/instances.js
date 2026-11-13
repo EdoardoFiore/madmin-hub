@@ -882,13 +882,14 @@ export function sessionTable(rows, showInstance = false) {
 }
 
 async function packages(el, i) {
-    const [inv, findings, changes] = await Promise.all([
-        apiGet(`/instances/${i.id}/inventory`), apiGet(`/instances/${i.id}/findings`),
-        apiGet(`/instances/${i.id}/inventory/changes?limit=20`)]);
+    // Only the fixable findings come in full; the rest is grouped by package and
+    // each package's list is loaded when it is opened (hundreds of kernel CVEs).
+    const [inv, fixable, byPackage, changes] = await Promise.all([
+        apiGet(`/instances/${i.id}/inventory`), apiGet(`/instances/${i.id}/findings?fixable=true`),
+        apiGet(`/instances/${i.id}/findings/packages`), apiGet(`/instances/${i.id}/inventory/changes?limit=20`)]);
     const st = inv.os_status || {};
     const sec = inv.sections || {};
     const secInfo = (n) => sec[n] ? `${sec[n].count} · ${sec[n].updated_at ? relTime(sec[n].updated_at) : 'mai'}${sec[n].pending ? ' · <span class="text-warning">aggiornamento in corso</span>' : ''}` : 'non ancora ricevuto';
-    const top = findings.filter(f => ['critical', 'high'].includes(f.severity));
     const trial = st.kernel_trial;
     const TRIAL = { pending: ['bg-warning-lt', 'in prova'], confirmed: ['bg-success-lt', 'confermato'], failed: ['bg-danger-lt', 'fallito'] };
     const osManage = checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1;
@@ -899,9 +900,14 @@ async function packages(el, i) {
         <button class="btn btn-sm btn-outline-warning" ${actionAttrs('managerOsReboot')}><i class="ti ti-power me-1"></i>Riavvia</button>
         ${st.reboot_scheduled_at ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerOsRebootCancel')}><i class="ti ti-x me-1"></i>Annulla riavvio</button>` : ''}
     </div>` : '';
-    const rest = findings.length - top.length;
     const ss = inv.statuses || {};
-    const total = findings.length;
+    const total = Object.values(inv.findings || {}).reduce((n, x) => n + x, 0);
+    const sevList = (counts, quiet) => Object.entries(counts).filter(([, n]) => n)
+        .map(([s, n]) => `${severityBadge(s, quiet)} ${n}`).join(' &nbsp; ');
+    const findingRow = (f, withPackage) => `<tr><td>${advisoryLink(f)}</td><td>${severityBadge(f.severity, !f.fixed_version)}</td>
+        ${withPackage ? `<td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
+        <td class="font-monospace small">${escapeHtml(f.installed_version)}</td>` : ''}
+        <td>${statusCell(f)}</td></tr>`;
     // One sentence that says whether there is something to do on this instance
     const verdict = !total ? ['alert-success', 'Nessuna vulnerabilità nota.']
         : inv.fixable ? ['alert-warning', `${inv.fixable} vulnerabilità si correggono con gli aggiornamenti già disponibili: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>)${st.reboot_required ? ', poi riavvio' : ''}.`]
@@ -932,26 +938,35 @@ async function packages(el, i) {
             ])}</div>
             <div class="col-lg-7">
                 <div class="alert ${verdict[0]} py-2 mb-2">${verdict[1]}</div>
-                <div class="mb-1">${Object.entries(inv.findings).filter(([, n]) => n).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' &nbsp; ') || ''}</div>
-                ${total ? `<div class="mb-2 small">${Object.entries(ss).filter(([, n]) => n).map(([s, n]) => `${statusBadge(s)} ${n}`).join(' &nbsp; ')}</div>` : ''}
+                ${total ? `<div class="mb-1 small"><span class="text-muted">Gravità:</span> ${sevList(inv.findings, true)}</div>
+                    <div class="mb-2 small"><span class="text-muted">Stato Ubuntu:</span> ${Object.entries(ss).filter(([, n]) => n).map(([s, n]) => `${statusBadge(s)} ${n}`).join(' &nbsp; ')}</div>` : ''}
                 ${kf ? `<div class="alert alert-secondary py-2 small mb-2">
                     <b>${kf.count}</b> vulnerabilità del kernel${kf.critical || kf.high ? ` (${[kf.critical ? `${kf.critical} critiche` : '', kf.high ? `${kf.high} alte` : ''].filter(Boolean).join(', ')})` : ''}
                     sono già corrette (o non presenti) nel kernel HWE <span class="font-monospace">${escapeHtml(kf.source)}</span>.
                     Il kernel in uso (GA) le riceverà con i prossimi rilasci; in alternativa si può passare al kernel HWE
                     (<span class="font-monospace">${escapeHtml(hweMeta)}</span>), che segue una serie di kernel più recente e cambia serie
                     a ogni point release: va provato prima su un'istanza di test.</div>` : ''}
-                <div class="table-responsive"><table class="table table-sm table-vcenter">
-                    <thead><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th></tr></thead>
-                    <tbody>${top.map(f => `<tr><td>${advisoryLink(f)}</td><td>${severityBadge(f.severity)}</td>
-                        <td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
-                        <td class="font-monospace small">${escapeHtml(f.installed_version)}</td>
-                        <td>${statusCell(f)}</td></tr>`).join('')
-                        || '<tr><td colspan="5" class="text-muted">Nessuna vulnerabilità critica o alta</td></tr>'}</tbody>
-                </table></div>
-                ${rest ? `<div class="small text-muted">Altre ${rest} di gravità media o inferiore: <a href="#vulnerabilities">Vulnerabilità</a> o esportazione CSV.</div>` : ''}
+                ${fixable.length ? `<h4 class="mb-1">Da correggere</h4>
+                <div class="table-responsive" style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter">
+                    <thead class="sticky-top bg-body"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th></tr></thead>
+                    <tbody>${fixable.map(f => findingRow(f, true)).join('')}</tbody>
+                </table></div>` : ''}
                 <div class="small text-muted">Dei kernel conta solo quello in esecuzione: quelli installati ma non avviati (di riserva) non sono esposti finché non vengono avviati.</div>
             </div>
         </div>
+        ${byPackage.length ? `<h4 class="mt-4 mb-1">Vulnerabilità per pacchetto</h4>
+        <div class="small text-muted mb-2">${byPackage.length} pacchetti; clic su una riga per l'elenco delle vulnerabilità.</div>
+        <div class="table-responsive" style="max-height: 28rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0" id="vuln-pkgs">
+            <thead class="sticky-top bg-body"><tr><th></th><th>Pacchetto</th><th>Installato</th><th class="text-end">Totale</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
+            <tbody>${byPackage.map((g, n) => `<tr class="cursor-pointer" data-pkg="${n}">
+                <td class="text-muted" style="width: 1.5rem"><i class="ti ti-chevron-right"></i></td>
+                <td>${escapeHtml(g.package)}${g.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
+                <td class="font-monospace small">${escapeHtml(g.installed_version)}</td>
+                <td class="text-end">${g.count}</td>
+                <td class="small">${sevList(g.severities, !g.fixable)}</td>
+                <td class="small">${Object.entries(g.statuses).map(([s, c]) => `${statusBadge(s)} ${c}`).join(' ')}</td>
+            </tr><tr class="d-none" data-pkg-detail="${n}"><td></td><td colspan="5"></td></tr>`).join('')}</tbody>
+        </table></div>` : ''}
         <hr>
         <div class="d-flex gap-2 align-items-center mb-2">
             <select class="form-select form-select-sm w-auto" id="pkg-section"><option value="packages">Pacchetti OS</option><option value="python">Pacchetti Python</option></select>
@@ -965,6 +980,28 @@ async function packages(el, i) {
                 <td class="font-monospace small">${escapeHtml(x.to || '(rimosso)')}</td></tr>`).join('')}</table></details>`).join('')
             : '<div class="text-muted small">Nessuna modifica registrata</div>'}
     </div>`;
+    el.querySelector('#vuln-pkgs')?.addEventListener('click', async (e) => {
+        const row = e.target.closest('tr[data-pkg]');
+        if (!row || e.target.closest('a')) return;
+        const n = row.dataset.pkg;
+        const detail = el.querySelector(`tr[data-pkg-detail="${n}"]`);
+        const icon = row.querySelector('.ti');
+        const open = detail.classList.toggle('d-none') === false;
+        icon.classList.toggle('ti-chevron-right', !open);
+        icon.classList.toggle('ti-chevron-down', open);
+        if (!open || detail.dataset.loaded) return;
+        const cell = detail.lastElementChild;
+        cell.innerHTML = loadingSpinner();
+        try {
+            const items = await apiGet(`/instances/${i.id}/findings?package=${encodeURIComponent(byPackage[n].package)}`);
+            cell.innerHTML = `<div style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0">
+                <thead class="sticky-top bg-body"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
+                <tbody>${items.map(f => findingRow(f, false)).join('')}</tbody></table></div>`;
+            detail.dataset.loaded = '1';
+        } catch (err) {
+            cell.innerHTML = `<span class="text-danger">${escapeHtml(err.message)}</span>`;
+        }
+    });
     const listEl = el.querySelector('#pkg-list');
     const load = async () => {
         const section = el.querySelector('#pkg-section').value;

@@ -183,9 +183,11 @@ def create_app() -> FastAPI:
                 out["support"] = (await session.execute(sa_select(func.count()).select_from(UserSshKey).where(
                     UserSshKey.status == "pending", UserSshKey.user_id != current_user.id))).scalar()
             ids = await scope.group_ids(session, current_user)
+            # Only what someone can act on: critical findings with a fix installable now
             q = scope.filter_instances(sa_select(func.count(func.distinct(Finding.advisory_id))).select_from(Finding)
                                        .join(Instance, Instance.id == Finding.instance_id)
-                                       .where(Finding.severity == "critical", Instance.status == "active"), ids)
+                                       .where(Finding.severity == "critical", Finding.fixed_version != "",
+                                              Instance.status == "active"), ids)
             out["vulnerabilities"] = (await session.execute(q)).scalar()
             if current_user.has_permission("scope.manage"):
                 out["rollouts"] = (await session.execute(sa_select(func.count()).select_from(Rollout).where(

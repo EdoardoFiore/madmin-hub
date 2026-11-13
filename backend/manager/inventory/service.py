@@ -22,6 +22,8 @@ from manager.models import Command, InstanceInventory, InventoryChange
 logger = logging.getLogger("madmin_manager.inventory")
 
 GET_TTL = timedelta(hours=6)
+# Sections that describe what is installed: history and vulnerability scan
+HISTORY_SECTIONS = ("packages", "python")
 MAX_ITEMS = 20000
 MAX_CHANGES_KEPT = 200     # per instance and section
 
@@ -95,14 +97,16 @@ async def _on_inventory_get(instance_id: str, data: dict) -> dict:
         if row.wanted_digest == digest:
             row.wanted_digest = ""
         session.add(row)
-        changes = diff(name, old, items) if old is not None else []
+        # The upgrades section is a forecast, not a change of the instance: no history
+        changes = diff(name, old, items) if old is not None and name in HISTORY_SECTIONS else []
         if changes:
             session.add(InventoryChange(instance_id=instance_id, section=name,
                                         changes_json=json.dumps(changes[:5000])))
         await session.commit()
         await _prune_changes(session, instance_id, name)
-    from . import osv
-    osv.mark_dirty(instance_id)
+    if name in HISTORY_SECTIONS:
+        from . import osv
+        osv.mark_dirty(instance_id)
     logger.info("Inventory %s of %s: %d items, %d changes", name, instance_id, len(items), len(changes))
     return {"section": name, "digest": digest, "count": len(items), "changes": len(changes)}
 

@@ -118,6 +118,7 @@ export async function render(container) {
             ${card('Riavvio richiesto', sum.reboot_required, sum.reboot_required ? 'text-warning' : '', 'istanze')}
             ${card('Aggiornamenti sicurezza', sum.pending_security, '', `istanze con aggiornamenti in sospeso (su ${sum.instances})`)}
         </div>
+        ${howItWorks()}
         ${scan.vex_error ? `<div class="alert alert-warning py-2">Stato Ubuntu non aggiornato per alcune CVE: ${escapeHtml(scan.vex_error)}</div>` : ''}
         <div class="card mb-3"><div class="card-body py-2 d-flex flex-wrap gap-3 align-items-center">
             <span class="text-muted small">Stato secondo Ubuntu (rilevazioni, tutte le gravità):</span>
@@ -134,8 +135,38 @@ export async function render(container) {
             </div>
             <div id="vuln-tab">${loadingSpinner()}</div>
         </div>`;
+    container.querySelector('#vuln-help').addEventListener('toggle', (e) => {
+        try { localStorage.setItem('manager.vulnHelp', e.target.open ? 'open' : 'closed'); } catch { /* not remembered */ }
+    });
     container.querySelector('#vuln-group').addEventListener('change', (e) => { state.group = e.target.value; render(container); });
     await renderTab();
+}
+
+/** The flow, from the instance to an action: collapsed after the first visit. */
+function howItWorks() {
+    let open = true;
+    try { open = localStorage.getItem('manager.vulnHelp') !== 'closed'; } catch { /* default open */ }
+    const step = (n, icon, title, text, where) => `<div class="col-md-3"><div class="d-flex gap-2">
+        <span class="avatar avatar-sm bg-primary-lt">${n}</span><div>
+        <div class="fw-bold"><i class="ti ${icon} me-1"></i>${title}</div>
+        <div class="small text-muted">${text}</div>
+        <div class="small mt-1"><span class="badge bg-secondary-lt">${where}</span></div></div></div></div>`;
+    return `<details class="card mb-3" ${open ? 'open' : ''} id="vuln-help">
+        <summary class="card-header cursor-pointer"><h3 class="card-title"><i class="ti ti-help-circle me-2"></i>Come funziona</h3></summary>
+        <div class="card-body"><div class="row g-3">
+            ${step(1, 'ti-server', 'L\'istanza invia i pacchetti',
+                'Elenco dei pacchetti del sistema e del venv di MADMIN, e gli aggiornamenti disponibili: solo quando cambiano (controllo ogni 5 minuti).',
+                'sull\'istanza')}
+            ${step(2, 'ti-shield-search', 'Il manager li confronta',
+                'Con OSV (avvisi Ubuntu e PyPI) e con lo stato del tracker di Ubuntu per ogni CVE: a ogni cambio e una volta al giorno.',
+                'sul manager, l\'unico che esce su internet')}
+            ${step(3, 'ti-list-details', 'Ogni vulnerabilità ha uno stato',
+                '<b class="text-success">Correggibile</b>: la correzione è nei repository · <b>In arrivo</b>: Ubuntu l\'ha preparata · <b>Senza correzione</b>: si aspetta Ubuntu · <b class="text-indigo">Serve release MADMIN</b>: pacchetto Python.',
+                'Vulnerabilità · scheda Sistema')}
+            ${step(4, 'ti-tool', 'Cosa fare',
+                'Scheda <b>Sistema</b> dell\'istanza: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>) con l\'elenco esatto di cosa installano, poi il riavvio se serve. Su molte istanze: un <b>Rollout</b>.',
+                'azione di un superuser')}
+        </div></div></details>`;
 }
 
 async function renderTab() {

@@ -121,6 +121,7 @@ async def instance_inventory(instance_id: str, session: AsyncSession = Depends(g
         "statuses": _status_counts(f for f, _ in findings),
         "kernel_fix": _kernel_fix(f for f, _ in findings),
         "release": ubuntu.codename(str(facts.get("os_id") or "")),
+        "scan_at": osv.state.get("last_scan_at"),
     }
 
 
@@ -184,6 +185,64 @@ async def instance_finding_packages(instance_id: str, session: AsyncSession = De
                     "statuses": {s: g["statuses"][s] for s in ubuntu.STATUSES if g["statuses"][s]},
                     "severity": min(g["severities"], key=lambda s: SEVERITY_ORDER.get(s, 9))})
     return sorted(out, key=lambda g: (-g["fixable"], SEVERITY_ORDER.get(g["severity"], 9), -g["count"], g["package"]))
+
+
+@router.get("/instances/{instance_id}/upgrades")
+async def instance_upgrades(instance_id: str, session: AsyncSession = Depends(get_session),
+                            user: User = Depends(require_permission("scope.view"))):
+    """What "Aggiornamenti di sicurezza" and "Aggiorna tutto" would install now
+    (the instance's upgrades section), each package with the findings it
+    fixes. tone: critical (security, fixes critical/high findings), security,
+    updates (only "Aggiorna tutto"), held (not installed by either: phased,
+    held, kept back)."""
+    instance = await scope.get_instance(session, user, instance_id)
+    row = await session.get(InstanceInventory, (instance.id, "upgrades"))
+    if row is None or not row.digest:
+        return {"available": False}
+    items = json.loads(row.items_json)
+    pkgs = await session.get(InstanceInventory, (instance.id, "packages"))
+    source_of = {f"{p['name']}:{p['arch']}": p.get("source") or p["name"]
+                 for p in (json.loads(pkgs.items_json) if pkgs and pkgs.digest else [])}
+    fixable = defaultdict(list)
+    for f, a in await _findings(session, [instance.id], fixable=True):
+        if f.kind == "os":
+            fixable[f.package].append((f, a))
+    scopes = {"security": {"ids": {}, "packages": 0, "reboot": False},
+              "all": {"ids": {}, "packages": 0, "reboot": False}}
+    out = []
+    for it in items:
+        source = source_of.get(f"{it['name']}:{it['arch']}") or it["name"]
+        fixes = {}
+        for scope_name, flag, version in (("security", it.get("security"), it.get("security_version")),
+                                          ("all", it.get("all"), it.get("candidate"))):
+            if not flag or not version:
+                continue
+            got = [(f, a) for f, a in fixable.get(source, []) if ubuntu.compare(version, f.fixed_version) >= 0]
+            fixes[scope_name] = got
+            sc = scopes[scope_name]
+            sc["packages"] += 1
+            sc["reboot"] = sc["reboot"] or bool(it.get("reboot"))
+            for f, a in got:
+                sc["ids"][a.id] = f.severity
+        best = fixes.get("all") or fixes.get("security") or []
+        sev = Counter(f.severity for f, _ in best)
+        tone = ("critical" if it.get("security") and (sev["critical"] or sev["high"]) else
+                "security" if it.get("security") else "updates" if it.get("all") else "held")
+        out.append({**it, "source": source, "tone": tone,
+                    "fixes": {s: sev.get(s, 0) for s in osv.SEVERITIES if sev.get(s)},
+                    "fix_ids": [a.id for _, a in best][:50]})
+    order = {"critical": 0, "security": 1, "updates": 2, "held": 3}
+    out.sort(key=lambda i: (order[i["tone"]], i["name"]))
+    summary = {}
+    for name, sc in scopes.items():
+        sev = Counter(sc["ids"].values())
+        summary[name] = {"packages": sc["packages"], "reboot": sc["reboot"], "fixes": len(sc["ids"]),
+                         "by_severity": {s: sev.get(s, 0) for s in osv.SEVERITIES if sev.get(s)}}
+    summary["held"] = sum(1 for i in out if i["tone"] == "held")
+    facts = _facts(instance)
+    return {"available": True, "updated_at": row.updated_at, "items": out, "summary": summary,
+            "apt_updated_at": (facts.get("os_status") or {}).get("apt_updated_at"),
+            "unattended_upgrades": (facts.get("os_status") or {}).get("unattended_upgrades")}
 
 
 # --- Fleet ---

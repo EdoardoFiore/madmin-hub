@@ -89,7 +89,7 @@ CMD_OS_REBOOT = "os.reboot"             # {"delay_minutes", "reason"}; a new ker
 CMD_OS_REBOOT_CANCEL = "os.reboot.cancel"
 
 # Heavy sections of the facts, sent by digest and fetched with inventory.get
-INVENTORY_SECTIONS = ("packages", "python")
+INVENTORY_SECTIONS = ("packages", "python", "upgrades")
 OS_UPGRADE_SCOPES = ("security", "all")
 REBOOT_DELAY_MAX = 1440
 

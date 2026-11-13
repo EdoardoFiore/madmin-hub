@@ -115,6 +115,9 @@ async def instance_inventory(instance_id: str, session: AsyncSession = Depends(g
                                  "pending": bool(r.wanted_digest)} for r in rows},
         "findings": {s: by_sev.get(s, 0) for s in osv.SEVERITIES},
         "fixable": sum(1 for f, _ in findings if f.fixed_version),
+        # by the OS updates of the instance / by a MADMIN release (Python venv)
+        "fixable_os": sum(1 for f, _ in findings if f.fixed_version and f.kind == "os"),
+        "fixable_release": sum(1 for f, _ in findings if f.fixed_version and f.kind != "os"),
         "statuses": _status_counts(f for f, _ in findings),
         "kernel_fix": _kernel_fix(f for f, _ in findings),
         "release": ubuntu.codename(str(facts.get("os_id") or "")),

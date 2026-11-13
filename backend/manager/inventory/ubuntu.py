@@ -16,8 +16,11 @@ Ubuntu CVE tracker status of each source package in each release:
     not-affected  the code is not present / not used in this build
     esm           fixed only in Ubuntu Pro (esm-infra / esm-apps)
 
-The manager adds one of its own:
+The manager adds two of its own:
 
+    release       a Python package of the MADMIN venv with a fixed version on
+                  PyPI: fixed by a MADMIN release with the newer package, not
+                  by the OS updates of the instance
     stale         Ubuntu assessed an older version than the installed one: the
                   data lag behind a security update (the finding is probably fixed)
 
@@ -39,7 +42,7 @@ CODENAMES = {
 
 # Order of the statuses of a finding ("" = no Ubuntu data, e.g. Python packages).
 # not-affected never reaches a finding.
-STATUSES = ("fixed", "pending", "stale", "needed", "triage", "deferred", "esm", "ignored", "eol", "")
+STATUSES = ("fixed", "release", "pending", "stale", "needed", "triage", "deferred", "esm", "ignored", "eol", "")
 
 _PURL_RE = re.compile(r"^pkg:deb/ubuntu/([^@]+)@([^?]+)\?arch=source&distro=(?:(esm-infra|esm-apps)/)?([a-z]+)$")
 _CVE_RE = re.compile(r"^CVE-(\d{4})-\d+$")

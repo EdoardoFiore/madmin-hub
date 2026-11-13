@@ -28,7 +28,8 @@ export function severityBadge(s, quiet = false) {
 
 // Ubuntu tracker status of a finding (backend/manager/inventory/ubuntu.py), most actionable first
 export const STATUS = {
-    fixed: ['Correggibile', 'bg-success-lt', 'Correzione pubblicata: si installa con gli aggiornamenti'],
+    fixed: ['Correggibile', 'bg-success-lt', 'Correzione pubblicata: si installa con gli aggiornamenti del sistema'],
+    release: ['Serve release MADMIN', 'bg-indigo-lt', 'Pacchetto Python di MADMIN con una versione corretta su PyPI: serve una release di MADMIN che la includa (gli aggiornamenti del sistema non lo toccano)'],
     pending: ['Correzione in arrivo', 'bg-azure-lt', 'Ubuntu ha preparato la correzione, non ancora pubblicata (per il kernel: il prossimo rilascio)'],
     stale: ['Da verificare', 'bg-teal-lt', 'Ubuntu ha valutato una versione precedente a quella installata: probabilmente già corretta, i dati Ubuntu non sono ancora aggiornati'],
     needed: ['Senza correzione', 'bg-orange-lt', 'Vulnerabile: Ubuntu non ha ancora una correzione'],
@@ -42,7 +43,8 @@ export const STATUS = {
 
 export const STATUS_FILTERS = [
     ['', 'Tutti gli stati'],
-    ['fixed', 'Correggibili ora'],
+    ['fixed', 'Correggibili ora (sistema)'],
+    ['release', 'Serve release MADMIN'],
     ['pending', 'Correzione in arrivo'],
     ['needed,triage,deferred,unknown', 'Senza correzione'],
     ['stale', 'Da verificare'],

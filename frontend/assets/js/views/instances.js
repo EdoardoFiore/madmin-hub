@@ -910,7 +910,10 @@ async function packages(el, i) {
         <td>${statusCell(f)}</td></tr>`;
     // One sentence that says whether there is something to do on this instance
     const verdict = !total ? ['alert-success', 'Nessuna vulnerabilità nota.']
-        : inv.fixable ? ['alert-warning', `${inv.fixable} vulnerabilità si correggono con gli aggiornamenti già disponibili: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>)${st.reboot_required ? ', poi riavvio' : ''}.`]
+        : inv.fixable ? ['alert-warning', [
+            inv.fixable_os ? `${inv.fixable_os} vulnerabilità si correggono con gli aggiornamenti del sistema già disponibili: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>)${st.reboot_required ? ', poi riavvio' : ''}.` : '',
+            inv.fixable_release ? `${inv.fixable_release} riguardano pacchetti Python di MADMIN: serve una <b>release di MADMIN</b> che includa la versione corretta (Aggiorna MADMIN).` : '',
+        ].filter(Boolean).join('<br>')]
         : st.reboot_required ? ['alert-warning', 'Aggiornamenti installati: serve il <b>riavvio</b> per applicarli.']
         : ['alert-info', `Il sistema è aggiornato: nessuna delle ${total} vulnerabilità ha una correzione installabile ora.
             ${ss.pending ? `${ss.pending} hanno la correzione già preparata da Ubuntu (arriverà con i prossimi aggiornamenti).` : ''}

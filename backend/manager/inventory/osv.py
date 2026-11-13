@@ -322,7 +322,8 @@ def _classify(kind: str, version: str, fixed: str, statuses: Dict[str, list], na
     None when it is not one (Ubuntu: not affected, or already fixed in the
     installed version while OSV still lists it)."""
     if kind != "os":
-        return ("fixed" if fixed else ""), "", fixed, ""
+        # The venv comes with the MADMIN release: a fix needs a new release
+        return ("release" if fixed else ""), "", fixed, ""
     status, status_version = (statuses.get(name) or ["", ""])[:2]
     if status == "not-affected":
         return None
@@ -401,7 +402,7 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
                     # Notified when there is something to do: a critical finding whose fix
                     # became installable (new, or published since the last scan)
                     if adv.severity == "critical" and verdict[2] and not was_fixable:
-                        new_critical.append((inst.name, vid, name))
+                        new_critical.append((inst.name, vid, name, kind))
                     f.installed_version = version[:200]
                     f.status, f.status_version, f.fixed_version, f.kernel_fix = (
                         verdict[0], verdict[1][:200], verdict[2][:200], verdict[3][:250])
@@ -414,11 +415,17 @@ async def scan(instance_ids: Optional[List[str]] = None) -> dict:
         await session.commit()
     if new_critical:
         from manager.notify import notify
-        lines = "\n".join(f"- {i}: {v} ({p})" for i, v, p in new_critical[:50])
+        os_lines = [f"- {i}: {v} ({p})" for i, v, p, k in new_critical if k == "os"][:50]
+        py_lines = [f"- {i}: {v} ({p})" for i, v, p, k in new_critical if k != "os"][:50]
+        text = ""
+        if os_lines:
+            text += ("Si correggono con gli aggiornamenti di sicurezza dell'istanza (scheda Sistema):\n"
+                     + "\n".join(os_lines) + "\n")
+        if py_lines:
+            text += ("Pacchetti Python di MADMIN: serve una release di MADMIN con la versione corretta "
+                     "(il sistema operativo non li aggiorna):\n" + "\n".join(py_lines) + "\n")
         notify("critical", datetime.utcnow().strftime("%Y%m%d%H"),
-               f"{len(new_critical)} vulnerabilità critiche da correggere",
-               f"Vulnerabilità critiche con una correzione installabile:\n{lines}\n"
-               f"Si correggono con gli aggiornamenti di sicurezza dell'istanza. Dettagli in Vulnerabilità.")
+               f"{len(new_critical)} vulnerabilità critiche da correggere", text + "Dettagli in Vulnerabilità.")
     return {"instances": len(instances), "findings": total, "packages": len(keys), "advisories": len(advisories)}
 
 

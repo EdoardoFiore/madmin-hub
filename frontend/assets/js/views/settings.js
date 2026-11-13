@@ -4,7 +4,7 @@
 import { apiGet, apiPatch, apiPost } from '../api.js';
 import { escapeHtml, showToast } from '../utils.js';
 import { checkPermission } from '../app.js';
-import { formModal, formData } from './manager-common.js';
+import { formModal, formData, field, notice } from './manager-common.js';
 
 const FIELDS = [
     ['Generale', [
@@ -86,17 +86,21 @@ export async function render(container) {
         } catch (err) { showToast(err.message, 'error', 8000); }
     });
     container.querySelector('#ldap-test')?.addEventListener('click', () => {
-        formModal('Prova login LDAP', `
-            <div class="text-muted small mb-3">Usa le impostazioni salvate. Non crea l'utente: mostra cosa otterrebbe al login.</div>
-            <div class="mb-3"><label class="form-label">Utente</label><input name="username" class="form-control" required autocomplete="off"></div>
-            <div class="mb-3"><label class="form-label">Password</label><input name="password" type="password" class="form-control" required autocomplete="new-password"></div>`,
+        const el = formModal('Prova login LDAP', `
+            ${notice('info', '', [['ti-info-circle', 'Usa le impostazioni <b>salvate</b>; non crea l\'utente, mostra cosa otterrebbe al login.']])}
+            ${field('username', 'Utente', { required: true, maxlength: 100, attrs: 'autocomplete="off"', example: 'mario.rossi' })}
+            ${field('password', 'Password', { type: 'password', required: true, attrs: 'autocomplete="new-password"' })}
+            <div id="ldap-result"></div>`,
         async (form) => {
+            const box = el.querySelector('#ldap-result');
             const r = await apiPost('/settings/ldap/test', formData(form));
             const m = r.mapping;
-            showToast(m ? `${r.dn}: ${m.role} ${m.access}${m.group_id ? ` (gruppo ${m.group_id})` : ''}`
-                : `${r.dn}: nessun gruppo mappato (${r.groups.join('; ') || 'nessun gruppo'}): login rifiutato`, m ? 'success' : 'warning', 10000);
+            box.innerHTML = notice(m ? 'success' : 'warning', m ? 'Login consentito' : 'Login rifiutato: nessun gruppo mappato', [
+                ['ti-id', `<span class="font-monospace small">${escapeHtml(r.dn)}</span>`],
+                m ? ['ti-user-shield', `Ruolo <b>${escapeHtml(m.role)}</b>, accesso <b>${escapeHtml(m.access)}</b>${m.group_id ? `, gruppo <span class="font-monospace">${escapeHtml(m.group_id)}</span>` : ''}`] : null,
+                ['ti-users-group', `Gruppi: ${r.groups.map(g => `<span class="font-monospace small">${escapeHtml(g)}</span>`).join(', ') || 'nessuno'}`]]);
             return false;
-        }, { submitText: 'Prova' });
+        }, { submitText: 'Prova', icon: 'ti-plug-connected' });
     });
     container.querySelector('#manager-settings').addEventListener('submit', async (e) => {
         e.preventDefault();

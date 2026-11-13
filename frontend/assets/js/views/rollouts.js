@@ -6,7 +6,8 @@
 import { apiGet, apiPost } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, loadingSpinner, actionAttrs, registerActions } from '../utils.js';
 import { checkPermission, setPageActions } from '../app.js';
-import { fmtDate, relTime, formModal, formData, groupOptions, textToLabels, secretModal } from './manager-common.js';
+import { fmtDate, relTime, formModal, formData, groupOptions, textToLabels, secretModal, field, formSection, notice,
+         confirmAction } from './manager-common.js';
 
 const ACTIONS = {
     'madmin.update': ['Aggiornamento MADMIN', true],
@@ -109,7 +110,9 @@ registerActions({
     rolloutResume: (id) => act('resume', id, 'Rollout ripreso'),
     rolloutRetry: (id) => act('retry', id, 'Istanze fallite e saltate rimesse in coda'),
     rolloutCancel: async (id) => {
-        if (!await confirmDialog('Annulla rollout', 'Nessuna nuova istanza verrà avviata; quelle in corso terminano da sole.', 'Annulla rollout')) return;
+        if (!await confirmAction({ title: 'Annulla rollout', icon: 'ti-player-stop', confirmText: 'Annulla rollout',
+            items: [['ti-ban', 'Nessuna nuova istanza verrà avviata.'],
+                    ['ti-loader', 'Quelle già avviate terminano da sole.']] })) return;
         act('cancel', id, 'Rollout annullato');
     },
     rolloutNew: async () => {
@@ -118,33 +121,39 @@ registerActions({
             apiGet('/groups').catch(() => []), superuser ? apiGet('/releases').catch(() => []) : Promise.resolve([])]);
         const actions = Object.entries(ACTIONS).filter(([, [, su]]) => superuser || !su);
         const el = formModal('Nuovo rollout', `
-            <div class="row g-3">
-                <div class="col-md-6"><label class="form-label">Nome</label><input name="name" class="form-control" required minlength="3" maxlength="200"></div>
-                <div class="col-md-6"><label class="form-label">Azione</label>
-                    <select name="action" class="form-select">${actions.map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
-                <div class="col-12" data-for="madmin.update"><label class="form-label">Release</label>
-                    <select name="release_id" class="form-select">${releases.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} (${r.channel})</option>`).join('')}</select>
-                    <div class="form-hint">Una release candidate va solo su una istanza o su istanze con etichetta <code>canary=true</code>.</div></div>
-                <div class="col-12" data-for="os.upgrade"><label class="form-label">Pacchetti</label>
-                    <select name="scope" class="form-select"><option value="security">Solo aggiornamenti di sicurezza</option><option value="all">Tutti</option></select></div>
-                <div class="col-12" data-for="os.reboot"><label class="form-label">Motivo del riavvio</label><input name="reason" class="form-control" maxlength="200">
-                    <div class="form-hint text-warning">Ogni istanza resta irraggiungibile per qualche minuto; un kernel nuovo parte in prova.</div></div>
-                <div class="col-12"><hr class="my-1"><h4 class="mb-0">Istanze</h4></div>
-                <div class="col-md-6"><label class="form-label">Gruppo</label>
-                    <select name="group_id" class="form-select">${groupOptions(groups, '', { none: 'Tutte' })}</select></div>
-                <div class="col-md-6"><label class="form-label">Etichette (chiave=valore, una per riga)</label>
-                    <textarea name="labels" class="form-control" rows="1"></textarea></div>
-                <div class="col-md-6"><label class="form-label">Escludi chi è già su (versione+build)</label><input name="version_not" class="form-control" placeholder="1.2.0+abcdef123456"></div>
-                <div class="col-md-6 d-flex align-items-end"><button type="button" class="btn btn-outline-secondary w-100" id="ro-preview">Anteprima istanze</button></div>
-                <div class="col-12"><div id="ro-targets" class="small text-muted">Usa Anteprima per vedere le istanze coinvolte.</div></div>
-                <div class="col-12"><hr class="my-1"><h4 class="mb-0">Esecuzione</h4></div>
-                <div class="col-md-3"><label class="form-label">Concorrenza</label><input name="concurrency" type="number" min="1" max="50" value="1" class="form-control"></div>
-                <div class="col-md-3"><label class="form-label">Canary</label><input name="canary" type="number" min="0" max="50" value="1" class="form-control"></div>
-                <div class="col-md-3"><label class="form-label">Dopo il canary (min, 0 = conferma)</label><input name="canary_wait_minutes" type="number" min="0" max="10080" value="0" class="form-control"></div>
-                <div class="col-md-3"><label class="form-label">Soglia di arresto %</label><input name="fail_threshold" type="number" min="0" max="100" value="10" class="form-control"></div>
-                <div class="col-md-6"><label class="form-check form-switch"><input class="form-check-input" type="checkbox" name="use_windows" checked>
-                    <span class="form-check-label">Rispetta le finestre di manutenzione dei gruppi</span></label></div>
-                <div class="col-md-6"><label class="form-label">Scadenza (ore)</label><input name="expires_hours" type="number" min="1" max="720" value="72" class="form-control"></div>
+            <div class="row g-2">
+                ${field('name', 'Nome', { required: true, minlength: 3, maxlength: 200, col: 'col-md-6', example: 'Sicurezza novembre' })}
+                ${field('action', 'Azione', { type: 'select', required: true, col: 'col-md-6', options: actions.map(([k, [l]]) => [k, l]) })}
+                <div class="col-12" data-for="madmin.update">${field('release_id', 'Release', { type: 'select', required: true,
+                    options: releases.map(r => [r.id, `${r.id} — ${r.channel}`]),
+                    hint: 'una <b>candidate</b> va solo su una istanza o su istanze con etichetta <code>canary=true</code>' })}</div>
+                <div class="col-12" data-for="os.upgrade">${field('scope', 'Pacchetti', { type: 'select', required: true,
+                    options: [['security', 'Solo aggiornamenti di sicurezza'], ['all', 'Tutti gli aggiornamenti']],
+                    hint: 'dettaglio di cosa installa ciascuno nella scheda Sistema di ogni istanza' })}</div>
+                <div class="col-12" data-for="os.reboot">
+                    ${notice('warning', '', [['ti-power', 'Ogni istanza resta irraggiungibile per qualche minuto; un kernel nuovo parte in prova.']])}
+                    ${field('reason', 'Motivo del riavvio', { required: true, minlength: 3, maxlength: 200, example: 'kernel di sicurezza' })}</div>
+            </div>
+            ${formSection('Istanze', 'tutti i filtri sono facoltativi e si sommano')}
+            <div class="row g-2">
+                ${field('group_id', 'Gruppo', { type: 'select', col: 'col-md-6',
+                    options: [['', 'Tutte le istanze'], ...groups.map(g => [g.id, `${g.parent_id ? '\u00a0\u00a0' : ''}${g.name}${g.kind === 'partner' ? ' (partner, con i suoi clienti)' : ''}`])] })}
+                ${field('labels', 'Etichette', { type: 'textarea', rows: 1, mono: true, col: 'col-md-6',
+                    format: 'chiave=valore, una per riga', example: 'sito=milano' })}
+                ${field('version_not', 'Escludi chi è già su', { mono: true, col: 'col-md-6', example: '1.2.0+abcdef123456',
+                    hint: 'versione+build, come in Release' })}
+                <div class="col-md-6 d-flex align-items-center"><button type="button" class="btn btn-outline-secondary w-100" id="ro-preview">
+                    <i class="ti ti-eye me-1"></i>Anteprima istanze</button></div>
+                <div class="col-12"><div id="ro-targets" class="small text-muted">Usa <b>Anteprima</b> per vedere le istanze coinvolte prima di avviare.</div></div>
+            </div>
+            ${formSection('Esecuzione')}
+            <div class="row g-2">
+                ${field('concurrency', 'Concorrenza', { type: 'number', required: true, min: 1, max: 50, value: 1, col: 'col-md-3', hint: 'istanze insieme' })}
+                ${field('canary', 'Canary', { type: 'number', required: true, min: 0, max: 50, value: 1, col: 'col-md-3', hint: 'le prime, da sole' })}
+                ${field('canary_wait_minutes', 'Attesa dopo il canary', { type: 'number', required: true, min: 0, max: 10080, value: 0, col: 'col-md-3', hint: 'minuti; 0 = conferma manuale' })}
+                ${field('fail_threshold', 'Soglia di arresto %', { type: 'number', required: true, min: 0, max: 100, value: 10, col: 'col-md-3', hint: 'falliti sui conclusi' })}
+                ${field('use_windows', 'Rispetta le finestre di manutenzione dei gruppi', { type: 'checkbox', checked: true, col: 'col-md-8' })}
+                ${field('expires_hours', 'Scadenza in ore', { type: 'number', required: true, min: 1, max: 720, value: 72, col: 'col-md-4', hint: 'poi le istanze non avviate sono saltate' })}
             </div>`,
         async (form) => {
             const d = formData(form);
@@ -160,7 +169,7 @@ registerActions({
             showToast(`Rollout creato su ${r.total} istanze`, 'success');
             openId = r.id;
             render(containerEl);
-        }, { submitText: 'Avvia rollout', size: 'xl' });
+        }, { submitText: 'Avvia rollout', size: 'xl', tone: 'primary', icon: 'ti-stack-push' });
         const form = el.querySelector('form');
         const sync = () => {
             const a = form.querySelector('[name=action]').value;

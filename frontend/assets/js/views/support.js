@@ -6,7 +6,7 @@
 import { apiGet, apiPost, apiDelete } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions } from '../utils.js';
 import { checkPermission, getUser } from '../app.js';
-import { fmtDate, relTime, formModal, formData } from './manager-common.js';
+import { fmtDate, relTime, formModal, formData, field, notice, confirmAction } from './manager-common.js';
 import { sessionTable } from './instances.js';
 
 let containerEl = null;
@@ -79,27 +79,34 @@ const reload = () => containerEl && render(containerEl);
 registerActions({
     supportKeyAdd: () => {
         formModal('Aggiungi chiave SSH', `
-            <div class="mb-3"><label class="form-label">Nome (es. portatile ufficio)</label>
-                <input name="name" class="form-control" maxlength="100" required></div>
-            <div class="mb-3"><label class="form-label">Chiave pubblica (ed25519 consigliata; RSA almeno 3072 bit)</label>
-                <textarea name="public_key" class="form-control font-monospace" rows="3" required placeholder="ssh-ed25519 AAAA... nome@pc"></textarea>
-                <div class="form-hint">Solo la parte pubblica (<code>~/.ssh/id_ed25519.pub</code>). La chiave resta inutilizzabile finché un altro superuser non la approva.</div></div>`,
+            ${notice('info', '', [['ti-user-check', 'Resta <b>in attesa</b> finché un altro superuser non la approva (verificando l\'impronta con te).']])}
+            ${field('name', 'Nome', { required: true, maxlength: 100, example: 'portatile ufficio' })}
+            ${field('public_key', 'Chiave pubblica', { type: 'textarea', rows: 3, required: true, mono: true,
+                pattern: '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]+( .*)?$',
+                format: 'ssh-ed25519 AAAA… commento', placeholder: 'ssh-ed25519 AAAA... nome@pc',
+                hint: 'solo la parte pubblica, il contenuto di <code>~/.ssh/id_ed25519.pub</code>; ed25519 consigliata, RSA almeno 3072 bit' })}`,
         async (form) => {
             const k = await apiPost('/me/ssh-keys', formData(form));
             showToast(`Chiave aggiunta (${k.fingerprint}): in attesa di approvazione`, 'success', 6000);
             reload();
-        }, { submitText: 'Aggiungi', size: 'lg' });
+        }, { submitText: 'Aggiungi', size: 'lg', icon: 'ti-key' });
     },
     supportKeyRemove: async (id) => {
-        if (!await confirmDialog('Rimuovi chiave', 'La chiave non potrà più essere usata per nuovi accessi SSH di supporto (le sessioni aperte restano valide fino alla scadenza).', 'Rimuovi')) return;
+        if (!await confirmAction({ title: 'Rimuovi chiave', icon: 'ti-trash', confirmText: 'Rimuovi',
+            items: [['ti-ban', 'Non potrà più essere usata per nuovi accessi SSH di supporto.'],
+                    ['ti-clock', 'Le sessioni già aperte restano valide fino alla scadenza.']] })) return;
         try { await apiDelete(`/me/ssh-keys/${id}`); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
     supportKeyApprove: async (id) => {
-        if (!await confirmDialog('Approva chiave', 'Verifica con il proprietario, su un canale diverso da questo, che l\'impronta sia quella della sua chiave: da ora potrà ricevere accessi SSH root di supporto con essa.', 'Approva', 'btn-success')) return;
+        if (!await confirmAction({ title: 'Approva chiave SSH', tone: 'success', icon: 'ti-user-check', confirmText: 'Approva',
+            intro: 'Con questa chiave il proprietario potrà ricevere accessi <b>SSH root</b> di supporto.',
+            items: [['ti-phone', 'Verifica con il proprietario, <b>su un canale diverso</b> (telefono, di persona), che l\'impronta sia la sua.'],
+                    ['ti-alert-triangle', 'Se non l\'ha aggiunta lui, il suo account è compromesso: rimuovila.']] })) return;
         try { await apiPost(`/ssh-keys/${id}/approve`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
     supportKeyReject: async (id) => {
-        if (!await confirmDialog('Rimuovi chiave', 'La chiave di un altro utente viene rimossa.', 'Rimuovi')) return;
+        if (!await confirmAction({ title: 'Rimuovi chiave', icon: 'ti-trash', confirmText: 'Rimuovi',
+            intro: 'La chiave di un altro utente viene rimossa; dovrà aggiungerla di nuovo e farla approvare.' })) return;
         try { await apiPost(`/ssh-keys/${id}/reject`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
 });

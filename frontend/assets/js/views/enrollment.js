@@ -6,7 +6,8 @@ import { apiGet, apiPost } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions, loadingSpinner } from '../utils.js';
 import { setPageActions, checkPermission } from '../app.js';
 import { fmtDate, formModal, secretModal, copyBlock, enrollTokenHelp, formData, groupPath, labelBadges,
-         registrationFieldsHtml, registrationFieldsValue } from './manager-common.js';
+         registrationFieldsHtml, registrationFieldsValue, field, formSection, notice, confirmAction,
+         fieldError } from './manager-common.js';
 
 let containerEl = null;
 let manage = false;
@@ -78,17 +79,16 @@ async function renderTokens(el) {
 
 function tokenModal() {
     formModal('Nuovo token di enrollment', `
-        <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" maxlength="200"></div>
-        <div class="row">
-            <div class="col-6 mb-3"><label class="form-label">Validità (ore)</label>
-                <input name="hours" type="number" min="1" max="2160" value="24" class="form-control" required></div>
-            <div class="col-6 mb-3"><label class="form-label">Utilizzi (vuoto = illimitati)</label>
-                <input name="max_uses" type="number" min="1" max="10000" value="1" class="form-control"></div>
+        ${notice('info', '', [['ti-key', 'Il token si usa una volta sull\'istanza (setup o <code>core.manager enroll</code>) e viene mostrato <b>una sola volta</b>.']])}
+        <div class="row g-2">
+            ${field('description', 'Descrizione', { maxlength: 200, col: 'col-12', example: 'Nuovo router Rossi S.p.A.' })}
+            ${field('hours', 'Validità in ore', { type: 'number', required: true, min: 1, max: 2160, value: 24, col: 'col-md-4', hint: 'max 2160 (90 giorni)' })}
+            ${field('max_uses', 'Utilizzi', { type: 'number', min: 1, max: 10000, value: 1, col: 'col-md-4', hint: 'vuoto = illimitati' })}
+            ${field('bind_ip', 'Solo dall\'IP', { maxlength: 45, mono: true, col: 'col-md-4', pattern: '^[0-9a-fA-F:.]+$',
+                format: 'IPv4 o IPv6', example: '203.0.113.10' })}
         </div>
-        <div class="text-muted small mb-2">Campi applicati all'istanza alla registrazione (tutti facoltativi):</div>
-        ${registrationFieldsHtml(groups)}
-        <div class="mb-3"><label class="form-label">Utilizzabile solo dall'IP (facoltativo)</label>
-            <input name="bind_ip" class="form-control" maxlength="45"></div>`,
+        ${formSection('Dati dell\'istanza', 'applicati alla registrazione, tutti facoltativi')}
+        ${registrationFieldsHtml(groups)}`,
     async (form) => {
         const d = formData(form);
         const res = await apiPost('/enrollment/tokens', {
@@ -99,7 +99,7 @@ function tokenModal() {
             enrollTokenHelp(res.token, { expiresAt: res.expires_at, maxUses: d.max_uses ? Number(d.max_uses) : null }),
             res.token);
         reload();
-    }, { submitText: 'Crea' });
+    }, { submitText: 'Crea token', icon: 'ti-key', size: 'lg' });
 }
 
 // --- Registration requests ---
@@ -140,10 +140,13 @@ function approveModal(id) {
             <dt class="col-4">Interfacce</dt><dd class="col-8">${ifaces || '-'}</dd>
             <dt class="col-4">Fingerprint chiave</dt><dd class="col-8 font-monospace text-break">${escapeHtml(r.key_fingerprint)}</dd>
         </dl>
-        ${r.ca_pinned ? '' : '<div class="alert alert-warning small">L\'istanza ha accettato la CA del manager al primo contatto: verifica il fingerprint della chiave con chi ha installato l\'istanza.</div>'}
-        ${r.matches.length ? `<div class="mb-3"><label class="form-label">Registrare di nuovo un'istanza esistente (reinstallazione)?</label>
-            <select name="reenroll_instance_id" class="form-select"><option value="">No, nuova istanza</option>
-            ${r.matches.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)} (mantiene identità, backup, licenze)</option>`).join('')}</select></div>` : ''}
+        ${notice(r.ca_pinned ? 'info' : 'warning', 'Prima di approvare verifica l\'impronta', [
+            ['ti-fingerprint', 'Confronta l\'impronta qui sopra con quella stampata dal setup dell\'istanza (o <code>python -m core.manager status</code>).'],
+            r.ca_pinned ? null : ['ti-alert-triangle', 'L\'istanza ha accettato la CA del manager <b>al primo contatto</b>: chiedi conferma a chi l\'ha installata.']])}
+        ${r.matches.length ? field('reenroll_instance_id', 'Reinstallazione di un\'istanza esistente?', { type: 'select',
+            options: [['', 'No, nuova istanza'], ...r.matches.map(m => [m.id, `${m.name} — mantiene identità, backup, licenze`])],
+            hint: 'stesso machine-id di un\'istanza già registrata' }) : ''}
+        ${formSection('Dati dell\'istanza', 'facoltativi')}
         ${registrationFieldsHtml(groups, { name: r.hostname || '' })}`,
     async (form) => {
         const d = formData(form);
@@ -152,7 +155,7 @@ function approveModal(id) {
         });
         showToast(`Approvata: ${res.name} si collegherà entro un minuto`, 'success');
         reload();
-    }, { submitText: 'Approva', size: 'lg' });
+    }, { submitText: 'Approva', size: 'lg', tone: 'primary', icon: 'ti-check' });
 }
 
 // --- API keys ---
@@ -180,17 +183,25 @@ async function renderKeys(el) {
 async function keyModal() {
     const scopes = await apiGet('/apikeys/scopes');
     formModal('Nuova chiave API', `
-        <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" required maxlength="100" placeholder="provisioning-fae"></div>
-        <div class="mb-3"><label class="form-label">Scope</label>
+        ${notice('warning', '', [['ti-plug', 'Solo per il sistema di provisioning (<code>/api/provisioning/*</code>): mai su un\'istanza.'],
+                                 ['ti-eye-off', 'La chiave viene mostrata <b>una sola volta</b>.']])}
+        ${field('name', 'Nome', { required: true, maxlength: 100, example: 'provisioning-fae' })}
+        <div class="mb-3"><label class="form-label">Permessi<span class="text-danger ms-1">*</span></label>
             ${scopes.map(s => `<label class="form-check"><input type="checkbox" class="form-check-input" name="scope" value="${escapeHtml(s.scope)}"
-                ${s.scope === 'provisioning.enroll' ? 'checked' : ''}><span class="form-check-label"><code>${escapeHtml(s.scope)}</code> — ${escapeHtml(s.description)}</span></label>`).join('')}
+                ${s.scope === 'provisioning.enroll' ? 'checked' : ''}><span class="form-check-label"><code>${escapeHtml(s.scope)}</code> <span class="text-muted">— ${escapeHtml(s.description)}</span></span></label>`).join('')}
+            <div class="invalid-feedback d-block" data-scope-error></div>
         </div>
-        <div class="mb-3"><label class="form-label">Reti ammesse (separate da virgola, vuoto = tutte)</label>
-            <input name="allowed_cidrs" class="form-control" placeholder="10.0.0.0/8, 192.0.2.10"></div>
-        <div class="mb-3"><label class="form-label">Validità (giorni, vuoto = senza scadenza)</label>
-            <input name="days" type="number" min="1" max="3650" value="365" class="form-control"></div>`,
+        <div class="row g-2">
+            ${field('allowed_cidrs', 'Reti ammesse', { mono: true, col: 'col-md-8', format: 'reti CIDR separate da virgola',
+                example: '10.0.0.0/8, 192.0.2.10', hint: 'vuoto = tutte' })}
+            ${field('days', 'Validità in giorni', { type: 'number', min: 1, max: 3650, value: 365, col: 'col-md-4', hint: 'vuoto = senza scadenza' })}
+        </div>`,
     async (form) => {
         const d = formData(form);
+        if (!form.querySelector('input[name=scope]:checked')) {
+            form.querySelector('[data-scope-error]').textContent = 'Scegli almeno un permesso';
+            return false;
+        }
         const res = await apiPost('/apikeys', {
             name: d.name, allowed_cidrs: d.allowed_cidrs,
             scopes: [...form.querySelectorAll('input[name=scope]:checked')].map(i => i.value),
@@ -205,23 +216,27 @@ async function keyModal() {
             <p class="text-muted small mb-0">Documentazione: <code>docs/API.md</code> nel repository del manager.</p>`,
             res.key);
         reload();
-    }, { submitText: 'Crea', size: 'lg' });
+    }, { submitText: 'Crea chiave', size: 'lg', icon: 'ti-api' });
 }
 
 registerActions({
     managerTokenNew: tokenModal,
     managerTokenRevoke: async (id) => {
-        if (!await confirmDialog('Revoca token', 'Il token non potrà più essere usato.', 'Revoca')) return;
+        if (!await confirmAction({ title: 'Revoca token', icon: 'ti-key-off', confirmText: 'Revoca',
+            intro: 'Il token non potrà più essere usato; le istanze già registrate con esso non ne risentono.' })) return;
         try { await apiPost(`/enrollment/tokens/${id}/revoke`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
     managerRequestApprove: approveModal,
     managerRequestReject: async (id) => {
-        if (!await confirmDialog('Rifiuta registrazione', 'L\'istanza smette di chiedere la registrazione; potrà riprovare solo con un nuovo comando register.', 'Rifiuta')) return;
+        if (!await confirmAction({ title: 'Rifiuta registrazione', icon: 'ti-x', confirmText: 'Rifiuta',
+            intro: 'L\'istanza smette di chiedere la registrazione.',
+            items: [['ti-refresh', 'Potrà riprovare solo con un nuovo comando <code>register</code> sull\'istanza.']] })) return;
         try { await apiPost(`/enrollment/requests/${id}/reject`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
     managerKeyNew: keyModal,
     managerKeyRevoke: async (id) => {
-        if (!await confirmDialog('Revoca chiave API', 'Il sistema che la usa non potrà più chiamare il manager.', 'Revoca')) return;
+        if (!await confirmAction({ title: 'Revoca chiave API', icon: 'ti-key-off', confirmText: 'Revoca',
+            intro: 'Il sistema che la usa non potrà più chiamare il manager. Operazione irreversibile.' })) return;
         try { await apiPost(`/apikeys/${id}/revoke`, {}); reload(); } catch (e) { showToast(e.message, 'error'); }
     },
 });

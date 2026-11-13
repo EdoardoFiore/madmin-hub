@@ -40,22 +40,182 @@ export function commandStatusBadge(status) {
     return `<span class="badge ${cls}">${label}</span>`;
 }
 
+// ============== FORM KIT ==============
+// Every modal of the manager is built from these pieces, so they all look and
+// behave the same: required fields marked with a red asterisk, optional ones
+// say so, a short hint under each field (format and example when it has one),
+// errors under the field, consequences at the top in a coloured box, typed
+// confirmations in a red box that turns green when the text matches.
+
+const TONES = {
+    info: ['alert-info', 'ti-info-circle'],
+    warning: ['alert-warning', 'ti-alert-triangle'],
+    danger: ['alert-danger', 'ti-alert-octagon'],
+    success: ['alert-success', 'ti-circle-check'],
+};
+
 /**
- * Modal with a form. onSubmit(form) may throw (the error is shown as a toast
- * and the modal stays open) or return false to keep it open.
+ * A form field. Options: type (text, number, password, textarea, select,
+ * checkbox, time, ...), required, hint (HTML, short), format (shown in the
+ * error when the pattern does not match, e.g. "chiave=valore"), example,
+ * value, placeholder, pattern, min, max, minlength, maxlength, rows,
+ * options ([[value, label]] for selects), mono (monospace), attrs (raw), col
+ * (bootstrap column class when used inside a .row).
  */
-export function formModal(title, bodyHtml, onSubmit, { submitText = 'Salva', submitClass = 'btn-primary', size = '' } = {}) {
+export function field(name, label, opts = {}) {
+    const {
+        type = 'text', required = false, hint = '', format = '', example = '', value = '', placeholder = '',
+        pattern = '', min = null, max = null, minlength = null, maxlength = null, rows = 3, options = [],
+        mono = false, attrs = '', col = '', checked = false, id = '',
+    } = opts;
+    const fid = id || `f-${name}-${Math.random().toString(36).slice(2, 8)}`;
+    const a = [
+        `name="${escapeHtml(name)}"`, `id="${fid}"`, required ? 'required' : '',
+        pattern ? `pattern="${escapeHtml(pattern)}"` : '', min != null ? `min="${min}"` : '', max != null ? `max="${max}"` : '',
+        minlength != null ? `minlength="${minlength}"` : '', maxlength != null ? `maxlength="${maxlength}"` : '',
+        placeholder || example ? `placeholder="${escapeHtml(placeholder || example)}"` : '',
+        format ? `data-format="${escapeHtml(format)}"` : '', attrs,
+    ].filter(Boolean).join(' ');
+    const cls = `form-control${mono ? ' font-monospace' : ''}`;
+    const mark = required ? '<span class="text-danger ms-1" title="Obbligatorio">*</span>'
+        : '<span class="text-muted small fw-normal ms-1">facoltativo</span>';
+    let input;
+    if (type === 'checkbox') {
+        input = `<label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" ${a} ${checked ? 'checked' : ''}>
+            <span class="form-check-label">${label}</span></label>`;
+        return wrap(`${input}${hint ? `<div class="form-hint">${hint}</div>` : ''}`);
+    }
+    if (type === 'textarea') {
+        input = `<textarea class="${cls}" rows="${rows}" ${a}>${escapeHtml(value)}</textarea>`;
+    } else if (type === 'select') {
+        input = `<select class="form-select" ${a}>${options.map(([v, l]) =>
+            `<option value="${escapeHtml(v)}" ${String(v) === String(value) ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}</select>`;
+    } else {
+        input = `<input type="${type}" class="${cls}" value="${escapeHtml(value)}" ${a}>`;
+    }
+    const help = [hint, format ? `Formato: <code>${escapeHtml(format)}</code>` : '',
+                  example && !placeholder ? `Es. <code>${escapeHtml(example)}</code>` : ''].filter(Boolean).join(' · ');
+    return wrap(`<label class="form-label" for="${fid}">${label}${mark}</label>${input}
+        <div class="invalid-feedback"></div>${help ? `<div class="form-hint">${help}</div>` : ''}`);
+
+    function wrap(html) {
+        return col ? `<div class="${col}">${html}</div>` : `<div class="mb-3">${html}</div>`;
+    }
+}
+
+/** A small section title inside a modal. */
+export function formSection(title, note = '') {
+    return `<div class="d-flex align-items-baseline gap-2 mt-2 mb-2 border-bottom pb-1">
+        <h4 class="mb-0">${title}</h4>${note ? `<span class="small text-muted">${note}</span>` : ''}</div>`;
+}
+
+/**
+ * Coloured box at the top of a modal: what the action does and what it
+ * costs. items: short lines (HTML), each optionally [icon, text].
+ */
+export function notice(tone, title, items = []) {
+    const [cls, icon] = TONES[tone] || TONES.info;
+    const list = items.filter(Boolean).map((it) => {
+        const [ic, text] = Array.isArray(it) ? it : [null, it];
+        return `<li class="d-flex gap-2 mb-1">${ic ? `<i class="ti ${ic} mt-1"></i>` : '<span>•</span>'}<span>${text}</span></li>`;
+    }).join('');
+    return `<div class="alert ${cls} mb-3"><div class="d-flex gap-2">
+        <i class="ti ${icon} fs-2 lh-1"></i><div class="flex-fill">
+        ${title ? `<h4 class="alert-title mb-1">${title}</h4>` : ''}
+        ${list ? `<ul class="list-unstyled mb-0 small">${list}</ul>` : ''}</div></div></div>`;
+}
+
+/**
+ * Typed confirmation: the submit button stays disabled until the field holds
+ * exactly `expected`. `what` names it ("il nome dell'istanza").
+ */
+export function typedConfirm(expected, what = "il nome dell'istanza") {
+    return `<div class="border border-2 border-danger rounded p-3 mb-2 bg-danger-lt" data-typed-box>
+        <label class="form-label mb-1">Per confermare scrivi ${what}:
+            <span class="font-monospace fw-bold fs-3 d-block mt-1 user-select-all">${escapeHtml(expected)}</span></label>
+        <input class="form-control font-monospace" name="confirm_name" autocomplete="off" spellcheck="false"
+            data-confirm="${escapeHtml(expected)}" placeholder="${escapeHtml(expected)}">
+        <div class="small mt-1" data-typed-state>Il pulsante si attiva quando il testo coincide esattamente.</div>
+    </div>`;
+}
+
+const MESSAGES = (input) => {
+    const v = input.validity;
+    if (v.valueMissing) return 'Campo obbligatorio';
+    if (v.patternMismatch) return input.dataset.format ? `Formato richiesto: ${input.dataset.format}` : 'Formato non valido';
+    if (v.typeMismatch) return input.type === 'email' ? 'Indirizzo e-mail non valido' : 'Valore non valido';
+    if (v.rangeUnderflow) return `Minimo ${input.min}`;
+    if (v.rangeOverflow) return `Massimo ${input.max}`;
+    if (v.tooShort) return `Almeno ${input.minLength} caratteri`;
+    if (v.tooLong) return `Al massimo ${input.maxLength} caratteri`;
+    if (v.stepMismatch || v.badInput) return 'Valore non valido';
+    return input.validationMessage || 'Valore non valido';
+};
+
+/** Marks the invalid fields of a form (message under each); true when all valid. */
+export function validateForm(form) {
+    let first = null;
+    form.querySelectorAll('input, select, textarea').forEach((input) => {
+        if (input.disabled || input.type === 'hidden' || input.closest('[hidden]')) {
+            input.classList.remove('is-invalid');
+            return;
+        }
+        const fb = input.parentElement.querySelector(':scope > .invalid-feedback')
+            || input.closest('.mb-3, [class*="col"]')?.querySelector('.invalid-feedback');
+        if (!input.checkValidity()) {
+            input.classList.add('is-invalid');
+            if (fb) fb.textContent = MESSAGES(input);
+            first = first || input;
+        } else {
+            input.classList.remove('is-invalid');
+        }
+    });
+    if (first) first.focus();
+    return !first;
+}
+
+/** A field's error coming from the server (or a check of the caller). */
+export function fieldError(form, name, message) {
+    const input = form.querySelector(`[name="${name}"]`);
+    if (!input) throw new Error(message);
+    input.classList.add('is-invalid');
+    const fb = input.parentElement.querySelector(':scope > .invalid-feedback');
+    if (fb) fb.textContent = message;
+    input.focus();
+    return false;
+}
+
+const TONE_STATUS = { danger: 'bg-danger', warning: 'bg-warning', primary: 'bg-primary', success: 'bg-success' };
+
+/**
+ * Modal with a form. onSubmit(form) may throw (the error is shown inside the
+ * modal, which stays open) or return false to keep it open. The fields are
+ * validated first (required, pattern, ranges), each error under its field.
+ * Options: submitText, submitClass, size, tone (coloured top bar: danger,
+ * warning, primary), icon (title icon), subtitle (small text under the title).
+ */
+export function formModal(title, bodyHtml, onSubmit, {
+    submitText = 'Salva', submitClass = 'btn-primary', size = '', tone = '', icon = '', subtitle = '',
+} = {}) {
     const id = `manager-modal-${Date.now()}`;
     document.body.insertAdjacentHTML('beforeend', `
         <div class="modal modal-blur fade" id="${id}" tabindex="-1">
             <div class="modal-dialog ${size ? 'modal-' + size : ''}">
                 <form class="modal-content" novalidate>
+                    ${TONE_STATUS[tone] ? `<div class="modal-status ${TONE_STATUS[tone]}"></div>` : ''}
                     <div class="modal-header">
-                        <h5 class="modal-title">${escapeHtml(title)}</h5>
+                        <div>
+                            <h5 class="modal-title">${icon ? `<i class="ti ${icon} me-2"></i>` : ''}${escapeHtml(title)}</h5>
+                            ${subtitle ? `<div class="small text-muted mt-1">${subtitle}</div>` : ''}
+                        </div>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
-                    <div class="modal-body">${bodyHtml}</div>
+                    <div class="modal-body">
+                        ${bodyHtml}
+                        <div class="alert alert-danger d-none mb-0 mt-2" data-form-error></div>
+                    </div>
                     <div class="modal-footer">
+                        <span class="me-auto small text-muted">${/class="text-danger ms-1"/.test(bodyHtml) ? '<span class="text-danger">*</span> obbligatorio' : ''}</span>
                         <button type="button" class="btn btn-link" data-bs-dismiss="modal">Annulla</button>
                         <button type="submit" class="btn ${submitClass}">${escapeHtml(submitText)}</button>
                     </div>
@@ -65,21 +225,67 @@ export function formModal(title, bodyHtml, onSubmit, { submitText = 'Salva', sub
     const el = document.getElementById(id);
     const modal = new bootstrap.Modal(el);
     const form = el.querySelector('form');
+    const btn = form.querySelector('[type=submit]');
+    const errorBox = form.querySelector('[data-form-error]');
+    // Typed confirmation: the button waits for the exact text
+    const typed = form.querySelector('[data-confirm]');
+    const syncTyped = () => {
+        if (!typed) return true;
+        const ok = typed.value.trim() === typed.dataset.confirm;
+        const box = typed.closest('[data-typed-box]');
+        box.classList.toggle('border-danger', !ok);
+        box.classList.toggle('bg-danger-lt', !ok);
+        box.classList.toggle('border-success', ok);
+        box.classList.toggle('bg-success-lt', ok);
+        box.querySelector('[data-typed-state]').innerHTML = ok
+            ? '<i class="ti ti-check me-1"></i>Coincide' : 'Il pulsante si attiva quando il testo coincide esattamente.';
+        btn.disabled = !ok;
+        return ok;
+    };
+    if (typed) {
+        typed.addEventListener('input', syncTyped);
+        syncTyped();
+    }
+    // An error under a field goes away as soon as the field is edited
+    form.addEventListener('input', (e) => e.target.classList?.remove('is-invalid'));
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const btn = form.querySelector('[type=submit]');
+        errorBox.classList.add('d-none');
+        if (!validateForm(form) || !syncTyped()) return;
+        const label = btn.innerHTML;
         btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${label}`;
         try {
             if ((await onSubmit(form)) !== false) modal.hide();
         } catch (err) {
-            showToast(err.message || 'Errore', 'error', 6000);
+            errorBox.textContent = err.message || 'Errore';
+            errorBox.classList.remove('d-none');
         } finally {
-            btn.disabled = false;
+            btn.innerHTML = label;
+            btn.disabled = typed ? !syncTyped() : false;
         }
     });
     el.addEventListener('hidden.bs.modal', () => el.remove());
+    el.addEventListener('shown.bs.modal', () => form.querySelector('input:not([type=hidden]):not([readonly]), select, textarea')?.focus());
     modal.show();
     return el;
+}
+
+/**
+ * Confirmation of an action, as a promise (true = confirmed). tone colours
+ * the top bar and the button (danger, warning, primary); intro and items go
+ * in a notice box; typed = text to type before the button activates.
+ */
+export function confirmAction({ title, tone = 'danger', intro = '', items = [], body = '', confirmText = 'Conferma',
+                                typed = null, typedWhat, icon = '' }) {
+    return new Promise((resolve) => {
+        let done = false;
+        const btnClass = { danger: 'btn-danger', warning: 'btn-warning', primary: 'btn-primary', success: 'btn-success' }[tone] || 'btn-primary';
+        const el = formModal(title, `${intro || items.length ? notice(tone === 'primary' ? 'info' : tone, intro, items) : ''}
+            ${body}${typed ? typedConfirm(typed, typedWhat) : ''}`, async () => { done = true; resolve(true); },
+        { submitText: confirmText, submitClass: btnClass, tone, icon });
+        el.addEventListener('hidden.bs.modal', () => { if (!done) resolve(false); });
+    });
 }
 
 /** A value shown once (token, link, certificate), with a copy button. */
@@ -245,15 +451,15 @@ export function textToLabels(text) {
 
 /** Optional registration fields (token, approval): name, group, labels, external ref. */
 export function registrationFieldsHtml(groups, defaults = {}) {
-    return `
-        <div class="mb-3"><label class="form-label">Nome istanza (vuoto = hostname)</label>
-            <input name="name" class="form-control" maxlength="100" value="${escapeHtml(defaults.name || '')}"></div>
-        <div class="mb-3"><label class="form-label">Gruppo (cliente o partner)</label>
-            <select name="group_id" class="form-select">${groupOptions(groups, defaults.group_id || '')}</select></div>
-        <div class="mb-3"><label class="form-label">Etichette (una per riga, chiave=valore)</label>
-            <textarea name="labels" class="form-control font-monospace" rows="2" placeholder="sito=milano">${escapeHtml(labelsToText(defaults.labels))}</textarea></div>
-        <div class="mb-3"><label class="form-label">Riferimento esterno (ID nel sistema di provisioning)</label>
-            <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(defaults.external_ref || '')}"></div>`;
+    return `<div class="row g-2">
+        ${field('name', 'Nome istanza', { maxlength: 100, value: defaults.name || '', col: 'col-md-6', hint: 'vuoto = hostname' })}
+        ${field('group_id', 'Gruppo', { type: 'select', value: defaults.group_id || '', col: 'col-md-6',
+            options: [['', 'Nessun gruppo'], ...groups.map(g => [g.id, `${g.parent_id ? '\u00a0\u00a0' : ''}${g.name}${g.kind === 'partner' ? ' (partner)' : ''}`])] })}
+        ${field('labels', 'Etichette', { type: 'textarea', rows: 2, mono: true, value: labelsToText(defaults.labels), col: 'col-md-6',
+            format: 'chiave=valore, una per riga', example: 'sito=milano' })}
+        ${field('external_ref', 'Riferimento esterno', { maxlength: 100, mono: true, value: defaults.external_ref || '', col: 'col-md-6',
+            hint: 'id nel sistema di provisioning' })}
+    </div>`;
 }
 
 export function registrationFieldsValue(form) {

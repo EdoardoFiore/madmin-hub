@@ -9,7 +9,8 @@ import { escapeHtml, showToast, confirmDialog, loadingSpinner, formatBytes,
 import { checkPermission, setPageActions } from '../app.js';
 import { fmtDate, relTime, onlineBadge, commandStatusBadge, formModal, secretModal, copyBlock, enrollTokenHelp,
          formData, groupOptions, groupPath, labelBadges, labelsToText, textToLabels,
-         cmpVersion, meter, STATUS_LABELS } from './manager-common.js';
+         cmpVersion, meter, STATUS_LABELS, field, formSection, notice, typedConfirm, confirmAction,
+         fieldError } from './manager-common.js';
 import { severityBadge, advisoryLink, statusBadge, statusCell } from './vulnerabilities.js';
 
 const TABS = [
@@ -473,20 +474,22 @@ function groupsModal() {
         <p class="text-muted small">Il sito principale vede tutto. Sotto ci sono clienti diretti, oppure partner con i propri clienti.</p>
         <table class="table table-sm"><thead><tr><th>Gruppo</th><th>Descrizione</th><th>Istanze</th><th></th></tr></thead>
             <tbody id="grp-list">${list()}</tbody></table>
+        ${formSection('Nuovo gruppo')}
         <div class="row g-2">
-            <div class="col-md-4"><input name="name" class="form-control" placeholder="Nome" required maxlength="100"></div>
-            <div class="col-md-3"><select name="kind" class="form-select"><option value="customer">Cliente</option><option value="partner">Partner</option></select></div>
-            <div class="col-md-5"><select name="parent_id" class="form-select" id="grp-parent">${parentSelect()}</select></div>
-            <div class="col-12"><input name="description" class="form-control" placeholder="Descrizione" maxlength="500"></div>
+            ${field('name', 'Nome', { required: true, maxlength: 100, col: 'col-md-4', example: 'Rossi S.p.A.' })}
+            ${field('kind', 'Tipo', { type: 'select', required: true, col: 'col-md-3', options: [['customer', 'Cliente'], ['partner', 'Partner']] })}
+            <div class="col-md-5"><label class="form-label">Sotto<span class="text-muted small fw-normal ms-1">facoltativo</span></label>
+                <select name="parent_id" class="form-select" id="grp-parent">${parentSelect()}</select>
+                <div class="invalid-feedback"></div><div class="form-hint">un partner sta solo al primo livello</div></div>
+            ${field('description', 'Descrizione', { maxlength: 500, col: 'col-12' })}
         </div>`, async (form) => {
         const d = formData(form);
-        if (!d.name) throw new Error('Nome obbligatorio');
-        if (d.kind === 'partner' && d.parent_id) throw new Error('Un partner sta solo al primo livello');
+        if (d.kind === 'partner' && d.parent_id) return fieldError(form, 'parent_id', 'Un partner sta solo al primo livello');
         await apiPost('/groups', { name: d.name, kind: d.kind, parent_id: d.parent_id || null, description: d.description });
         form.reset();
         await changed();
         return false;
-    }, { submitText: 'Aggiungi', size: 'lg' });
+    }, { submitText: 'Aggiungi gruppo', size: 'lg', icon: 'ti-folders' });
     // The overview counts the groups too
     el.addEventListener('hidden.bs.modal', () => {
         if (selected.kind !== 'instance' && document.body.contains(mainEl)) renderGroup(mainEl, selected.id);
@@ -1086,28 +1089,29 @@ const reloadDetail = (tab) => {
 };
 
 function minutesField(def = 60) {
-    return `<div class="mb-3"><label class="form-label">Durata (minuti, massimo 1440 = 1 giorno)</label>
-        <input name="minutes" type="number" class="form-control" min="5" max="1440" value="${def}" required></div>`;
+    return field('minutes', 'Durata in minuti', { type: 'number', required: true, min: 5, max: 1440, value: def,
+        col: 'col-md-4', hint: 'da 5 a 1440 (1 giorno); poi l\'accesso si chiude da solo' });
 }
 
-const reasonField = `<div class="mb-3"><label class="form-label">Motivo (ticket, richiesta)</label>
-    <input name="reason" class="form-control" minlength="3" maxlength="500" required></div>`;
-const ipField = `<div class="mb-3"><label class="form-label">IP ammesso (vuoto = il tuo IP attuale)</label>
-    <input name="allowed_ip" class="form-control" maxlength="45"></div>`;
+const reasonField = field('reason', 'Motivo', { required: true, minlength: 3, maxlength: 500, col: 'col-md-8',
+    example: 'Ticket #1234, richiesta del cliente', hint: 'resta nell\'audit del manager e dell\'istanza' });
+const ipField = field('allowed_ip', 'IP ammesso sulla porta di supporto', { maxlength: 45, mono: true, col: 'col-md-6',
+    pattern: '^[0-9a-fA-F:.]+$', format: 'un indirizzo IPv4 o IPv6', example: '203.0.113.10',
+    hint: 'vuoto = il tuo IP attuale' });
 // Step-up: a fresh code at every opening (a code is accepted once)
-const totpField = `<div class="mb-3"><label class="form-label">Codice 2FA (app di autenticazione)</label>
-    <input name="totp" class="form-control font-monospace" inputmode="numeric" autocomplete="one-time-code"
-        pattern="[0-9]{6}" maxlength="6" required>
-    <div class="form-hint">Richiesto a ogni apertura; i codici di recupero non sono accettati.</div></div>`;
+const totpField = field('totp', 'Codice 2FA', { required: true, mono: true, pattern: '^[0-9]{6}$', maxlength: 6,
+    format: '6 cifre', col: 'col-md-6', attrs: 'inputmode="numeric" autocomplete="one-time-code"',
+    hint: 'dall\'app di autenticazione, nuovo a ogni apertura (non i codici di recupero)' });
 
 export function licenseModal(instanceId, onDone) {
     formModal('Emetti licenza', `
-        ${instanceId ? '' : '<div class="mb-3"><label class="form-label">ID istanza</label><input name="instance_id" class="form-control" required></div>'}
-        <div class="mb-3"><label class="form-label">Feature (come nel manifest del modulo, es. funkube)</label>
-            <input name="feature" class="form-control" pattern="[a-z0-9_.\\-]{1,50}" required></div>
-        <div class="mb-3"><label class="form-label">Valida fino al (vuoto = fino a revoca)</label>
-            <input name="valid_until" type="date" class="form-control"></div>
-        <div class="mb-3"><label class="form-label">Note</label><input name="notes" class="form-control" maxlength="500"></div>`,
+        ${notice('info', '', ['La licenza viene firmata dal manager e installata sull\'istanza alla prossima connessione; si rinnova da sola finché non è revocata.'])}
+        ${instanceId ? '' : field('instance_id', 'ID istanza', { required: true, mono: true, pattern: '^[0-9a-f-]{36}$',
+            format: 'UUID dell\'istanza', example: '0ae55d84-d277-45ad-9cbb-81705023ea60' })}
+        ${field('feature', 'Feature', { required: true, mono: true, pattern: '^[a-z0-9_.\\-]{1,50}$',
+            format: 'minuscole, cifre, . _ -', example: 'funkube', hint: 'come nel manifest del modulo' })}
+        ${field('valid_until', 'Valida fino al', { type: 'date', hint: 'vuoto = fino a revoca' })}
+        ${field('notes', 'Note', { maxlength: 500, example: 'contratto 2026/45' })}`,
     async (form) => {
         const d = formData(form);
         await apiPost('/licenses', {
@@ -1116,7 +1120,7 @@ export function licenseModal(instanceId, onDone) {
         });
         showToast('Licenza emessa: verrà installata sull\'istanza', 'success');
         onDone();
-    }, { submitText: 'Emetti' });
+    }, { submitText: 'Emetti licenza', icon: 'ti-certificate', tone: 'primary' });
 }
 
 const SSH_OS_KEY = 'manager.sshOs';
@@ -1242,35 +1246,36 @@ registerActions({
         const days = w.days || [0, 1, 2, 3, 4, 5, 6];
         const DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
         formModal(g.kind === 'partner' ? 'Modifica partner' : 'Modifica cliente', `
-            <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(g.name)}" required maxlength="100"></div>
-            <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(g.description)}" maxlength="500"></div>
-            <h4 class="mt-3">Finestra di manutenzione</h4>
-            <div class="text-muted small mb-2">I rollout avviano aggiornamenti e riavvii sulle istanze di questo gruppo solo in questa
+            ${field('name', 'Nome', { required: true, maxlength: 100, value: g.name })}
+            ${field('description', 'Descrizione', { maxlength: 500, value: g.description })}
+            ${formSection('Finestra di manutenzione', 'facoltativa')}
+            <div class="small text-muted mb-2">I <b>rollout</b> avviano aggiornamenti e riavvii su queste istanze solo in questa
                 finestra (ora del manager). Vuota = sempre${g.kind === 'customer' && g.parent_id ? '; senza finestra vale quella del partner' : ''}.
-                Una fine precedente all'inizio attraversa la mezzanotte.</div>
+                Una fine precedente all'inizio attraversa la mezzanotte (es. 22:00 → 04:00).</div>
             <div class="row g-2 mb-2">
-                <div class="col"><label class="form-label">Dalle</label><input name="w_start" type="time" class="form-control" value="${escapeHtml(w.start || '')}"></div>
-                <div class="col"><label class="form-label">Alle</label><input name="w_end" type="time" class="form-control" value="${escapeHtml(w.end || '')}"></div>
+                ${field('w_start', 'Dalle', { type: 'time', value: w.start || '', col: 'col' })}
+                ${field('w_end', 'Alle', { type: 'time', value: w.end || '', col: 'col' })}
             </div>
             <div class="btn-group w-100" role="group">${DAYS.map((l, n) => `
                 <input type="checkbox" class="btn-check" name="w_day" value="${n}" id="w-day-${n}" ${days.includes(n) ? 'checked' : ''}>
                 <label class="btn btn-sm" for="w-day-${n}">${l}</label>`).join('')}</div>`,
         async (form) => {
             const d = formData(form);
-            if (!d.name) throw new Error('Nome obbligatorio');
             const wdays = [...form.querySelectorAll('[name=w_day]:checked')].map(x => Number(x.value));
-            if (Boolean(d.w_start) !== Boolean(d.w_end)) throw new Error('Finestra: indicare inizio e fine, o nessuno dei due');
+            if (Boolean(d.w_start) !== Boolean(d.w_end)) return fieldError(form, d.w_start ? 'w_end' : 'w_start', 'Indicare inizio e fine, o nessuno dei due');
             await apiPatch(`/groups/${g.id}`, { name: d.name, description: d.description,
                 maintenance: { start: d.w_start || '', end: d.w_end || '', days: wdays.length ? wdays : [0, 1, 2, 3, 4, 5, 6] } });
             await fetchLists(true);
             renderTree();
             renderGroup(mainEl, g.id);
-        });
+        }, { icon: 'ti-folder' });
     },
     managerGroupDelete: async () => {
         const g = hierarchy().byId[selected.id];
         if (!g) return;
-        if (!await confirmDialog('Elimina gruppo', `Eliminare ${g.kind === 'partner' ? 'il partner' : 'il cliente'} ${g.name}? Deve essere vuoto: senza istanze, clienti e utenti.`, 'Elimina')) return;
+        if (!await confirmAction({ title: `Elimina ${g.kind === 'partner' ? 'partner' : 'cliente'}`, icon: 'ti-trash',
+            intro: `Eliminare <b>${escapeHtml(g.name)}</b>?`,
+            items: [['ti-info-circle', 'Possibile solo se è vuoto: senza istanze, clienti e utenti.']], confirmText: 'Elimina' })) return;
         try {
             await apiDelete(`/groups/${g.id}`);
             fetchedAt = 0;
@@ -1286,29 +1291,35 @@ registerActions({
         // Partners and customers: their own groups only, no external reference
         const manager = checkPermission('manager.manage');
         formModal('Modifica istanza', `
-            <div class="mb-3"><label class="form-label">Nome</label><input name="name" class="form-control" value="${escapeHtml(i.name)}" required maxlength="100"></div>
-            <div class="mb-3"><label class="form-label">Descrizione</label><input name="description" class="form-control" value="${escapeHtml(i.description)}" maxlength="500"></div>
-            <div class="mb-3"><label class="form-label">Gruppo</label><select name="group_id" class="form-select">
-                ${groupOptions(groups, i.group_id || '', { none: manager ? 'Nessuno (sito principale)' : null })}
-            </select></div>
-            <div class="mb-3"><label class="form-label">Etichette (una per riga, chiave=valore)</label>
-                <textarea name="labels" class="form-control font-monospace" rows="3">${escapeHtml(labelsToText(i.labels))}</textarea></div>
-            <div class="mb-3"><label class="form-label">Riferimento esterno</label>
-                <input name="external_ref" class="form-control" maxlength="100" value="${escapeHtml(i.external_ref || '')}" ${manager ? '' : 'readonly'}>
-                ${manager ? '' : '<div class="form-hint">Lo imposta il sistema di provisioning o un superuser.</div>'}</div>
-            <label class="form-check"><input type="checkbox" name="backup_enabled" class="form-check-input" ${i.backup_enabled ? 'checked' : ''}>
-                <span class="form-check-label">Backup pianificati</span></label>`,
+            <div class="row g-2">
+                ${field('name', 'Nome', { required: true, maxlength: 100, value: i.name, col: 'col-md-6' })}
+                <div class="col-md-6"><label class="form-label">Gruppo${manager ? '<span class="text-muted small fw-normal ms-1">facoltativo</span>' : '<span class="text-danger ms-1">*</span>'}</label>
+                    <select name="group_id" class="form-select">${groupOptions(groups, i.group_id || '', { none: manager ? 'Nessuno (sito principale)' : null })}</select>
+                    <div class="invalid-feedback"></div></div>
+                ${field('description', 'Descrizione', { maxlength: 500, value: i.description, col: 'col-12' })}
+                ${field('labels', 'Etichette', { type: 'textarea', rows: 3, mono: true, value: labelsToText(i.labels), col: 'col-md-7',
+                    format: 'chiave=valore, una per riga', hint: '<code>canary=true</code> = prima nei rollout' })}
+                ${field('external_ref', 'Riferimento esterno', { maxlength: 100, mono: true, value: i.external_ref || '', col: 'col-md-5',
+                    attrs: manager ? '' : 'readonly', hint: manager ? 'id nel sistema di provisioning' : 'lo imposta il provisioning o un superuser' })}
+                ${field('backup_enabled', 'Backup pianificati', { type: 'checkbox', checked: i.backup_enabled, col: 'col-12' })}
+            </div>`,
         async (form) => {
             const d = formData(form);
+            let labels;
+            try { labels = textToLabels(d.labels); } catch (e) { return fieldError(form, 'labels', e.message); }
             const body = { name: d.name, description: d.description, group_id: d.group_id,
-                           backup_enabled: form.backup_enabled.checked, labels: textToLabels(d.labels) };
+                           backup_enabled: form.backup_enabled.checked, labels };
             if (manager) body.external_ref = d.external_ref;
             await apiPatch(`/instances/${i.id}`, body);
             reloadDetail('overview');
-        });
+        }, { icon: 'ti-edit', size: 'lg' });
     },
     managerReenroll: async () => {
-        if (!await confirmDialog('Token re-enroll', 'Il token (monouso, 72 ore) registra di nuovo questa istanza mantenendo la stessa identità, backup e licenze: da usare con setup-madmin.sh --manager-token-file dopo una reinstallazione. Il certificato attuale viene revocato al suo utilizzo.', 'Genera', 'btn-primary')) return;
+        if (!await confirmAction({ title: 'Token re-enroll', tone: 'primary', icon: 'ti-key', confirmText: 'Genera token',
+            intro: `Registra di nuovo <b>${escapeHtml(current.name)}</b> mantenendo identità, backup e licenze.`,
+            items: [['ti-clock', 'Monouso, valido <b>72 ore</b>.'],
+                    ['ti-terminal-2', 'Si usa dopo una reinstallazione: <code>setup-madmin.sh --manager-token-file</code>.'],
+                    ['ti-alert-triangle', 'Al suo utilizzo il certificato attuale dell\'istanza viene revocato.']] })) return;
         try {
             const res = await apiPost(`/enrollment/instances/${current.id}/reenroll`, {});
             secretModal('Token re-enroll',
@@ -1323,16 +1334,20 @@ registerActions({
             const releases = await apiGet('/releases');
             if (!releases.length) { showToast('Nessuna release caricata', 'warning'); return; }
             return formModal('Rescue: installa una release', `
-                <div class="mb-3"><label class="form-label">Release</label>
-                    <select name="release_id" class="form-select">${releases.map(r =>
-                        `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} (${r.channel})</option>`).join('')}</select></div>`,
+                ${notice('warning', 'MADMIN non risponde: azione eseguita dal rescue', [
+                    ['ti-clock', 'Il rescue la esegue al prossimo report (entro <b>5 minuti</b>).'],
+                    ['ti-package', 'La release viene verificata (firma) e installata come un normale aggiornamento, con rollback se non parte.']])}
+                ${field('release_id', 'Release da installare', { type: 'select', required: true,
+                    options: releases.map(r => [r.id, `${r.id} (${r.channel})`]) })}`,
             async (form) => {
                 await apiPost(`/instances/${current.id}/rescue`, { action, release_id: formData(form).release_id });
                 showToast('Azione in coda: la esegue il rescue al prossimo report', 'success');
                 reloadDetail('overview');
-            }, { submitText: 'Metti in coda', submitClass: 'btn-danger' });
+            }, { submitText: 'Metti in coda', submitClass: 'btn-warning', tone: 'warning', icon: 'ti-lifebuoy' });
         }
-        if (!await confirmDialog('Rescue', `Il rescue dell'istanza proverà a ${labels[action]} al prossimo report (entro 5 minuti).`, 'Metti in coda')) return;
+        if (!await confirmAction({ title: 'Rescue', tone: 'warning', icon: 'ti-lifebuoy', confirmText: 'Metti in coda',
+            intro: `Il rescue di <b>${escapeHtml(current.name)}</b> proverà a <b>${labels[action]}</b>.`,
+            items: [['ti-clock', 'Al prossimo report, entro 5 minuti; l\'esito compare nella scheda Panoramica.']] })) return;
         try { await apiPost(`/instances/${current.id}/rescue`, body); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
     },
@@ -1346,24 +1361,23 @@ registerActions({
         catch (e) { showToast(e.message, 'error'); return; }
         if (!releases.length) { showToast('Nessuna release disponibile: caricala in Release', 'warning'); return; }
         formModal('Aggiorna MADMIN', `
-            <div class="text-muted small mb-3">L'istanza scarica la release dal manager, ne verifica la firma, la installa
-                accanto a quella attuale e passa alla nuova. Se entro il tempo indicato non torna attiva e
-                collegata al manager, torna da sola alla versione precedente (database compreso).
-                Durante il passaggio MADMIN si riavvia: il firewall resta attivo.</div>
-            <div class="mb-3"><label class="form-label">Release</label>
-                <select name="release_id" class="form-select" required>${releases.map(r =>
-                    `<option value="${escapeHtml(r.id)}">${escapeHtml(r.id)} (${r.channel})</option>`).join('')}</select></div>
-            <div class="mb-3"><label class="form-label">Tempo per la verifica (secondi)</label>
-                <input name="deadline" type="number" class="form-control" min="60" max="3600" value="300"></div>
-            <div class="mb-3"><label class="form-label">Versione attuale</label>
-                <div class="font-monospace">${escapeHtml(current.madmin_version || '')}+${escapeHtml(current.build || '')}</div></div>`,
+            ${notice('info', '', [
+                ['ti-download', 'L\'istanza scarica la release dal manager e ne <b>verifica la firma</b>.'],
+                ['ti-refresh', 'MADMIN si riavvia (pochi secondi); il firewall resta attivo.'],
+                ['ti-arrow-back-up', 'Se entro il tempo di verifica non torna attiva e collegata, <b>torna da sola</b> alla versione precedente, database compreso.']])}
+            <div class="mb-3"><span class="text-muted small">Versione attuale</span>
+                <div class="font-monospace fs-3">${escapeHtml(current.madmin_version || '')}+${escapeHtml(current.build || '')}</div></div>
+            ${field('release_id', 'Nuova release', { type: 'select', required: true,
+                options: releases.map(r => [r.id, `${r.id} — ${r.channel}`]), hint: 'candidate = da provare; stable = promossa' })}
+            ${field('deadline', 'Tempo per la verifica (secondi)', { type: 'number', min: 60, max: 3600, value: 300,
+                hint: 'da 60 a 3600; vuoto = 300' })}`,
         async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/update`,
                 { release_id: d.release_id, deadline: Number(d.deadline) || null });
             showToast(`Aggiornamento a ${res.release_id} inviato: avanzamento in Comandi e in Panoramica`, 'success');
             reloadDetail('commands');
-        }, { submitText: 'Aggiorna', submitClass: 'btn-primary' });
+        }, { submitText: 'Aggiorna MADMIN', submitClass: 'btn-primary', tone: 'primary', icon: 'ti-package' });
     },
     managerOsRefresh: async () => {
         try {
@@ -1387,25 +1401,23 @@ registerActions({
     },
     managerOsReboot: () => {
         formModal('Riavvia istanza', `
-            <div class="alert alert-warning">Il riavvio interrompe il servizio del router per <strong>${escapeHtml(current.name)}</strong>
-                (in genere 1–3 minuti). All'avvio il firewall blocca tutto finché MADMIN non riparte: se MADMIN non riparte,
-                l'istanza resta raggiungibile solo dalla console dell'hypervisor.</div>
-            <div class="text-muted small mb-3">Se è installato un kernel più recente di quello in uso, parte una volta sola
-                in prova: diventa predefinito quando l'istanza torna collegata al manager; altrimenti dopo 15 minuti
-                l'istanza si riavvia da sola con il kernel precedente.</div>
-            <div class="mb-3"><label class="form-label">Tra quanti minuti (0 = subito, massimo 1440)</label>
-                <input name="delay_minutes" type="number" class="form-control" min="0" max="1440" value="0" required></div>
-            <div class="mb-3"><label class="form-label">Motivo</label>
-                <input name="reason" class="form-control" minlength="3" maxlength="200" required></div>
-            <div class="mb-3"><label class="form-label">Scrivi il nome dell'istanza per confermare</label>
-                <input name="confirm_name" class="form-control" required></div>`,
+            ${notice('warning', `Interruzione del servizio di ${escapeHtml(current.name)}`, [
+                ['ti-clock', 'Il router è fermo per <b>1–3 minuti</b>.'],
+                ['ti-shield-lock', 'All\'avvio il firewall blocca tutto finché MADMIN non riparte; se non riparte, resta solo la console dell\'hypervisor.'],
+                ['ti-cpu', 'Un kernel più recente, se installato, parte <b>in prova</b>: senza conferma entro 15 minuti torna al precedente.']])}
+            <div class="row g-2">
+                ${field('delay_minutes', 'Tra quanti minuti', { type: 'number', required: true, min: 0, max: 1440, value: 0,
+                    col: 'col-md-4', hint: '0 = subito; max 1440' })}
+                ${field('reason', 'Motivo', { required: true, minlength: 3, maxlength: 200, col: 'col-md-8',
+                    example: 'kernel di sicurezza', hint: 'compare nel messaggio di sistema e nell\'audit' })}
+            </div>
+            ${typedConfirm(current.name)}`,
         async (form) => {
             const d = formData(form);
-            if (d.confirm_name !== current.name) throw new Error('Il nome non corrisponde');
             await apiPost(`/instances/${current.id}/os/reboot`, { delay_minutes: Number(d.delay_minutes), reason: d.reason });
             showToast('Riavvio inviato: esito in Comandi', 'success');
             reloadDetail('commands');
-        }, { submitText: 'Riavvia', submitClass: 'btn-warning' });
+        }, { submitText: 'Riavvia', submitClass: 'btn-warning', tone: 'warning', icon: 'ti-power' });
     },
     managerOsRebootCancel: async () => {
         try {
@@ -1416,20 +1428,26 @@ registerActions({
     },
     managerRelocate: () => {
         formModal('Cambia indirizzo del manager', `
-            <div class="text-muted small mb-3">L'istanza verifica che il nuovo indirizzo presenti un certificato della
-                stessa CA, vi si collega e lo mantiene solo se risponde; altrimenti resta sull'indirizzo attuale.
-                Il vecchio indirizzo deve restare raggiungibile finché lo spostamento non è confermato.</div>
-            <div class="mb-3"><label class="form-label">Nuovo indirizzo (https://host:porta)</label>
-                <input name="url" class="form-control" placeholder="vuoto = URL agent delle impostazioni" maxlength="255"></div>`,
+            ${notice('info', '', [
+                ['ti-shield-check', 'L\'istanza verifica che il nuovo indirizzo presenti un certificato della <b>stessa CA</b>.'],
+                ['ti-arrows-exchange', 'Lo adotta solo se lì risponde; altrimenti resta sull\'indirizzo attuale.'],
+                ['ti-alert-triangle', 'Il vecchio indirizzo deve restare raggiungibile finché lo spostamento non è confermato.']])}
+            ${field('url', 'Nuovo indirizzo', { maxlength: 255, mono: true, pattern: '^https://[^/\\s]+$',
+                format: 'https://host:porta', example: 'https://manager2.example.com:8443',
+                hint: 'vuoto = l\'URL agent delle impostazioni' })}`,
         async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/relocate`, { url: d.url || null });
             showToast(`Spostamento verso ${res.url} inviato: esito nella scheda Comandi`, 'success');
             reloadDetail('commands');
-        }, { submitText: 'Invia' });
+        }, { submitText: 'Sposta', icon: 'ti-arrows-exchange' });
     },
     managerSuspend: async () => {
-        if (!await confirmDialog('Sospendi istanza', `L'istanza ${current.name} viene disconnessa e non riceve comandi finché non è riattivata; riprova a collegarsi ogni 15 minuti e mantiene identità, backup e licenze. Le sessioni di supporto aperte vengono chiuse.`, 'Sospendi', 'btn-warning')) return;
+        if (!await confirmAction({ title: 'Sospendi istanza', tone: 'warning', icon: 'ti-player-pause', confirmText: 'Sospendi',
+            intro: `<b>${escapeHtml(current.name)}</b> viene disconnessa dal manager.`,
+            items: [['ti-plug-off', 'Non riceve comandi finché non è riattivata; riprova a collegarsi ogni 15 minuti.'],
+                    ['ti-lifebuoy', 'Le sessioni di supporto aperte vengono chiuse.'],
+                    ['ti-check', 'Identità, backup e licenze restano; il router continua a funzionare.']] })) return;
         try { await apiPost(`/instances/${current.id}/suspend`, {}); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
     },
@@ -1441,12 +1459,17 @@ registerActions({
         } catch (e) { showToast(e.message, 'error'); }
     },
     managerRevoke: async () => {
-        if (!await confirmDialog('Revoca istanza', `L'istanza ${current.name} viene disconnessa e il suo certificato revocato: non potrà riconnettersi senza un nuovo enrollment. Le sessioni di supporto aperte vengono chiuse.`, 'Revoca')) return;
+        if (!await confirmAction({ title: 'Revoca istanza', icon: 'ti-ban', confirmText: 'Revoca', typed: current.name,
+            intro: `<b>${escapeHtml(current.name)}</b> perde l'accesso al manager.`,
+            items: [['ti-certificate-off', 'Il certificato viene revocato: per tornare serve un <b>nuovo enrollment</b>.'],
+                    ['ti-lifebuoy', 'Le sessioni di supporto aperte vengono chiuse.']] })) return;
         try { await apiPost(`/instances/${current.id}/revoke`, {}); reloadDetail('overview'); }
         catch (e) { showToast(e.message, 'error'); }
     },
     managerDelete: async () => {
-        if (!await confirmDialog('Elimina istanza', `Eliminare ${current.name} con backup, licenze e storico? Operazione irreversibile.`, 'Elimina')) return;
+        if (!await confirmAction({ title: 'Elimina istanza', icon: 'ti-trash', confirmText: 'Elimina definitivamente', typed: current.name,
+            intro: '<b>Operazione irreversibile.</b>',
+            items: [['ti-database-off', 'Vengono cancellati backup, licenze, inventario e storico dei comandi.']] })) return;
         try {
             await apiDelete(`/instances/${current.id}`);
             fetchedAt = 0;
@@ -1469,37 +1492,44 @@ registerActions({
         } catch (e) { showToast(e.message, 'error'); }
     },
     managerBackupDelete: async (id) => {
-        if (!await confirmDialog('Elimina backup', 'Eliminare questo backup?', 'Elimina')) return;
+        if (!await confirmAction({ title: 'Elimina backup', icon: 'ti-trash', confirmText: 'Elimina',
+            intro: 'Il backup viene cancellato dal manager: non si potrà più ripristinare.' })) return;
         try { await apiDelete(`/backups/${id}`); reloadDetail('backups'); } catch (e) { showToast(e.message, 'error'); }
     },
     managerBackupRestore: (id, created) => {
         formModal('Ripristina configurazione', `
-            <div class="alert alert-danger">Il ripristino sovrascrive tutta la configurazione di <strong>${escapeHtml(current.name)}</strong>
-                (utenti compresi) con il backup del ${fmtDate(created)}, poi riavvia MADMIN.</div>
-            ${reasonField}
-            <div class="mb-3"><label class="form-label">Scrivi il nome dell'istanza per confermare</label>
-                <input name="confirm_name" class="form-control" required></div>`,
+            ${notice('danger', `Sovrascrive la configurazione di ${escapeHtml(current.name)}`, [
+                ['ti-calendar', `Torna allo stato del backup del <b>${fmtDate(created)}</b>, utenti compresi.`],
+                ['ti-refresh', 'Poi MADMIN si riavvia; quello che è cambiato dopo il backup va perso.']])}
+            <div class="row g-2">${reasonField.replace('col-md-8', 'col-12')}</div>
+            ${typedConfirm(current.name)}`,
         async (form) => {
             const d = formData(form);
             await apiPost(`/backups/${id}/restore`, d);
             showToast('Ripristino avviato: esito nella scheda Comandi', 'success');
             reloadDetail('commands');
-        }, { submitText: 'Ripristina', submitClass: 'btn-danger' });
+        }, { submitText: 'Ripristina', submitClass: 'btn-danger', tone: 'danger', icon: 'ti-database-import' });
     },
     managerLicenseNew: () => licenseModal(current.id, () => reloadDetail('licenses')),
     managerLicenseRevoke: async (id) => {
-        if (!await confirmDialog('Revoca licenza', 'Il modulo non sarà più attivabile e, al prossimo riavvio dell\'istanza, non verrà caricato (i suoi dati restano).', 'Revoca')) return;
+        if (!await confirmAction({ title: 'Revoca licenza', icon: 'ti-certificate-off', confirmText: 'Revoca',
+            items: [['ti-lock', 'Il modulo non sarà più attivabile.'],
+                    ['ti-refresh', 'Al prossimo riavvio dell\'istanza non verrà caricato; i suoi dati restano.']] })) return;
         try { await apiPost(`/licenses/${id}/revoke`, {}); location.hash.startsWith('#licenses') ? location.reload() : reloadDetail('licenses'); }
         catch (e) { showToast(e.message, 'error'); }
     },
     managerSupportUi: () => {
-        formModal('Accesso UI superuser temporaneo', `${minutesField()}${reasonField}${ipField}${totpField}`, async (form) => {
+        formModal('Accesso UI superuser temporaneo', `
+            ${notice('info', '', [
+                ['ti-user-shield', 'Crea sull\'istanza un superuser temporaneo che scade con la sessione.'],
+                ['ti-link', 'Ricevi un link di accesso monouso; la porta di supporto ammette solo l\'IP indicato.']])}
+            <div class="row g-2">${minutesField()}${reasonField}${ipField}${totpField}</div>`, async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ui`, {
                 minutes: Number(d.minutes), reason: d.reason, allowed_ip: d.allowed_ip || null, totp: d.totp });
             uiLinkModal(res);
             reloadDetail('support');
-        }, { submitText: 'Apri sessione' });
+        }, { submitText: 'Apri sessione', tone: 'primary', icon: 'ti-browser', size: 'lg' });
     },
     managerSupportSsh: async () => {
         // The instance has one SSH grant: a new session replaces the open one
@@ -1516,22 +1546,15 @@ registerActions({
                 <p>Aggiungila in <a href="#support" data-bs-dismiss="modal">Supporto → Le mie chiavi SSH</a> e chiedi a un altro superuser di approvarla.</p>`);
             return;
         }
-        const warning = open.length ? `
-            <div class="alert alert-warning mb-3">
-                <h4 class="alert-title">Una sessione SSH è già attiva su questa istanza</h4>
-                <ul class="mb-2">${open.map(s => `
-                    <li>Operatore <strong>${escapeHtml(s.operator)}</strong>, IP <span class="font-monospace">${escapeHtml(s.allowed_ip)}</span>,
-                        scade il ${escapeHtml(fmtDate(s.expires_at))}<br>
-                        <span class="text-muted">${escapeHtml(s.reason)}</span></li>`).join('')}
-                </ul>
-                <div>L'istanza ammette un solo accesso SSH alla volta: proseguendo, la sessione attuale
-                    viene <strong>chiusa</strong> e chi è collegato viene disconnesso.</div>
-            </div>` : '';
-        formModal('Accesso SSH root temporaneo', `${warning}${minutesField()}${reasonField}${ipField}
-            <div class="mb-3"><label class="form-label">Chiave SSH</label>
-                <select name="key_id" class="form-select">${keys.map(k => `
-                    <option value="${escapeHtml(k.id)}">${escapeHtml(k.name)} (${escapeHtml(k.fingerprint)})</option>`).join('')}
-                </select></div>${totpField}`,
+        const warning = open.length ? notice('warning', 'Una sessione SSH è già attiva: verrà chiusa', [
+            ...open.map(s => ['ti-user', `<b>${escapeHtml(s.operator)}</b> da <span class="font-monospace">${escapeHtml(s.allowed_ip)}</span>,
+                scade il ${escapeHtml(fmtDate(s.expires_at))} — <span class="text-muted">${escapeHtml(s.reason)}</span>`]),
+            ['ti-plug-off', 'L\'istanza ammette un solo accesso SSH: chi è collegato viene disconnesso.']])
+            : notice('info', '', [['ti-certificate', 'Il manager firma un certificato per la chiave scelta, valido solo per la durata indicata e solo attraverso il tunnel.']]);
+        formModal('Accesso SSH root temporaneo', `${warning}<div class="row g-2">${minutesField()}${reasonField}${ipField}${totpField}
+            ${field('key_id', 'Chiave SSH', { type: 'select', required: true, col: 'col-12',
+                options: keys.map(k => [k.id, `${k.name} — ${k.fingerprint}`]),
+                hint: 'solo le tue chiavi approvate (Supporto → Le mie chiavi SSH)' })}</div>`,
         async (form) => {
             const d = formData(form);
             const res = await apiPost(`/instances/${current.id}/support/ssh`, {
@@ -1540,8 +1563,8 @@ registerActions({
             sshSessionModal(res);
             reloadDetail('support');
         }, open.length
-            ? { submitText: 'Chiudi la sessione attuale e apri', submitClass: 'btn-warning', size: 'lg' }
-            : { submitText: 'Apri sessione', size: 'lg' });
+            ? { submitText: 'Chiudi la sessione attuale e apri', submitClass: 'btn-warning', size: 'lg', tone: 'warning', icon: 'ti-terminal-2' }
+            : { submitText: 'Apri sessione', size: 'lg', tone: 'primary', icon: 'ti-terminal-2' });
     },
     managerSupportTicket: async (id) => {
         try { uiLinkModal(await apiPost(`/support/${id}/ticket`, {})); } catch (e) { showToast(e.message, 'error'); }

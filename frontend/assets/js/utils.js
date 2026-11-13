@@ -267,6 +267,8 @@ export function confirmDialog(title, message, confirmText = null, confirmClass =
             <div class="modal modal-blur fade" id="${modalId}" tabindex="-1">
                 <div class="modal-dialog${sizeClass}">
                     <div class="modal-content">
+                        ${/btn-(danger|warning|success|primary)/.test(confirmClass)
+                            ? `<div class="modal-status bg-${confirmClass.match(/btn-(danger|warning|success|primary)/)[1]}"></div>` : ''}
                         <div class="modal-header">
                             <h5 class="modal-title">${escapeHtml(title)}</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>

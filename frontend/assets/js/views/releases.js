@@ -6,7 +6,7 @@
 import { apiFetch, apiGet, apiPatch, apiDelete, _extractDetail } from '../api.js';
 import { escapeHtml, showToast, confirmDialog, actionAttrs, registerActions } from '../utils.js';
 import { checkPermission, setPageActions } from '../app.js';
-import { fmtDate, formModal } from './manager-common.js';
+import { fmtDate, formModal, field, notice, confirmAction } from './manager-common.js';
 
 let containerEl = null;
 
@@ -56,12 +56,12 @@ export async function render(container) {
 registerActions({
     releaseUpload: () => {
         formModal('Carica release', `
-            <div class="mb-3"><label class="form-label">File .release (firmato)</label>
-                <input name="file" type="file" class="form-control" accept=".release" required></div>
-            <div class="mb-3"><label class="form-label">Note</label>
-                <input name="notes" class="form-control" maxlength="200" placeholder="facoltative"></div>
-            <div class="text-muted small">Il manager controlla il formato, l'integrità e, se configurate nelle
-                impostazioni, la firma. Le istanze la verificano comunque prima di installarla.</div>`,
+            ${notice('info', '', [
+                ['ti-file-certificate', 'Un file <code>.release</code> firmato con <code>scripts/sign-release.sh</code>.'],
+                ['ti-shield-check', 'Il manager controlla formato, integrità e firma (se le chiavi sono nelle impostazioni); le istanze la verificano comunque.'],
+                ['ti-flask', 'Entra come <b>candidate</b>: provala su un\'istanza, poi promuovila a stable.']])}
+            ${field('file', 'File .release', { type: 'file', required: true, attrs: 'accept=".release"' })}
+            ${field('notes', 'Note', { maxlength: 200, example: 'correzione VPN, kernel module X' })}`,
         async (form) => {
             const file = form.elements.file.files[0];
             if (!file) throw new Error('Scegli un file');
@@ -74,10 +74,13 @@ registerActions({
             const r = await res.json();
             showToast(`Release ${r.id} caricata`, 'success');
             render(containerEl);
-        }, { submitText: 'Carica' });
+        }, { submitText: 'Carica', icon: 'ti-upload' });
     },
     releasePromote: async (id) => {
-        if (!await confirmDialog('Promuovi release', `${id} diventa stable: potrà essere distribuita a gruppi di istanze.`, 'Promuovi', 'btn-success')) return;
+        if (!await confirmAction({ title: 'Promuovi a stable', tone: 'success', icon: 'ti-rosette', confirmText: 'Promuovi',
+            intro: `<span class="font-monospace">${escapeHtml(id)}</span> diventa <b>stable</b>.`,
+            items: [['ti-stack-push', 'Potrà essere distribuita con i rollout a gruppi di istanze.'],
+                    ['ti-flask', 'Promuovila solo dopo averla provata su almeno un\'istanza.']] })) return;
         try { await apiPatch(`/releases/${encodeURIComponent(id)}`, { channel: 'stable' }); render(containerEl); }
         catch (e) { showToast(e.message, 'error'); }
     },
@@ -86,7 +89,10 @@ registerActions({
         catch (e) { showToast(e.message, 'error'); }
     },
     releaseDelete: async (id) => {
-        if (!await confirmDialog('Elimina release', `Eliminare ${id}? Le istanze che la usano non ne risentono; non sarà più installabile.`, 'Elimina')) return;
+        if (!await confirmAction({ title: 'Elimina release', icon: 'ti-trash', confirmText: 'Elimina',
+            intro: `Eliminare <span class="font-monospace">${escapeHtml(id)}</span>?`,
+            items: [['ti-check', 'Le istanze che la usano non ne risentono.'],
+                    ['ti-ban', 'Non sarà più installabile né usabile dal rescue.']] })) return;
         try { await apiDelete(`/releases/${encodeURIComponent(id)}`); render(containerEl); }
         catch (e) { showToast(e.message, 'error'); }
     },

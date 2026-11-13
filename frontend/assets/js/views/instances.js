@@ -516,12 +516,17 @@ async function renderDetail(container, id, tab) {
     const actions = [];
     if (i.online && checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRefresh')}><i class="ti ti-refresh me-1"></i>Aggiorna dati</button>`);
     if (checkPermission('scope.manage')) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerEdit')}><i class="ti ti-edit me-1"></i>Modifica</button>`);
-    if (checkPermission('manager.manage') && i.status !== 'revoked') actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerReenroll')}><i class="ti ti-key me-1"></i>Token re-enroll</button>`);
-    if (checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerUpdate')}><i class="ti ti-package me-1"></i>Aggiorna</button>`);
-    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-secondary" ${actionAttrs('managerRelocate')}><i class="ti ti-arrows-exchange me-1"></i>Cambia indirizzo</button>`);
-    if (checkPermission('manager.manage') && i.status === 'active') actions.push(`<button class="btn btn-outline-warning" ${actionAttrs('managerSuspend')}><i class="ti ti-player-pause me-1"></i>Sospendi</button>`);
-    if (checkPermission('manager.manage') && i.status === 'suspended') actions.push(`<button class="btn btn-outline-success" ${actionAttrs('managerResume')}><i class="ti ti-player-play me-1"></i>Riattiva</button>`);
-    if (checkPermission('manager.manage') && ['active', 'suspended'].includes(i.status)) actions.push(`<button class="btn btn-outline-danger" ${actionAttrs('managerRevoke')}><i class="ti ti-ban me-1"></i>Revoca</button>`);
+    if (checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1) actions.push(`<button class="btn btn-outline-primary" ${actionAttrs('managerUpdate')}><i class="ti ti-package me-1"></i>Aggiorna MADMIN</button>`);
+    // Used rarely: in the "…" menu, dangerous ones last and in red
+    const more = [];
+    const item = (action, icon, label, cls = '') => `<a class="dropdown-item ${cls}" role="button" ${actionAttrs(action)}><i class="ti ${icon} me-2"></i>${label}</a>`;
+    if (checkPermission('manager.manage') && i.status === 'active') more.push(item('managerRelocate', 'ti-arrows-exchange', 'Cambia indirizzo del manager'));
+    if (checkPermission('manager.manage') && i.status !== 'revoked') more.push(item('managerReenroll', 'ti-key', 'Token re-enroll (reinstallazione)'));
+    if (checkPermission('manager.manage') && i.status === 'active') more.push('<div class="dropdown-divider"></div>', item('managerSuspend', 'ti-player-pause', 'Sospendi', 'text-warning'));
+    if (checkPermission('manager.manage') && i.status === 'suspended') more.push(item('managerResume', 'ti-player-play', 'Riattiva', 'text-success'));
+    if (checkPermission('manager.manage') && ['active', 'suspended'].includes(i.status)) more.push(item('managerRevoke', 'ti-ban', 'Revoca', 'text-danger'));
+    if (more.length) actions.push(`<div class="dropdown"><button class="btn btn-outline-secondary" data-bs-toggle="dropdown" title="Altre azioni"><i class="ti ti-dots"></i></button>
+        <div class="dropdown-menu dropdown-menu-end">${more.join('')}</div></div>`);
     if (checkPermission('manager.manage') && !['active', 'suspended'].includes(i.status)) actions.push(`<button class="btn btn-danger" ${actionAttrs('managerDelete')}><i class="ti ti-trash me-1"></i>Elimina</button>`);
     setPageActions(`<div class="btn-list">${actions.join('')}</div>`);
 
@@ -884,18 +889,18 @@ export function sessionTable(rows, showInstance = false) {
         </tbody></table></div>`;
 }
 
-// --- Available OS updates (the instance's upgrades section) ---
+// --- Sistema tab: state at a glance, then details on demand ---
 
 const UP_TONE = {
     critical: ['bg-red text-red-fg', 'Sicurezza', 'aggiornamento di sicurezza che corregge vulnerabilità critiche o alte'],
-    security: ['bg-orange text-orange-fg', 'Sicurezza', 'aggiornamento di sicurezza'],
-    updates: ['bg-blue-lt', 'Aggiornamento', 'aggiornamento normale: lo installa solo «Aggiorna tutto»'],
+    security: ['bg-orange text-orange-fg', 'Sicurezza', 'aggiornamento di sicurezza (lo installano anche gli aggiornamenti automatici)'],
+    updates: ['bg-blue-lt', 'Normale', 'aggiornamento normale: lo installa solo «Aggiorna tutto»'],
     held: ['bg-secondary-lt', 'Trattenuto', 'non lo installa nessuna delle due azioni, per ora'],
 };
 const HELD_REASON = {
-    phased: (p) => `rilascio graduale di Ubuntu${p != null ? ` (${p}% delle macchine)` : ''}: arriva da solo nei prossimi giorni`,
-    held: () => 'bloccato con apt-mark hold sull\'istanza',
-    kept: () => 'trattenuto da apt: richiederebbe di rimuovere o installare altri pacchetti',
+    phased: (p) => `rilascio graduale${p != null ? ` ${p}%` : ''}`,
+    held: () => 'hold',
+    kept: () => 'trattenuto da apt',
 };
 
 function upgradeRow(u) {
@@ -903,188 +908,167 @@ function upgradeRow(u) {
     const fixes = Object.entries(u.fixes || {}).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' ');
     const target = u.tone === 'held' ? u.candidate : u.security && !u.all ? u.security_version : u.candidate;
     return `<tr>
-        <td><span class="badge ${cls}" title="${escapeHtml(title)}">${label}</span></td>
-        <td><b>${escapeHtml(u.name)}</b>${u.arch !== 'all' && u.arch !== 'amd64' ? ` <span class="text-muted small">${escapeHtml(u.arch)}</span>` : ''}
-            ${u.source && u.source !== u.name ? `<div class="small text-muted">${escapeHtml(u.source)}</div>` : ''}</td>
-        <td class="font-monospace small">${escapeHtml(u.installed || 'nuovo')} <i class="ti ti-arrow-right"></i> ${escapeHtml(target)}
-            ${u.origin === 'mixed' ? `<div class="text-muted">sicurezza: ${escapeHtml(u.security_version)}, tutto: ${escapeHtml(u.candidate)}</div>` : ''}</td>
-        <td class="text-nowrap">${u.security ? '<span class="badge bg-success-lt me-1" title="lo installa «Aggiornamenti di sicurezza»">sicurezza</span>' : ''}${u.all ? '<span class="badge bg-primary-lt" title="lo installa «Aggiorna tutto»">tutto</span>' : ''}
-            ${u.tone === 'held' ? `<span class="small text-muted">${escapeHtml((HELD_REASON[u.reason] || HELD_REASON.kept)(u.phased))}</span>` : ''}</td>
-        <td class="small">${fixes || '<span class="text-muted">-</span>'}</td>
+        <td><span class="badge ${cls}" title="${escapeHtml(title)}">${label}</span>
+            ${u.tone === 'held' ? `<span class="small text-muted ms-1">${escapeHtml((HELD_REASON[u.reason] || HELD_REASON.kept)(u.phased))}</span>` : ''}</td>
+        <td><b>${escapeHtml(u.name)}</b></td>
+        <td class="font-monospace small text-nowrap">${escapeHtml(u.installed || 'nuovo')} → ${escapeHtml(target)}</td>
+        <td class="small">${fixes}</td>
         <td>${u.reboot ? '<i class="ti ti-power text-warning" title="serve un riavvio per applicarlo"></i>' : ''}</td>
     </tr>`;
 }
 
-function scopeTile(title, icon, s, desc) {
-    const fixes = Object.entries(s.by_severity || {}).map(([sev, n]) => `${severityBadge(sev)} ${n}`).join(' ');
-    return `<div class="col-md-6"><div class="card card-sm h-100 ${s.packages ? '' : 'bg-light'}"><div class="card-body">
-        <div class="d-flex align-items-center gap-2 mb-1"><i class="ti ${icon} fs-2"></i><h4 class="mb-0">${title}</h4>
-            <span class="ms-auto h2 mb-0">${s.packages}</span><span class="text-muted small">pacchetti</span></div>
-        <div class="small text-muted mb-1">${desc}</div>
-        <div class="small">${s.fixes ? `Corregge <b>${s.fixes}</b> vulnerabilità ${fixes}` : '<span class="text-muted">Non corregge vulnerabilità note</span>'}
-            ${s.reboot ? '<span class="badge bg-warning-lt ms-1"><i class="ti ti-power me-1"></i>poi riavvio</span>' : ''}</div>
-    </div></div></div>`;
+/** A status tile: big value, one short line, colour by tone. */
+function stateTile(icon, label, value, tone, sub, title = '') {
+    const cls = { danger: 'text-red', warning: 'text-orange', ok: 'text-green', muted: 'text-muted' }[tone] || '';
+    return `<div class="col-6 col-xl-3"><div class="card card-sm h-100" title="${escapeHtml(title)}"><div class="card-body py-2">
+        <div class="subheader"><i class="ti ${icon} me-1"></i>${label}</div>
+        <div class="fs-3 fw-bold ${cls}">${value}</div>
+        ${sub ? `<div class="small text-muted text-truncate">${sub}</div>` : ''}</div></div></div>`;
 }
 
-function upgradesCard(up) {
-    if (!up.available) {
-        return notice('info', 'Anteprima degli aggiornamenti non disponibile', [
-            'L\'istanza non la invia ancora: arriva con l\'aggiornamento di MADMIN alla versione con l\'agente nuovo.']);
-    }
-    const s = up.summary;
-    const items = up.items || [];
-    const held = items.filter(u => u.tone === 'held');
-    return `<div class="card mb-3"><div class="card-header"><h3 class="card-title"><i class="ti ti-package me-2"></i>Aggiornamenti disponibili</h3>
-            <div class="card-actions small text-muted">calcolati sull'istanza ${relTime(up.updated_at)}</div></div>
-        <div class="card-body">
-            <div class="row g-2 mb-3">
-                ${scopeTile('Aggiornamenti di sicurezza', 'ti-shield-check', s.security, 'solo dal canale <b>security</b> di Ubuntu (unattended-upgrade): il minimo per correggere le vulnerabilità; gli stessi installati ogni notte in automatico')}
-                ${scopeTile('Aggiorna tutto', 'ti-package', s.all, 'sicurezza <b>più</b> gli aggiornamenti normali (correzioni di bug, nuove versioni minori)')}
-            </div>
-            ${items.length ? `<div class="table-responsive" style="max-height: 22rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-1">
-                <thead class="sticky-top bg-body"><tr><th>Tipo</th><th>Pacchetto</th><th>Versione</th><th>Installato da</th><th>Corregge</th><th></th></tr></thead>
-                <tbody>${items.map(upgradeRow).join('')}</tbody></table></div>
-            <div class="small text-muted d-flex flex-wrap gap-3">${Object.entries(UP_TONE).map(([, [cls, label, title]]) =>
-                `<span><span class="badge ${cls}">${label}</span> ${escapeHtml(title)}</span>`).join('')}</div>`
-            : '<div class="text-muted">Nessun aggiornamento disponibile: il sistema è aggiornato.</div>'}
-            ${held.length ? `<div class="small text-muted mt-2">${held.length} trattenuti: Ubuntu distribuisce alcuni aggiornamenti
-                gradualmente (una percentuale di macchine alla volta), per fermarli se causano problemi.</div>` : ''}
-        </div></div>`;
+function section(id, title, count, body, open = false) {
+    return `<details class="card mb-2" id="${id}" ${open ? 'open' : ''}>
+        <summary class="card-header cursor-pointer py-2"><h4 class="card-title mb-0">${title}${count != null ? ` <span class="badge bg-secondary-lt ms-1">${count}</span>` : ''}</h4></summary>
+        <div class="card-body">${body}</div></details>`;
 }
 
 async function packages(el, i) {
-    // Only the fixable findings come in full; the rest is grouped by package and
-    // each package's list is loaded when it is opened (hundreds of kernel CVEs).
     const [inv, fixable, byPackage, changes, up] = await Promise.all([
         apiGet(`/instances/${i.id}/inventory`), apiGet(`/instances/${i.id}/findings?fixable=true`),
         apiGet(`/instances/${i.id}/findings/packages`), apiGet(`/instances/${i.id}/inventory/changes?limit=20`),
         apiGet(`/instances/${i.id}/upgrades`).catch(() => ({ available: false }))]);
     const st = inv.os_status || {};
     const sec = inv.sections || {};
-    const secInfo = (n) => sec[n] ? `${sec[n].count} · ${sec[n].updated_at ? relTime(sec[n].updated_at) : 'mai'}${sec[n].pending ? ' · <span class="text-warning">aggiornamento in corso</span>' : ''}` : 'non ancora ricevuto';
-    const trial = st.kernel_trial;
-    const TRIAL = { pending: ['bg-warning-lt', 'in prova'], confirmed: ['bg-success-lt', 'confermato'], failed: ['bg-danger-lt', 'fallito'] };
-    const osManage = checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1;
-    const sm = up.available ? up.summary : null;
     const rb = inv.reboot || {};
     const svc = inv.restart_services || [];
-    const osActions = osManage ? `<div class="btn-list mb-2">
-        <button class="btn btn-sm btn-outline-secondary" ${actionAttrs('managerOsRefresh')} title="apt-get update, poi nuovo elenco degli aggiornamenti"><i class="ti ti-refresh me-1"></i>Ricontrolla ora</button>
-        <button class="btn btn-sm ${sm && sm.security.packages ? 'btn-primary' : 'btn-outline-primary'}" ${actionAttrs('managerOsUpgrade', 'security')}><i class="ti ti-shield-check me-1"></i>Aggiornamenti di sicurezza${sm ? ` <span class="badge bg-white text-primary ms-1">${sm.security.packages}</span>` : ''}</button>
-        <button class="btn btn-sm btn-outline-primary" ${actionAttrs('managerOsUpgrade', 'all')}><i class="ti ti-package me-1"></i>Aggiorna tutto${sm ? ` <span class="badge bg-primary-lt ms-1">${sm.all.packages}</span>` : ''}</button>
-        <button class="btn btn-sm ${rb.recommended ? 'btn-warning' : 'btn-outline-warning'}" ${actionAttrs('managerOsReboot')}><i class="ti ti-power me-1"></i>Riavvia</button>
-        ${st.reboot_scheduled_at ? `<button class="btn btn-sm btn-outline-danger" ${actionAttrs('managerOsRebootCancel')}><i class="ti ti-x me-1"></i>Annulla riavvio</button>` : ''}
-    </div>` : '';
-    // Where the data come from and how fresh they are (the flow of the check)
-    const age = (t) => t ? relTime(t) : '<span class="text-warning">mai</span>';
     const au = inv.autoupdate || {};
-    const fresh = `<div class="d-flex flex-wrap gap-3 small text-muted mb-3 align-items-center">
-        <span title="Ultimo apt-get update dell'istanza: da qui vengono gli aggiornamenti disponibili"><i class="ti ti-list-check me-1"></i>Liste apt: <b>${age(st.apt_updated_at ? new Date(st.apt_updated_at * 1000).toISOString() : null)}</b></span>
-        <span title="Elenco dei pacchetti installati, inviato dall'istanza quando cambia"><i class="ti ti-package me-1"></i>Pacchetti ricevuti: <b>${age(sec.packages?.updated_at)}</b></span>
-        <span title="Confronto dei pacchetti con OSV e lo stato Ubuntu, sul manager"><i class="ti ti-shield-search me-1"></i>Scansione vulnerabilità: <b>${age(inv.scan_at)}</b></span>
-        <span title="unattended-upgrades installa ogni giorno gli aggiornamenti di sicurezza e riavvia i servizi che li usano; la macchina non si riavvia mai da sola">
-            <i class="ti ti-clock-play me-1"></i>Aggiornamenti automatici: <b>${au.time ? `ogni giorno alle ${escapeHtml(au.time)} ${escapeHtml(au.tz || '')}${au.randomize_minutes ? ` (+${au.randomize_minutes} min)` : ''}` : 'orario predefinito di Ubuntu'}</b>
-            ${au.next_run ? ` · prossimo ${fmtDate(new Date(au.next_run * 1000).toISOString())}` : ''}</span>
-        <a href="#vulnerabilities" class="ms-auto">Come funziona</a>
-    </div>`;
-    // Reboot: worth it only when it fixes critical/high findings (or microcode)
-    const rebootBox = rb.recommended ? notice('danger', 'Riavvio consigliato', [
-            rb.count ? ['ti-shield-x', `Corregge <b>${rb.count}</b> vulnerabilità del kernel in uso ${Object.entries(rb.fixes || {}).map(([s, n]) => `${severityBadge(s)} ${n}`).join(' ')}`] : null,
-            rb.kernel_newest && rb.kernel_newest !== rb.kernel_running ? ['ti-cpu', `In uso <span class="font-monospace">${escapeHtml(rb.kernel_running || '')}</span>, installato <span class="font-monospace">${escapeHtml(rb.kernel_newest)}</span> (parte in prova)`] : null,
-            rb.microcode_outdated ? ['ti-cpu-2', 'Microcode della CPU aggiornato: si applica al riavvio.'] : null,
-            ['ti-calendar-time', 'Programmalo con <b>Riavvia</b> (anche con ritardo) o con un rollout nella finestra di manutenzione.']])
-        : rb.required ? `<div class="alert alert-secondary py-2 small mb-3"><i class="ti ti-info-circle me-1"></i>Ubuntu segnala <b>riavvio richiesto</b>
-            (${escapeHtml((rb.packages || []).join(', ') || 'pacchetti di sistema')}), ma non corregge vulnerabilità critiche o alte: si può rimandare alla prossima manutenzione.
-            ${rb.count ? `Corregge ${rb.count} vulnerabilità minori del kernel.` : ''}</div>` : '';
-    const servicesBox = svc.length ? notice('warning', `${svc.length} servizi usano ancora librerie vecchie`, [
-            ['ti-refresh', svc.map(x => `<span class="font-monospace">${escapeHtml(x)}</span>`).join(', ')],
-            ['ti-info-circle', 'Di solito li riavviano da soli gli aggiornamenti automatici; questi sono rimasti indietro.'],
-            osManage ? ['ti-player-play', `<a role="button" class="fw-bold" ${actionAttrs('managerServicesRestart')}>Riavvia ora o programma</a> (interruzione di pochi secondi dei servizi elencati)`] : null]) : '';
-    const ss = inv.statuses || {};
+    const trial = st.kernel_trial;
+    const sm = up.available ? up.summary : null;
     const total = Object.values(inv.findings || {}).reduce((n, x) => n + x, 0);
-    const sevList = (counts, quiet) => Object.entries(counts).filter(([, n]) => n)
-        .map(([s, n]) => `${severityBadge(s, quiet)} ${n}`).join(' &nbsp; ');
+    const toFix = inv.fixable || 0;
+    const osManage = checkPermission('manager.manage') && i.status === 'active' && i.layout >= 1;
+    const ts = (epoch) => epoch ? fmtDate(new Date(epoch * 1000).toISOString()) : '-';
+    const sevBadges = (counts) => Object.entries(counts || {}).filter(([, n]) => n)
+        .map(([s, n]) => `${severityBadge(s)} ${n}`).join(' ');
     const findingRow = (f, withPackage) => `<tr><td>${advisoryLink(f)}</td><td>${severityBadge(f.severity, !f.fixed_version)}</td>
-        ${withPackage ? `<td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
-        <td class="font-monospace small">${escapeHtml(f.installed_version)}</td>` : ''}
+        ${withPackage ? `<td>${escapeHtml(f.package)}${f.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>` : ''}
         <td>${statusCell(f)}</td></tr>`;
-    // One sentence that says whether there is something to do on this instance
-    const verdict = !total ? ['alert-success', 'Nessuna vulnerabilità nota.']
-        : inv.fixable ? ['alert-warning', [
-            inv.fixable_os ? `${inv.fixable_os} vulnerabilità si correggono con gli aggiornamenti del sistema già disponibili: <b>Aggiornamenti di sicurezza</b> (o <b>Aggiorna tutto</b>)${st.reboot_required ? ', poi riavvio' : ''}.` : '',
-            inv.fixable_release ? `${inv.fixable_release} riguardano pacchetti Python di MADMIN: serve una <b>release di MADMIN</b> che includa la versione corretta (Aggiorna MADMIN).` : '',
-        ].filter(Boolean).join('<br>')]
-        : st.reboot_required ? ['alert-warning', 'Aggiornamenti installati: serve il <b>riavvio</b> per applicarli.']
-        : ['alert-info', `Il sistema è aggiornato: nessuna delle ${total} vulnerabilità ha una correzione installabile ora.
-            ${ss.pending ? `${ss.pending} hanno la correzione già preparata da Ubuntu (arriverà con i prossimi aggiornamenti).` : ''}
-            ${ss.stale ? `${ss.stale} risultano probabilmente già corrette (dati Ubuntu non ancora aggiornati).` : ''}`];
+
+    // 1. State at a glance
+    const vulnTile = toFix
+        ? stateTile('ti-shield-x', 'Vulnerabilità', `${toFix} da correggere`, 'danger',
+            [inv.fixable_os ? `${inv.fixable_os} con gli aggiornamenti` : '', inv.fixable_release ? `${inv.fixable_release} con una release MADMIN` : ''].filter(Boolean).join(' · '))
+        : stateTile('ti-shield-check', 'Vulnerabilità', 'Niente da correggere', 'ok',
+            total ? `${total} note senza correzione installabile` : 'nessuna nota',
+            'Le vulnerabilità senza correzione aspettano Ubuntu: si correggono da sole con gli aggiornamenti automatici quando escono');
+    const rebootTile = rb.recommended
+        ? stateTile('ti-power', 'Riavvio', 'Consigliato', 'danger', `corregge ${sevBadges(rb.fixes) || 'il microcode'}`.replace(/<[^>]+>/g, ' '),
+            `Il kernel installato ${rb.kernel_newest || ''} corregge vulnerabilità critiche o alte del kernel in uso ${rb.kernel_running || ''}`)
+        : st.reboot_scheduled_at ? stateTile('ti-clock', 'Riavvio', 'Programmato', 'warning', ts(st.reboot_scheduled_at))
+        : rb.required ? stateTile('ti-power', 'Riavvio', 'Non urgente', 'muted', 'richiesto da Ubuntu, nessuna vulnerabilità grave',
+            `Pacchetti: ${(rb.packages || []).join(', ')}. Si può fare alla prossima manutenzione.`)
+        : stateTile('ti-power', 'Riavvio', 'Non serve', 'ok', `kernel ${escapeHtml(st.running_kernel || inv.kernel || '')}`);
+    const updTile = sm
+        ? stateTile('ti-package', 'Aggiornamenti', sm.security.packages ? `${sm.security.packages} di sicurezza` : 'Sicurezza: nessuno',
+            sm.security.packages ? 'warning' : 'ok', `${sm.all.packages} in tutto${sm.held ? ` · ${sm.held} trattenuti` : ''}`,
+            'Sicurezza = quelli che installano anche gli aggiornamenti automatici; «in tutto» comprende gli aggiornamenti normali')
+        : stateTile('ti-package', 'Aggiornamenti', st.pending_updates == null ? '-' : `${st.pending_security || 0} di sicurezza`, 'muted',
+            'anteprima non disponibile (aggiornare MADMIN)');
+    const autoTile = stateTile('ti-clock-play', 'Automatici', au.time ? `ogni notte ${escapeHtml(au.time)}` : 'orario Ubuntu', 'muted',
+        au.next_run ? `prossimo ${ts(au.next_run)}` : (au.tz || ''),
+        'Ogni giorno installano gli aggiornamenti di sicurezza e riavviano i servizi che li usano (pochi secondi); la macchina non si riavvia mai da sola. Ora per gruppo o in Impostazioni.');
+
+    const menu = osManage ? `<div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown"><i class="ti ti-dots me-1"></i>Azioni</button>
+        <div class="dropdown-menu dropdown-menu-end">
+            <a class="dropdown-item" role="button" ${actionAttrs('managerOsRefresh')}><i class="ti ti-refresh me-2"></i>Ricontrolla ora</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" role="button" ${actionAttrs('managerOsUpgrade', 'security')}><i class="ti ti-shield-check me-2"></i>Aggiornamenti di sicurezza${sm ? ` (${sm.security.packages})` : ''}</a>
+            <a class="dropdown-item" role="button" ${actionAttrs('managerOsUpgrade', 'all')}><i class="ti ti-package me-2"></i>Aggiorna tutto${sm ? ` (${sm.all.packages})` : ''}</a>
+            <a class="dropdown-item" role="button" ${actionAttrs('managerServicesRestart')}><i class="ti ti-refresh-dot me-2"></i>Riavvia servizi${svc.length ? ` (${svc.length})` : ''}</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item text-warning" role="button" ${actionAttrs('managerOsReboot')}><i class="ti ti-power me-2"></i>Riavvia l'istanza…</a>
+            ${st.reboot_scheduled_at ? `<a class="dropdown-item" role="button" ${actionAttrs('managerOsRebootCancel')}><i class="ti ti-x me-2"></i>Annulla riavvio programmato</a>` : ''}
+        </div></div>` : '';
+    // The one thing to do now, if any
+    const primary = !osManage ? ''
+        : sm && sm.security.packages ? `<button class="btn btn-sm btn-primary" ${actionAttrs('managerOsUpgrade', 'security')}><i class="ti ti-shield-check me-1"></i>Installa sicurezza (${sm.security.packages})</button>`
+        : rb.recommended && !st.reboot_scheduled_at ? `<button class="btn btn-sm btn-warning" ${actionAttrs('managerOsReboot')}><i class="ti ti-power me-1"></i>Programma riavvio</button>`
+        : svc.length ? `<button class="btn btn-sm btn-outline-warning" ${actionAttrs('managerServicesRestart')}><i class="ti ti-refresh-dot me-1"></i>Riavvia servizi (${svc.length})</button>` : '';
+
+    const alerts = [
+        svc.length ? `<div class="alert alert-warning py-2 small mb-2"><i class="ti ti-refresh-dot me-1"></i><b>${svc.length} servizi</b> usano librerie vecchie:
+            ${svc.map(x => `<span class="font-monospace">${escapeHtml(x.replace(/\.service$/, ''))}</span>`).join(', ')}</div>` : '',
+        trial && trial.result !== 'confirmed' ? `<div class="alert ${trial.result === 'failed' ? 'alert-danger' : 'alert-warning'} py-2 small mb-2">
+            <i class="ti ti-cpu me-1"></i>Kernel <span class="font-monospace">${escapeHtml(trial.kernel)}</span> ${trial.result === 'failed' ? 'non adottato' : 'in prova'}${trial.detail ? `: ${escapeHtml(trial.detail)}` : ''}</div>` : '',
+    ].join('');
+
+    // 2. Vulnerabilities: only what can be fixed in full, the rest on demand
     const kf = inv.kernel_fix;
-    const hweMeta = inv.os_id && inv.os_id.startsWith('ubuntu-') ? `linux-generic-hwe-${inv.os_id.slice(7)}` : 'linux-generic-hwe';
-    el.innerHTML = `<div class="card-body">
-        ${osActions}
-        ${fresh}
-        ${rebootBox}${servicesBox}
-        ${upgradesCard(up)}
-        <div class="row g-3">
-            <div class="col-lg-5">${kv([
-                ['Sistema', escapeHtml(inv.os || '-')],
-                ...(st.reboot_scheduled_at ? [['Riavvio programmato', `<span class="badge bg-warning-lt">${fmtDate(new Date(st.reboot_scheduled_at * 1000).toISOString())}</span>`]] : []),
-                ...(trial ? [['Kernel in prova', `<span class="font-monospace">${escapeHtml(trial.kernel)}</span>
-                    <span class="badge ${(TRIAL[trial.result] || TRIAL.pending)[0]}">${(TRIAL[trial.result] || [, trial.result])[1]}</span>
-                    ${trial.detail ? `<div class="small text-muted">${escapeHtml(trial.detail)}</div>` : ''}`]] : []),
-                ['Kernel in esecuzione', `<span class="font-monospace">${escapeHtml(st.running_kernel || inv.kernel || '-')}</span>`],
-                ['Kernel più recente', `<span class="font-monospace">${escapeHtml(st.newest_kernel || '-')}</span>`],
-                ['Riavvio richiesto', st.reboot_required
-                    ? `<span class="badge bg-warning-lt">sì</span> <span class="small text-muted">${escapeHtml((st.reboot_packages || []).join(', '))}</span>` : 'no'],
-                ['Aggiornamenti in sospeso', st.pending_updates == null ? '-' : `${st.pending_updates} (${st.pending_security || 0} di sicurezza)`],
-                ['Liste pacchetti', st.apt_updated_at ? relTime(new Date(st.apt_updated_at * 1000).toISOString()) : '-'],
-                ['Aggiornamenti automatici', st.unattended_upgrades == null ? '-' : st.unattended_upgrades ? 'attivi' : 'disattivi'],
-                ['Pacchetti OS', secInfo('packages')],
-                ['Pacchetti Python', secInfo('python')],
-            ])}</div>
-            <div class="col-lg-7">
-                <div class="alert ${verdict[0]} py-2 mb-2">${verdict[1]}</div>
-                ${total ? `<div class="mb-1 small"><span class="text-muted">Gravità:</span> ${sevList(inv.findings, true)}</div>
-                    <div class="mb-2 small"><span class="text-muted">Stato Ubuntu:</span> ${Object.entries(ss).filter(([, n]) => n).map(([s, n]) => `${statusBadge(s)} ${n}`).join(' &nbsp; ')}</div>` : ''}
-                ${kf ? `<div class="alert alert-secondary py-2 small mb-2">
-                    <b>${kf.count}</b> vulnerabilità del kernel${kf.critical || kf.high ? ` (${[kf.critical ? `${kf.critical} critiche` : '', kf.high ? `${kf.high} alte` : ''].filter(Boolean).join(', ')})` : ''}
-                    sono già corrette (o non presenti) nel kernel HWE <span class="font-monospace">${escapeHtml(kf.source)}</span>.
-                    Il kernel in uso (GA) le riceverà con i prossimi rilasci; in alternativa si può passare al kernel HWE
-                    (<span class="font-monospace">${escapeHtml(hweMeta)}</span>), che segue una serie di kernel più recente e cambia serie
-                    a ogni point release: va provato prima su un'istanza di test.</div>` : ''}
-                ${fixable.length ? `<h4 class="mb-1">Da correggere</h4>
-                <div class="table-responsive" style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter">
-                    <thead class="sticky-top bg-body"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Pacchetto</th><th>Installato</th><th>Stato Ubuntu</th></tr></thead>
-                    <tbody>${fixable.map(f => findingRow(f, true)).join('')}</tbody>
-                </table></div>` : ''}
-                <div class="small text-muted">Dei kernel conta solo quello in esecuzione: quelli installati ma non avviati (di riserva) non sono esposti finché non vengono avviati.</div>
-            </div>
-        </div>
-        ${byPackage.length ? `<h4 class="mt-4 mb-1">Vulnerabilità per pacchetto</h4>
-        <div class="small text-muted mb-2">${byPackage.length} pacchetti; clic su una riga per l'elenco delle vulnerabilità.</div>
-        <div class="table-responsive" style="max-height: 28rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0" id="vuln-pkgs">
-            <thead class="sticky-top bg-body"><tr><th></th><th>Pacchetto</th><th>Installato</th><th class="text-end">Totale</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
+    const vulnBody = `
+        ${total ? `<div class="small mb-2"><span class="text-muted">Note:</span> ${sevBadges(inv.findings)}
+            <a href="#vulnerabilities" class="ms-2">tutte le istanze</a></div>` : '<div class="text-muted">Nessuna vulnerabilità nota.</div>'}
+        ${fixable.length ? `<div class="table-responsive" style="max-height: 18rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-2">
+            <thead class="sticky-top bg-body"><tr><th>Da correggere</th><th>Gravità</th><th>Pacchetto</th><th>Stato</th></tr></thead>
+            <tbody>${fixable.map(f => findingRow(f, true)).join('')}</tbody></table></div>` : ''}
+        ${byPackage.length ? `<details><summary class="small text-muted cursor-pointer">Tutte, per pacchetto (${byPackage.length} pacchetti, ${total} vulnerabilità)</summary>
+            <div class="table-responsive mt-2" style="max-height: 24rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0" id="vuln-pkgs">
+            <thead class="sticky-top bg-body"><tr><th></th><th>Pacchetto</th><th class="text-end">Totale</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
             <tbody>${byPackage.map((g, n) => `<tr class="cursor-pointer" data-pkg="${n}">
                 <td class="text-muted" style="width: 1.5rem"><i class="ti ti-chevron-right"></i></td>
                 <td>${escapeHtml(g.package)}${g.kind === 'python' ? ' <span class="badge bg-blue-lt">py</span>' : ''}</td>
-                <td class="font-monospace small">${escapeHtml(g.installed_version)}</td>
                 <td class="text-end">${g.count}</td>
-                <td class="small">${sevList(g.severities, !g.fixable)}</td>
+                <td class="small">${Object.entries(g.severities).map(([s, n]) => `${severityBadge(s, !g.fixable)} ${n}`).join(' ')}</td>
                 <td class="small">${Object.entries(g.statuses).map(([s, c]) => `${statusBadge(s)} ${c}`).join(' ')}</td>
-            </tr><tr class="d-none" data-pkg-detail="${n}"><td></td><td colspan="5"></td></tr>`).join('')}</tbody>
-        </table></div>` : ''}
-        <hr>
-        <div class="d-flex gap-2 align-items-center mb-2">
-            <select class="form-select form-select-sm w-auto" id="pkg-section"><option value="packages">Pacchetti OS</option><option value="python">Pacchetti Python</option></select>
-            <input class="form-control form-control-sm w-auto" id="pkg-q" placeholder="Cerca pacchetto">
+            </tr><tr class="d-none" data-pkg-detail="${n}"><td></td><td colspan="4"></td></tr>`).join('')}</tbody>
+            </table></div>
+            ${kf ? `<div class="small text-muted mt-2"><i class="ti ti-info-circle me-1"></i>${kf.count} vulnerabilità del kernel sono già corrette nel kernel HWE
+                <span class="font-monospace">${escapeHtml(kf.source)}</span>: arriveranno anche nel kernel in uso con i prossimi rilasci.</div>` : ''}
+        </details>` : ''}`;
+
+    // 3. Available updates
+    const items = up.available ? up.items || [] : [];
+    const updBody = !up.available ? '<div class="text-muted small">L\'istanza non invia ancora l\'anteprima: aggiornare MADMIN.</div>'
+        : items.length ? `<div class="table-responsive" style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-1">
+            <thead class="sticky-top bg-body"><tr><th>Tipo</th><th>Pacchetto</th><th>Versione</th><th>Corregge</th><th></th></tr></thead>
+            <tbody>${items.map(upgradeRow).join('')}</tbody></table></div>
+            <div class="small text-muted">${Object.values(UP_TONE).map(([cls, label, title]) => `<span class="badge ${cls}" title="${escapeHtml(title)}">${label}</span>`).join(' ')}
+                · calcolati sull'istanza ${relTime(up.updated_at)}</div>`
+        : '<div class="text-muted small">Nessun aggiornamento disponibile.</div>';
+
+    // 4. Details of the system
+    const sysBody = kv([
+        ['Sistema', escapeHtml(inv.os || '-')],
+        ['Kernel', `<span class="font-monospace">${escapeHtml(st.running_kernel || inv.kernel || '-')}</span>${st.newest_kernel && st.newest_kernel !== st.running_kernel
+            ? ` <span class="small text-muted">· installato <span class="font-monospace">${escapeHtml(st.newest_kernel)}</span></span>` : ''}
+            ${trial ? ` <span class="badge ${trial.result === 'confirmed' ? 'bg-success-lt' : trial.result === 'failed' ? 'bg-danger-lt' : 'bg-warning-lt'}">prova ${escapeHtml(trial.kernel)}: ${trial.result === 'confirmed' ? 'confermato' : trial.result === 'failed' ? 'fallito' : 'in corso'}</span>` : ''}`],
+        ['Aggiornamenti automatici', au.time ? `ogni giorno alle ${escapeHtml(au.time)} ${escapeHtml(au.tz || '')}${au.randomize_minutes ? ` (+${au.randomize_minutes} min)` : ''}` : 'orario predefinito di Ubuntu'],
+        ['Liste apt', st.apt_updated_at ? relTime(new Date(st.apt_updated_at * 1000).toISOString()) : '-'],
+        ['Pacchetti ricevuti', sec.packages?.updated_at ? relTime(sec.packages.updated_at) : '-'],
+        ['Scansione vulnerabilità', inv.scan_at ? relTime(inv.scan_at) : '-'],
+    ]);
+
+    el.innerHTML = `<div class="card-body">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <h3 class="mb-0 me-auto">Stato</h3>${primary}${menu}
         </div>
-        <div id="pkg-list" class="table-responsive" style="max-height: 24rem; overflow-y: auto"></div>
-        <h4 class="mt-4">Modifiche recenti</h4>
-        ${changes.length ? changes.map(c => `<details class="mb-1"><summary>${fmtDate(c.at)} · ${c.section === 'packages' ? 'OS' : 'Python'} · ${c.changes.length} modifiche</summary>
+        <div class="row g-2 mb-3">${vulnTile}${rebootTile}${updTile}${autoTile}</div>
+        ${alerts}
+        ${section('sys-vuln', 'Vulnerabilità', toFix ? `${toFix} da correggere` : null, vulnBody, toFix > 0)}
+        ${section('sys-upd', 'Aggiornamenti disponibili', sm ? sm.all.packages + sm.held : null, updBody, !!(sm && sm.security.packages))}
+        ${section('sys-info', 'Dettagli del sistema', null, sysBody)}
+        ${section('sys-pkgs', 'Pacchetti installati', sec.packages ? sec.packages.count + (sec.python?.count || 0) : null, `
+            <div class="d-flex gap-2 align-items-center mb-2">
+                <select class="form-select form-select-sm w-auto" id="pkg-section"><option value="packages">Sistema (${sec.packages?.count || 0})</option><option value="python">Python di MADMIN (${sec.python?.count || 0})</option></select>
+                <input class="form-control form-control-sm w-auto" id="pkg-q" placeholder="Cerca pacchetto">
+            </div>
+            <div id="pkg-list" class="table-responsive" style="max-height: 24rem; overflow-y: auto"></div>`)}
+        ${section('sys-changes', 'Modifiche recenti', changes.length, changes.length ? changes.map(c => `<details class="mb-1"><summary>${fmtDate(c.at)} · ${c.section === 'packages' ? 'sistema' : 'Python'} · ${c.changes.length} modifiche</summary>
             <table class="table table-sm mb-2">${c.changes.slice(0, 200).map(x => `<tr><td class="small">${escapeHtml(x.name)}</td>
                 <td class="font-monospace small">${escapeHtml(x.from || '(nuovo)')}</td><td>→</td>
                 <td class="font-monospace small">${escapeHtml(x.to || '(rimosso)')}</td></tr>`).join('')}</table></details>`).join('')
-            : '<div class="text-muted small">Nessuna modifica registrata</div>'}
+            : '<div class="text-muted small">Nessuna modifica registrata</div>')}
+        <div class="text-end small mt-2"><a href="#vulnerabilities">Come funziona</a></div>
     </div>`;
     el.querySelector('#vuln-pkgs')?.addEventListener('click', async (e) => {
         const row = e.target.closest('tr[data-pkg]');
@@ -1099,10 +1083,10 @@ async function packages(el, i) {
         const cell = detail.lastElementChild;
         cell.innerHTML = loadingSpinner();
         try {
-            const items = await apiGet(`/instances/${i.id}/findings?package=${encodeURIComponent(byPackage[n].package)}`);
+            const list = await apiGet(`/instances/${i.id}/findings?package=${encodeURIComponent(byPackage[n].package)}`);
             cell.innerHTML = `<div style="max-height: 20rem; overflow-y: auto"><table class="table table-sm table-vcenter mb-0">
                 <thead class="sticky-top bg-body"><tr><th>Vulnerabilità</th><th>Gravità</th><th>Stato Ubuntu</th></tr></thead>
-                <tbody>${items.map(f => findingRow(f, false)).join('')}</tbody></table></div>`;
+                <tbody>${list.map(f => findingRow(f, false)).join('')}</tbody></table></div>`;
             detail.dataset.loaded = '1';
         } catch (err) {
             cell.innerHTML = `<span class="text-danger">${escapeHtml(err.message)}</span>`;
@@ -1110,18 +1094,19 @@ async function packages(el, i) {
     });
     const listEl = el.querySelector('#pkg-list');
     const load = async () => {
-        const section = el.querySelector('#pkg-section').value;
+        const which = el.querySelector('#pkg-section').value;
         const q = el.querySelector('#pkg-q').value.trim();
-        const items = await apiGet(`/instances/${i.id}/inventory/${section}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
-        listEl.innerHTML = `<table class="table table-sm"><thead><tr><th>Nome</th><th>Versione</th>${section === 'packages' ? '<th>Sorgente</th>' : ''}</tr></thead>
-            <tbody>${items.slice(0, 1000).map(p => `<tr><td>${escapeHtml(p.name)}${p.arch && p.arch !== 'all' ? ` <span class="text-muted small">${escapeHtml(p.arch)}</span>` : ''}</td>
+        const list = await apiGet(`/instances/${i.id}/inventory/${which}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+        listEl.innerHTML = `<table class="table table-sm"><thead><tr><th>Nome</th><th>Versione</th>${which === 'packages' ? '<th>Sorgente</th>' : ''}</tr></thead>
+            <tbody>${list.slice(0, 1000).map(p => `<tr><td>${escapeHtml(p.name)}${p.arch && p.arch !== 'all' ? ` <span class="text-muted small">${escapeHtml(p.arch)}</span>` : ''}</td>
                 <td class="font-monospace small">${escapeHtml(p.version)}</td>
-                ${section === 'packages' ? `<td class="small text-muted">${escapeHtml(p.source !== p.name ? p.source : '')}</td>` : ''}</tr>`).join('')
+                ${which === 'packages' ? `<td class="small text-muted">${escapeHtml(p.source !== p.name ? p.source : '')}</td>` : ''}</tr>`).join('')
                 || '<tr><td class="text-muted">Nessun pacchetto</td></tr>'}</tbody></table>`;
     };
     el.querySelector('#pkg-section').addEventListener('change', load);
     el.querySelector('#pkg-q').addEventListener('change', load);
-    await load();
+    // Loaded when the section is opened (800 rows otherwise for nothing)
+    el.querySelector('#sys-pkgs').addEventListener('toggle', (e) => { if (e.target.open && !listEl.innerHTML) load(); });
 }
 
 async function commands(el, i) {

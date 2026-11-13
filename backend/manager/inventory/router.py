@@ -29,7 +29,7 @@ STATUS_ORDER = {s: n for n, s in enumerate(ubuntu.STATUSES)}
 STATUS_RE = r"^[a-z,-]*$"
 
 
-def fixable(f) -> bool:
+def is_fixable(f) -> bool:
     """A fix to install: published, and not already installed waiting for the reboot."""
     return bool(f.fixed_version) and f.status != "reboot"
 
@@ -145,10 +145,10 @@ async def instance_inventory(instance_id: str, session: AsyncSession = Depends(g
                                  "updated_at": r.updated_at if r.digest else None,
                                  "pending": bool(r.wanted_digest)} for r in rows},
         "findings": {s: by_sev.get(s, 0) for s in osv.SEVERITIES},
-        "fixable": sum(1 for f, _ in findings if fixable(f)),
+        "fixable": sum(1 for f, _ in findings if is_fixable(f)),
         # by the OS updates of the instance / by a MADMIN release (Python venv)
-        "fixable_os": sum(1 for f, _ in findings if fixable(f) and f.kind == "os"),
-        "fixable_release": sum(1 for f, _ in findings if fixable(f) and f.kind != "os"),
+        "fixable_os": sum(1 for f, _ in findings if is_fixable(f) and f.kind == "os"),
+        "fixable_release": sum(1 for f, _ in findings if is_fixable(f) and f.kind != "os"),
         "statuses": _status_counts(f for f, _ in findings),
         "kernel_fix": _kernel_fix(f for f, _ in findings),
         "reboot": reboot_info(instance, findings),
@@ -210,7 +210,7 @@ async def instance_finding_packages(instance_id: str, session: AsyncSession = De
                                                     "installed_version": f.installed_version,
                                                     "severities": Counter(), "statuses": Counter()})
         g["count"] += 1
-        g["fixable"] += 1 if fixable(f) else 0
+        g["fixable"] += 1 if is_fixable(f) else 0
         g["severities"][f.severity] += 1
         g["statuses"][f.status] += 1
     out = []
@@ -302,7 +302,7 @@ async def summary(group_id: Optional[str] = Query(default=None, max_length=36),
     for f, _ in findings:
         advisories_by_sev[f.severity].add(f.advisory_id)
         instances_by_sev[f.severity].add(f.instance_id)
-        if fixable(f):
+        if is_fixable(f):
             fixable_by_sev[f.severity].add(f.advisory_id)
     by_inst = defaultdict(list)
     for f, a in findings:
@@ -314,7 +314,7 @@ async def summary(group_id: Optional[str] = Query(default=None, max_length=36),
         "advisories": {s: len(advisories_by_sev[s]) for s in osv.SEVERITIES},
         "instances_affected": {s: len(instances_by_sev[s]) for s in osv.SEVERITIES},
         "advisories_fixable": {s: len(fixable_by_sev[s]) for s in osv.SEVERITIES},
-        "fixable_instances": len({f.instance_id for f, _ in findings if fixable(f)
+        "fixable_instances": len({f.instance_id for f, _ in findings if is_fixable(f)
                                   and f.severity in ("critical", "high")}),
         "statuses": _status_counts(f for f, _ in findings),
         "reboot_required": sum(1 for s in statuses if s.get("reboot_required")),
@@ -341,7 +341,7 @@ async def advisories(group_id: Optional[str] = Query(default=None, max_length=36
                                   "fixable": 0, "kind": f.kind, "statuses": Counter(), "kernel_fix": ""})
         e["packages"].add(f.package)
         e["instances"].add(f.instance_id)
-        e["fixable"] += 1 if fixable(f) else 0
+        e["fixable"] += 1 if is_fixable(f) else 0
         e["statuses"][f.status] += 1
         e["kernel_fix"] = e["kernel_fix"] or f.kernel_fix
     out = []
@@ -390,7 +390,7 @@ async def fleet_instances(group_id: Optional[str] = Query(default=None, max_leng
     for f, a in findings:
         by_instance[f.instance_id].append((f, a))
         counts[f.instance_id][f.severity] += 1
-        if fixable(f):
+        if is_fixable(f):
             fixable_count[f.instance_id] += 1
         if f.status == "pending":
             pending[f.instance_id] += 1

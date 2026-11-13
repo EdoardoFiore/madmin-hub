@@ -8,6 +8,15 @@ All notable changes to MADMIN Manager. Versions follow [Semantic Versioning](htt
 
 Every block of work that is pushed bumps the version (`MANAGER_VERSION` in `backend/config.py`), adds an entry here and is tagged `vX.Y.Z`. The manager is updated by rerunning `setup-manager.sh` from a checkout of the version (schema steps run at startup). The wire protocol has its own versioning (`docs/PROTOCOL.md`), the MADMIN instances theirs (MADMIN `CHANGELOG.md`).
 
+## [1.2.2] - 2026-11-13
+
+### Changed
+- Sistema tab reorganised: four status tiles (vulnerabilities to fix, reboot, updates, automatic updates), one suggested action and an "Azioni" menu; vulnerabilities, available updates, system details, installed packages and recent changes in collapsible sections; explanations moved to tooltips.
+- Instance page: rarely used actions (change manager address, re-enroll token, suspend, resume, revoke) in a "…" menu.
+
+### Fixed
+- Vulnerabilità page: Internal Server Error on the advisories list (a parameter named like the helper it called).
+
 ## [1.2.1] - 2026-11-13
 
 ### Fixed

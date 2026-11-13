@@ -1,6 +1,6 @@
 # Stato dei lavori — MADMIN Manager e agente (documento temporaneo)
 
-Aggiornato al 2026-11-12. Riassume cosa è stato fatto nelle Fasi 0–5 della roadmap (le sezioni 3–9 descrivono le Fasi 0 e 1, la sezione 10 il lavoro del 2026-11-12), come funziona e come si usa. Il manuale operativo è `docs/OPERATIONS.md`. La fonte di verità restano `docs/ROADMAP.md` e `docs/PROTOCOL.md` (questa repo) e `docs/RELEASING.md` (repo MADMIN); questo file si può eliminare quando il lavoro sarà unito in `main`.
+Aggiornato al 2026-11-13. Riassume cosa è stato fatto nelle Fasi 0–5 della roadmap (le sezioni 3–9 descrivono le Fasi 0 e 1, la sezione 10 il lavoro del 2026-11-12), come funziona e come si usa. Il manuale operativo è `docs/OPERATIONS.md`. La fonte di verità restano `docs/ROADMAP.md` e `docs/PROTOCOL.md` (questa repo) e `docs/RELEASING.md` (repo MADMIN); questo file si può eliminare quando il lavoro sarà unito in `main`.
 
 ---
 
@@ -484,3 +484,70 @@ Come funziona:
   - file di backup del manager in `/root/*.bak`, passphrase `/root/mgr-backup.pass`.
 - Sull'istanza: `/root/fulltest.sh <release> <passo>` riempie il disco quando il journal raggiunge il passo indicato.
 - Gruppo `ldap-test-customer` creato sul manager per i test.
+
+
+---
+
+## 11. Lavori del 2026-11-13
+
+### 11.1 Versioni
+- Versioni semantiche (patch = correzioni, minor = funzionalità o modifica di un modulo). Ogni blocco di lavoro pushato aumenta la versione, aggiunge una voce in `CHANGELOG.md` e crea un tag `vX.Y.Z`. Le release firmate sono solo alcune di queste versioni.
+- MADMIN: `v1.2.0` (inizio del tracciamento), `v1.3.0`, `v1.4.0`, `v1.4.1`. Manager: `v1.1.0`, `v1.1.1`, `v1.1.2`, `v1.2.0`, `v1.2.1`.
+
+### 11.2 Vulnerabilità (con le modifiche fatte dall'altro PC)
+- Stato Ubuntu di ogni vulnerabilità (documenti VEX di Canonical): corretta, in arrivo, senza correzione, in valutazione, rimandata, non verrà corretta, solo Pro, da verificare.
+- Allarmi (badge, e-mail) solo per le vulnerabilità critiche con una correzione installabile.
+- Nuovi stati del manager:
+  - **Serve release MADMIN**: pacchetto Python del venv; si corregge con una release, non con gli aggiornamenti del sistema;
+  - **Corretta, serve riavvio**: CVE del kernel in uso già corretta dal kernel installato ma non ancora avviato.
+- Riquadro "Come funziona" nella pagina Vulnerabilità. Nella scheda Sistema, una riga con l'età di liste apt, pacchetti e scansione, più il pulsante "Ricontrolla ora".
+
+### 11.3 Anteprima degli aggiornamenti
+- L'istanza invia la sezione `upgrades` (pacchetti aggiornabili), con:
+  - cosa installano "Aggiornamenti di sicurezza" e "Aggiorna tutto";
+  - pacchetti trattenuti: rilascio graduale con la percentuale, hold, kept back;
+  - se serve un riavvio.
+- Verificato: coincide con `unattended-upgrade --dry-run`.
+- Scheda Sistema: due riquadri (pacchetti, vulnerabilità corrette, riavvio) e una tabella colorata con legenda (🔴 sicurezza che corregge critiche o alte, 🟠 sicurezza, 🔵 normale, ⚪ trattenuto). La conferma elenca esattamente cosa verrà installato.
+
+### 11.4 Aggiornamenti automatici e riavvii (decisione: opzione 1)
+- Ogni notte Ubuntu (`unattended-upgrades`) installa gli aggiornamenti di sicurezza e `needrestart` riavvia i servizi che li usano: strongSwan, nginx, ecc., con pochi secondi di interruzione.
+  - Orario predefinito: **03:00 Europe/Rome** più fino a 30 minuti casuali, in Impostazioni.
+  - Ogni gruppo può avere un orario suo, ereditato dal partner.
+  - Il manager lo applica alle istanze (`os.autoupdate.set`) e lo ricontrolla a ogni connessione.
+- **La macchina non si riavvia mai da sola**: `/etc/apt/apt.conf.d/99madmin-unattended-upgrades`, distribuito con la release.
+- **Riavvio consigliato**: compare in rosso, con badge su Istanze ed e-mail, solo se il riavvio corregge vulnerabilità critiche o alte del kernel in uso, o se il microcode della CPU è cambiato. Il "riavvio richiesto" di Ubuntu resta un'informazione in grigio.
+- **Servizi da riavviare**: l'istanza segnala quelli che girano ancora con librerie vecchie; si riavviano subito o a un orario scelto (`os.services.restart`).
+- **Programmazione**:
+  - rollout con avvio a un orario preciso;
+  - nuova azione "Riavvio servizi";
+  - filtri per stato: servizi da riavviare, riavvio consigliato o richiesto;
+  - **pianificazioni ricorrenti** (giorni e ora), per esempio ogni domenica alle 04:00 il riavvio delle istanze con riavvio consigliato.
+
+### 11.5 Finestre di dialogo
+- Un kit comune per tutte le finestre:
+  - asterisco rosso sui campi obbligatori, "facoltativo" sugli altri;
+  - formato ed esempio sotto ogni campo, errori sotto il campo;
+  - conseguenze in un riquadro colorato con icone;
+  - conferma col nome in un riquadro rosso che diventa verde quando coincide;
+  - barra colorata in base al rischio e rotellina durante l'invio.
+
+### 11.6 Test (2026-11-13)
+- L'istanza era stata reinstallata a mano. Ho creato una chiave di firma di prova (`/root/test-release.key`, chiave pubblica in `/etc/madmin/release-keys.d/test.pem` e nelle impostazioni del manager) e uso l'utente `claude` sul manager.
+- Aggiornamenti tramite il manager: 1.2.0 → 1.3.0 → 1.4.0 → 1.4.1, tutti riusciti.
+- Anteprima: `less`, riportato apposta alla versione vecchia, compare come aggiornamento di sicurezza. Dopo "Aggiornamenti di sicurezza" dal manager l'anteprima scende a 0 e la vulnerabilità sparisce in circa un minuto.
+- Orario automatico applicato all'istanza (03:00 Europe/Rome) e divieto di riavvio attivo (`apt-config dump`).
+- Riavvio dei servizi programmato da qui a 2 minuti: rollout partito all'ora prevista, 12 servizi riavviati (strongSwan, nginx, PostgreSQL, …).
+- Riavvio consigliato: avviato a mano il kernel 107 con il 149 installato. Dopo la scansione il manager segnala "riavvio consigliato": il riavvio corregge 5267 CVE, di cui 73 critiche e 1089 alte. Queste risultano "Corretta, serve riavvio" e non tra le correggibili con aggiornamenti; compare il badge su Istanze.
+- Poi un rollout "Riavvio", filtrato su "riavvio consigliato": ha trovato l'istanza, riavviato sul 149 in prova e confermato in circa un minuto e mezzo. Il riavvio consigliato e il badge sono spariti.
+
+### 11.7 Bug trovati e corretti
+- **`instances.js` svuotato** nella versione 1.1.0: uno script di modifica apriva il file in scrittura prima di leggerlo, e il controllo di sintassi su un file vuoto passava. Nelle versioni 1.1.0–1.1.2 del manager le pagine delle istanze non si caricavano. Ripristinato nella 1.2.0; controllate tutte le altre modifiche.
+- Una CVE veniva contata due volte nell'anteprima (record Ubuntu e USN); ora si tiene la gravità più alta.
+- La regola che vieta il riavvio non veniva installata da un aggiornamento eseguito dall'updater vecchio: ora la installa anche l'agente all'avvio.
+- La scansione non ripartiva quando cambiava il kernel in esecuzione.
+
+### 11.8 Da sapere
+- La prima scansione di un kernel molto vecchio richiede decine di minuti, perché scarica migliaia di avvisi OSV e documenti VEX uno per uno. È un argomento per scaricare i VEX in un archivio unico (da verificare).
+- `needrestart` segnala anche `systemd-manager` (il processo systemd principale), che si aggiorna con `systemctl daemon-reexec`: il comando di riavvio servizi non lo gestisce ancora.
+- Anche la VM del manager è stata ripulita: il server SMTP di cattura e OpenLDAP vanno verificati, se servono di nuovo.
